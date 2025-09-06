@@ -1,1 +1,6 @@
+# Core
 pylibrelinkup
+
+# Database
+sqlalchemy>=2.0
+mysqlclient
