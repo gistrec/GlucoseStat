@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Глюкоза — gistrec.cloud</title>
+    <meta name="description" content="Показания сенсора FreeStyle Libre 3, обновляются каждые пять минут." />
+    <meta name="robots" content="noindex" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <main class="page">
+        <header class="head">
+            <h1 class="head__title">Глюкоза</h1>
+            <p class="head__sub">FreeStyle Libre 3 → LibreLinkUp, обновление каждые 5 минут</p>
+        </header>
+
+        <section class="now" id="now" hidden>
+            <div class="now__reading">
+                <span class="now__value" id="now-value">—</span>
+                <span class="now__unit">ммоль/л</span>
+                <span class="now__arrow" id="now-arrow"></span>
+            </div>
+            <p class="now__meta" id="now-meta"></p>
+        </section>
+
+        <p class="empty" id="empty" hidden></p>
+
+        <nav class="ranges" id="ranges" hidden>
+            <button class="ranges__btn is-active" data-range="day" type="button">24 часа</button>
+            <button class="ranges__btn" data-range="week" type="button">7 дней</button>
+            <button class="ranges__btn" data-range="month" type="button">30 дней</button>
+        </nav>
+
+        <section class="chart" id="chart" hidden>
+            <canvas id="canvas"></canvas>
+            <p class="chart__empty" id="chart-empty" hidden>За этот период данных нет</p>
+        </section>
+
+        <section class="stats" id="stats" hidden></section>
+
+        <footer class="foot">
+            <p id="foot-updated"></p>
+            <p>Целевой диапазон 3,9–10,0 ммоль/л. Не медицинский прибор — данные носят справочный характер.</p>
+        </footer>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

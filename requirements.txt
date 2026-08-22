@@ -1,6 +1,8 @@
 # Core
 pylibrelinkup
+python-dotenv
 
 # Database
 sqlalchemy>=2.0
-mysqlclient
+# PyMySQL, а не mysqlclient: чистый Python, не требует libmysqlclient-dev
+PyMySQL
