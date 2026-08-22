@@ -24,6 +24,11 @@ from publish import publish
 BACKOFF_MIN = 60
 BACKOFF_MAX = 30 * 60
 
+# Отдельная, более длинная лестница для отказов «слишком часто»: Abbott
+# отвечает на них десятками минут молчания, и попытка раз в минуту только
+# продлевает блокировку вместо того, чтобы её переждать.
+RATE_LIMIT_MIN = 5 * 60
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
@@ -34,14 +39,21 @@ log = logging.getLogger("glucose")
 class Collector:
     """Owns the LibreLinkUp session and re-establishes it when it breaks."""
 
-    def __init__(self, email: str, password: str, region: str = "de") -> None:
-        self._client = LibreLinkUp(email, password, region=region)
+    def __init__(
+        self,
+        email: str,
+        password: str,
+        region: str = "de",
+        token_path: str | None = None,
+    ) -> None:
+        self._client = LibreLinkUp(
+            email, password, region=region, token_path=token_path
+        )
         self._logged_in = False
 
-    def _login(self) -> None:
-        self._client.login()
+    def _login(self, force: bool = False) -> None:
+        self._client.login(force=force)
         self._logged_in = True
-        log.info("authenticated in region %s", self._client.region)
 
     def poll(self) -> int:
         """Fetch new readings and store them. Returns rows added."""
@@ -52,11 +64,11 @@ class Collector:
         try:
             readings = self._client.readings()
         except AuthError:
-            # Токен живёт долго, но не вечно. Один повторный вход; если и он
-            # не проходит, пусть разбирается backoff в главном цикле.
+            # Токен живёт долго, но не вечно. Только здесь логин делается
+            # принудительно — кешированная сессия уже доказала, что мертва.
             log.info("token rejected, re-authenticating")
             self._logged_in = False
-            self._login()
+            self._login(force=True)
             readings = self._client.readings()
 
         return store_readings([(item.timestamp, item.mgdl) for item in readings])
@@ -73,7 +85,12 @@ def main() -> None:
     fetch_interval = int(os.getenv("FETCH_INTERVAL_MINUTES", "5")) * 60
 
     init_schema()
-    collector = Collector(email, password, region=os.getenv("LLU_REGION", "de"))
+    collector = Collector(
+        email,
+        password,
+        region=os.getenv("LLU_REGION", "de"),
+        token_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".llu-token.json"),
+    )
 
     backoff = BACKOFF_MIN
     while True:
@@ -84,6 +101,7 @@ def main() -> None:
             backoff = BACKOFF_MIN
             delay = fetch_interval
         except RateLimited as error:
+            backoff = max(backoff, RATE_LIMIT_MIN)
             delay = error.retry_after or backoff
             backoff = min(backoff * 2, BACKOFF_MAX)
             log.warning("rate limited by LibreLinkUp, sleeping %ds", delay)

@@ -11,10 +11,16 @@ the graph.
 """
 
 import hashlib
+import json
+import logging
+import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import requests
+
+log = logging.getLogger("glucose.llu")
 
 
 # Заголовки официального приложения. Без product/version Abbott отвечает 401,
@@ -67,13 +73,20 @@ def _parse_timestamp(value: str) -> datetime:
 
 
 class LibreLinkUp:
-    def __init__(self, email: str, password: str, region: str = "de") -> None:
+    def __init__(
+        self,
+        email: str,
+        password: str,
+        region: str = "de",
+        token_path: str | None = None,
+    ) -> None:
         self._email = email
         self._password = password
         self._region = region
         self._token: str | None = None
         self._account_id_hash: str | None = None
         self._patient_id: str | None = None
+        self._token_path = token_path
 
     @property
     def region(self) -> str:
@@ -95,7 +108,11 @@ class LibreLinkUp:
             method, self._url(path), headers=self._headers(), timeout=TIMEOUT, **kwargs
         )
 
-        if response.status_code == 429:
+        # 476 — недокументированный код Abbott: приходит на /llu/auth/login
+        # после серии входов подряд и держится десятки минут. Обращаться с ним
+        # как с 429 — единственный способ не усугублять: повторный логин по
+        # такому ответу только продлевает блокировку.
+        if response.status_code in (429, 476):
             retry_after = response.headers.get("Retry-After", "")
             raise RateLimited(int(retry_after) if retry_after.isdigit() else None)
         if response.status_code == 401:
@@ -104,8 +121,57 @@ class LibreLinkUp:
         response.raise_for_status()
         return response.json()
 
-    def login(self) -> None:
-        """Authenticate, following a regional redirect if there is one."""
+    def _load_session(self) -> bool:
+        """Restore a cached session. Returns True if one was usable."""
+
+        if not self._token_path or not os.path.isfile(self._token_path):
+            return False
+
+        try:
+            with open(self._token_path, encoding="utf-8") as handle:
+                cached = json.load(handle)
+        except (OSError, ValueError):
+            return False
+
+        # Минута форы: токен, истекающий на лету, стоил бы лишнего запроса и
+        # всё равно привёл бы к логину.
+        if cached.get("expires", 0) <= time.time() + 60:
+            return False
+
+        self._token = cached.get("token")
+        self._account_id_hash = cached.get("account_id_hash")
+        self._region = cached.get("region", self._region)
+        return bool(self._token and self._account_id_hash)
+
+    def _save_session(self, expires: int) -> None:
+        if not self._token_path:
+            return
+
+        payload = {
+            "token": self._token,
+            "account_id_hash": self._account_id_hash,
+            "region": self._region,
+            "expires": expires,
+        }
+
+        # Токен — это доступ к аккаунту, файл создаётся сразу с правами 600.
+        temp_path = f"{self._token_path}.tmp"
+        descriptor = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+        os.replace(temp_path, self._token_path)
+
+    def login(self, force: bool = False) -> None:
+        """Authenticate, following a regional redirect if there is one.
+
+        Reuses the cached session unless ``force`` is set. Abbott answers a
+        burst of logins with HTTP 476 and keeps refusing for a while, so a
+        restart must not cost a fresh login — the token is good for months.
+        """
+
+        if not force and self._load_session():
+            log.info("reusing cached session, region %s", self._region)
+            return
 
         for _ in range(2):
             payload = self._request(
@@ -127,14 +193,16 @@ class LibreLinkUp:
             if step:
                 raise AuthError(f"account needs attention in the app: {step}")
 
-            ticket = (data.get("authTicket") or {}).get("token")
+            ticket = data.get("authTicket") or {}
+            token = ticket.get("token")
             account_id = (data.get("user") or {}).get("id")
-            if not ticket or not account_id:
+            if not token or not account_id:
                 raise AuthError("invalid credentials")
 
-            self._token = ticket
+            self._token = token
             self._account_id_hash = hashlib.sha256(account_id.encode()).hexdigest()
             self._patient_id = None
+            self._save_session(int(ticket.get("expires", 0)))
             return
 
         raise AuthError("login kept redirecting between regions")
