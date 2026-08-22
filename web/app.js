@@ -238,7 +238,10 @@ function drawChart() {
     ctx.textBaseline = "middle";
     ctx.lineWidth = 1;
 
-    for (let value = Math.ceil(scale.min / 2) * 2; value <= scale.max; value += 2) {
+    // Шаг сетки подстраивается под размах: единичный выброс за 20 ммоль/л
+    // иначе расчерчивал бы панель дюжиной линий.
+    const gridStep = scale.max - scale.min > 12 ? 4 : 2;
+    for (let value = Math.ceil(scale.min / gridStep) * gridStep; value <= scale.max; value += gridStep) {
         const lineY = Math.round(y(value)) + 0.5;
         ctx.globalAlpha = 0.15;
         ctx.beginPath();
@@ -292,6 +295,23 @@ function drawChart() {
         }
     }
     ctx.stroke();
+
+    // Точка без соседей не даёт отрезка и не нарисовалась бы вовсе. Так
+    // выглядит начало каждого нового сенсора — первые замеры одиночные.
+    ctx.fillStyle = accent;
+    for (let i = 0; i < points.length; i += 1) {
+        const previous = points[i - 1];
+        const next = points[i + 1];
+        const isolated =
+            (!previous || points[i][0] - previous[0] > gapSeconds) &&
+            (!next || next[0] - points[i][0] > gapSeconds);
+
+        if (isolated) {
+            ctx.beginPath();
+            ctx.arc(x(points[i][0]), y(toMmol(points[i][1])), 2.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
 }
 
 /* ── Загрузка и события ────────────────────────────────────────────── */
