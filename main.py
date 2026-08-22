@@ -101,8 +101,11 @@ def main() -> None:
             backoff = BACKOFF_MIN
             delay = fetch_interval
         except RateLimited as error:
+            # Retry-After у Abbott доходит до суток. Ждём не больше получаса:
+            # блокировка нередко снимается раньше объявленного, а сутки
+            # молчания стоят дороже, чем несколько лишних попыток.
             backoff = max(backoff, RATE_LIMIT_MIN)
-            delay = error.retry_after or backoff
+            delay = min(error.retry_after or backoff, BACKOFF_MAX)
             backoff = min(backoff * 2, BACKOFF_MAX)
             log.warning("rate limited by LibreLinkUp, sleeping %ds", delay)
         except Exception:

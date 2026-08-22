@@ -65,10 +65,15 @@ UTC — `Timestamp` is the patient's local time without a zone. Likewise `Value`
 follows the account's display units while `ValueInMgPerDl` does not, which is
 why rows are stored in mg/dL.
 
-Readings from a sensor's warm-up are dropped: `connection.sensor` carries the
-activation time (`a`) and the warm-up length in minutes (`w`), and a sensor
-that has just been applied reports 500 mg/dL with `isHigh` set for the whole
-window. Values outside the sensor's own 40–500 mg/dL range are dropped too.
+Everything LibreLinkUp reports is stored, including a sensor's warm-up hour —
+during which a freshly applied sensor sits at 500 mg/dL with `isHigh` set, so
+expect one such spike per sensor change. The only values dropped are those
+outside the sensor's own 40–500 mg/dL scale, which are not readings at all.
+
+Abbott answers a burst of logins with HTTP 476 and a `Retry-After` of up to a
+day. The collector caps its wait at 30 minutes rather than honouring that
+literally: the block often lifts sooner, and a day of silence costs more than
+a few extra attempts.
 
 An empty graph response is normal: LibreLinkUp only reports while a sensor is
 active, so with no sensor on, `graph` returns nothing and the page reports the

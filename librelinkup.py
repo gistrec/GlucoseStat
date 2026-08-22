@@ -16,7 +16,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 import requests
 
@@ -40,6 +40,12 @@ TIMEOUT = 30
 # а служебные артефакты.
 SENSOR_MIN_MGDL = 40
 SENSOR_MAX_MGDL = 500
+
+# Потолок ожидания после 476. Abbott присылает Retry-After почти на сутки, но
+# на слово ему не верим: блокировка нередко снимается раньше, а лишние полчаса
+# простоя дешевле суток. Нижняя граница здесь же — реже, чем раз в полчаса,
+# ломиться смысла нет.
+COOLDOWN_MAX = 30 * 60
 
 
 class LibreLinkUpError(Exception):
@@ -151,6 +157,8 @@ class LibreLinkUp:
         path = self._cooldown_path
         if not path or seconds <= 0:
             return
+
+        seconds = min(seconds, COOLDOWN_MAX)
 
         temp_path = f"{path}.tmp"
         with open(temp_path, "w", encoding="utf-8") as handle:
@@ -293,8 +301,6 @@ class LibreLinkUp:
         if current:
             entries.append(current)
 
-        valid_from = self._warmup_ends(connection)
-
         readings = []
         for entry in entries:
             raw_timestamp = entry.get("FactoryTimestamp")
@@ -309,28 +315,12 @@ class LibreLinkUp:
             except ValueError:
                 continue
 
+            # Единственный отсев — за пределами шкалы сенсора: там уже не
+            # показания, а служебные значения. Данные прогрева сохраняются
+            # как есть, хотя свежий сенсор час держится на потолке шкалы.
             if not SENSOR_MIN_MGDL <= mgdl <= SENSOR_MAX_MGDL:
-                continue
-            if valid_from and timestamp < valid_from:
                 continue
 
             readings.append(Reading(timestamp=timestamp, mgdl=float(mgdl)))
 
         return readings
-
-    @staticmethod
-    def _warmup_ends(connection: dict) -> datetime | None:
-        """When the current sensor's readings start being meaningful.
-
-        A freshly applied sensor reports for the whole warm-up window, but the
-        numbers are meaningless — a just-activated sensor sits at 500 mg/dL
-        with isHigh set. Storing that would poison every average on the page.
-        """
-
-        sensor = connection.get("sensor") or {}
-        activated, warmup_minutes = sensor.get("a"), sensor.get("w")
-        if not activated:
-            return None
-
-        started = datetime.fromtimestamp(activated, tz=timezone.utc).replace(tzinfo=None)
-        return started + timedelta(minutes=warmup_minutes or 0)

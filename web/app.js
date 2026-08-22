@@ -203,7 +203,8 @@ function drawChart() {
 
     if (!points.length) return;
 
-    const padding = { top: 12, right: 12, bottom: 24, left: 38 };
+    // bottom с запасом на вторую строку подписи — дату на смене дня.
+    const padding = { top: 12, right: 12, bottom: 38, left: 38 };
     const plotWidth = width - padding.left - padding.right;
     const plotHeight = height - padding.top - padding.bottom;
 
@@ -258,17 +259,31 @@ function drawChart() {
     // последняя наполовину уходят за край холста.
     ctx.textBaseline = "top";
     const ticks = activeRange === "day" ? 4 : 5;
+    let previousDay = null;
+
     for (let i = 0; i <= ticks; i += 1) {
         const t = startTime + (spanSeconds / ticks) * i;
         const date = new Date(t * 1000);
-        const label =
+        const day = date.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+
+        // Суточное окно пересекает полночь, и без даты непонятно, «02:35» —
+        // это сегодня или вчера. Дата подписывается там, где день меняется,
+        // а не у каждой метки: повторять её пять раз незачем.
+        const labels =
             activeRange === "day"
-                ? date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })
-                : date.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+                ? [date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })]
+                : [day];
+
+        if (activeRange === "day" && day !== previousDay) {
+            labels.push(day);
+        }
+        previousDay = day;
 
         ctx.textAlign = i === 0 ? "left" : i === ticks ? "right" : "center";
         ctx.globalAlpha = 0.7;
-        ctx.fillText(label, x(t), height - padding.bottom + 8);
+        labels.forEach((text, line) => {
+            ctx.fillText(text, x(t), height - padding.bottom + 8 + line * 13);
+        });
     }
     ctx.globalAlpha = 1;
 
