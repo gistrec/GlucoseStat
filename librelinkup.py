@@ -227,6 +227,10 @@ class LibreLinkUp:
 
         remaining = self._cooldown_remaining()
         if remaining:
+            # Отличать этот отказ от настоящего важно: он означает «ждём сами»,
+            # а не «Abbott всё ещё блокирует». По одинаковой записи в логе эти
+            # состояния не различить, а выводы из них разные.
+            log.info("login held back locally for %ds (cached ban)", remaining)
             raise RateLimited(remaining)
 
         for _ in range(2):
@@ -237,6 +241,10 @@ class LibreLinkUp:
                     json={"email": self._email, "password": self._password},
                 )
             except RateLimited as error:
+                log.warning(
+                    "LibreLinkUp refused the login (Retry-After %ss)",
+                    error.retry_after if error.retry_after is not None else "absent",
+                )
                 self._start_cooldown(error.retry_after or 3600)
                 raise
             data = payload.get("data") or {}
