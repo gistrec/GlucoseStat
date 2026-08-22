@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 from database.connection import init_schema
 from database.queries import store_readings
-from librelinkup import AuthError, LibreLinkUp, RateLimited
+from librelinkup import COOLDOWN_MAX, AuthError, LibreLinkUp, RateLimited
 from publish import publish
 
 
@@ -24,9 +24,9 @@ from publish import publish
 BACKOFF_MIN = 60
 BACKOFF_MAX = 30 * 60
 
-# Отдельная, более длинная лестница для отказов «слишком часто»: Abbott
-# отвечает на них десятками минут молчания, и попытка раз в минуту только
-# продлевает блокировку вместо того, чтобы её переждать.
+# Пауза после отказа «слишком часто», когда сервер не сказал, сколько ждать.
+# Минута, как при обычном сбое, тут не годится: такие отказы держатся
+# десятками минут, и частые попытки только продлевают блокировку.
 RATE_LIMIT_MIN = 5 * 60
 
 logging.basicConfig(
@@ -101,12 +101,11 @@ def main() -> None:
             backoff = BACKOFF_MIN
             delay = fetch_interval
         except RateLimited as error:
-            # Retry-After у Abbott доходит до суток. Ждём не больше получаса:
-            # блокировка нередко снимается раньше объявленного, а сутки
-            # молчания стоят дороже, чем несколько лишних попыток.
-            backoff = max(backoff, RATE_LIMIT_MIN)
-            delay = min(error.retry_after or backoff, BACKOFF_MAX)
-            backoff = min(backoff * 2, BACKOFF_MAX)
+            # Тот же потолок, что у файла блокировки: разойдись они — цикл
+            # спал бы дольше, чем действует запрет, и попытка не состоялась
+            # бы в срок. Retry-After у Abbott доходит до суток, но на слово
+            # мы ему не верим.
+            delay = min(error.retry_after or RATE_LIMIT_MIN, COOLDOWN_MAX)
             log.warning("rate limited by LibreLinkUp, sleeping %ds", delay)
         except Exception:
             # Сборщик переживает всё: сеть, MySQL, смену пароля. Падение здесь
