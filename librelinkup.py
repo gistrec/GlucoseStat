@@ -121,6 +121,50 @@ class LibreLinkUp:
         response.raise_for_status()
         return response.json()
 
+    @property
+    def _cooldown_path(self) -> str | None:
+        return f"{self._token_path}.cooldown" if self._token_path else None
+
+    def _cooldown_remaining(self) -> int:
+        """Seconds left of a rate-limit ban, 0 if none is in effect."""
+
+        path = self._cooldown_path
+        if not path or not os.path.isfile(path):
+            return 0
+
+        try:
+            with open(path, encoding="utf-8") as handle:
+                until = float(handle.read().strip())
+        except (OSError, ValueError):
+            return 0
+
+        return max(0, int(until - time.time()))
+
+    def _start_cooldown(self, seconds: int) -> None:
+        """Remember a ban across restarts.
+
+        Abbott's 476 comes with a Retry-After measured in hours. Kept only in
+        memory, a pm2 restart would wipe it and log in early — which restarts
+        the ban instead of waiting it out.
+        """
+
+        path = self._cooldown_path
+        if not path or seconds <= 0:
+            return
+
+        temp_path = f"{path}.tmp"
+        with open(temp_path, "w", encoding="utf-8") as handle:
+            handle.write(str(time.time() + seconds))
+        os.replace(temp_path, path)
+
+    def _clear_cooldown(self) -> None:
+        path = self._cooldown_path
+        if path:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
     def _load_session(self) -> bool:
         """Restore a cached session. Returns True if one was usable."""
 
@@ -173,12 +217,20 @@ class LibreLinkUp:
             log.info("reusing cached session, region %s", self._region)
             return
 
+        remaining = self._cooldown_remaining()
+        if remaining:
+            raise RateLimited(remaining)
+
         for _ in range(2):
-            payload = self._request(
-                "POST",
-                "/llu/auth/login",
-                json={"email": self._email, "password": self._password},
-            )
+            try:
+                payload = self._request(
+                    "POST",
+                    "/llu/auth/login",
+                    json={"email": self._email, "password": self._password},
+                )
+            except RateLimited as error:
+                self._start_cooldown(error.retry_after or 3600)
+                raise
             data = payload.get("data") or {}
 
             # Аккаунт живёт в конкретном регионе, и вход в чужой отвечает
@@ -203,6 +255,7 @@ class LibreLinkUp:
             self._account_id_hash = hashlib.sha256(account_id.encode()).hexdigest()
             self._patient_id = None
             self._save_session(int(ticket.get("expires", 0)))
+            self._clear_cooldown()
             return
 
         raise AuthError("login kept redirecting between regions")

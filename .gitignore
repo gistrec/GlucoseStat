@@ -210,4 +210,4 @@ __marimo__/
 web/data.json
 
 # Cached LibreLinkUp session token
-.llu-token.json
+.llu-token.json*
