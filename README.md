@@ -55,10 +55,20 @@ pm2 start ecosystem.config.js
 
 ## Notes
 
-The API returns two timestamps per reading, and only `factory_timestamp` is
-UTC — `timestamp` is the patient's local time without a zone. Likewise `Value`
+`librelinkup.py` is a hand-rolled client rather than the `pylibrelinkup`
+package, which validates `TrendArrow` against an enum of 1–5 and raises on
+`TrendArrow: 0` — the value Abbott sends whenever the trend is unknown,
+including a fresh sensor's entire warm-up window.
+
+The API returns two timestamps per reading, and only `FactoryTimestamp` is
+UTC — `Timestamp` is the patient's local time without a zone. Likewise `Value`
 follows the account's display units while `ValueInMgPerDl` does not, which is
 why rows are stored in mg/dL.
+
+Readings from a sensor's warm-up are dropped: `connection.sensor` carries the
+activation time (`a`) and the warm-up length in minutes (`w`), and a sensor
+that has just been applied reports 500 mg/dL with `isHigh` set for the whole
+window. Values outside the sensor's own 40–500 mg/dL range are dropped too.
 
 An empty graph response is normal: LibreLinkUp only reports while a sensor is
 active, so with no sensor on, `graph` returns nothing and the page reports the

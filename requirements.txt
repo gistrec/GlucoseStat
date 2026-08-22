@@ -1,5 +1,7 @@
 # Core
-pylibrelinkup
+# LibreLinkUp — свой клиент в librelinkup.py: pylibrelinkup падает на
+# TrendArrow=0, который Abbott шлёт весь прогрев нового сенсора.
+requests
 python-dotenv
 
 # Database
