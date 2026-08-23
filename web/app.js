@@ -155,9 +155,15 @@ function renderStats() {
             `ниже ${stats.below.toLocaleString("ru-RU")} % · выше ${stats.above.toLocaleString("ru-RU")} %`),
         statCard("Среднее", formatMmol(stats.avg), "ммоль/л"),
         statCard("Разброс", `${formatMmol(stats.min)} – ${formatMmol(stats.max)}`, "ммоль/л, минимум и максимум"),
-        statCard("Вариабельность", `${stats.cv.toLocaleString("ru-RU")} %`,
-            stats.cv <= 36 ? "стабильно, норма ≤ 36 %" : "выше нормы ≤ 36 %"),
     ];
+
+    // cv приходит null, если среднее нулевое. Случай почти невозможный
+    // (сенсор не отдаёт значений ниже 40 мг/дл), но обращение к методу у null
+    // уронило бы отрисовку целиком — вместе с графиком и текущим значением.
+    if (stats.cv !== null && stats.cv !== undefined) {
+        cards.push(statCard("Вариабельность", `${stats.cv.toLocaleString("ru-RU")} %`,
+            stats.cv <= 36 ? "стабильно, норма ≤ 36 %" : "выше нормы ≤ 36 %"));
+    }
 
     // GMI — оценка HbA1c по среднему уровню. На суточном окне она
     // статистически бессмысленна, поэтому только для недели и месяца.
