@@ -183,6 +183,23 @@ function renderStats() {
 
 /* ── График ────────────────────────────────────────────────────────── */
 
+/* Что «видно» на графике, словами: сам холст для скринридера пуст, а
+   пересказывать сотни точек бессмысленно — нужен итог. */
+function chartDescription(points) {
+    const period = RANGE_LABELS[activeRange];
+    if (!points.length) return `График глюкозы за ${period}: данных нет`;
+
+    const stats = snapshot.stats[activeRange];
+    if (!stats) return `График глюкозы за ${period}: ${points.length} точек`;
+
+    return (
+        `График глюкозы за ${period}: ${stats.count} измерений, ` +
+        `среднее ${formatMmol(stats.avg)} ммоль/л, ` +
+        `от ${formatMmol(stats.min)} до ${formatMmol(stats.max)}, ` +
+        `в целевом диапазоне ${stats.tir.toLocaleString("ru-RU")} процентов времени`
+    );
+}
+
 function niceScale(points) {
     const values = points.map((p) => toMmol(p[1]));
     // Нижняя и верхняя границы целевого диапазона всегда в кадре: без этого
@@ -198,6 +215,7 @@ function drawChart() {
     const points = series.points;
 
     els.chartEmpty.hidden = points.length > 0;
+    els.canvas.setAttribute("aria-label", chartDescription(points));
 
     const canvas = els.canvas;
     const ratio = window.devicePixelRatio || 1;
@@ -400,7 +418,11 @@ els.ranges.addEventListener("click", (event) => {
 
     activeRange = button.dataset.range;
     for (const item of els.ranges.children) {
-        item.classList.toggle("is-active", item === button);
+        const active = item === button;
+        item.classList.toggle("is-active", active);
+        // Подсветка сообщает о выборе только глазами; aria-pressed — всем
+        // остальным.
+        item.setAttribute("aria-pressed", String(active));
     }
     drawChart();
     renderStats();

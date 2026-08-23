@@ -33,14 +33,16 @@
 
         <p class="empty" id="empty" hidden></p>
 
-        <nav class="ranges" id="ranges" hidden>
-            <button class="ranges__btn is-active" data-range="day" type="button">24 часа</button>
-            <button class="ranges__btn" data-range="week" type="button">7 дней</button>
-            <button class="ranges__btn" data-range="month" type="button">30 дней</button>
+        <nav class="ranges" id="ranges" aria-label="Период" hidden>
+            <button class="ranges__btn is-active" data-range="day" type="button" aria-pressed="true">24 часа</button>
+            <button class="ranges__btn" data-range="week" type="button" aria-pressed="false">7 дней</button>
+            <button class="ranges__btn" data-range="month" type="button" aria-pressed="false">30 дней</button>
         </nav>
 
         <section class="chart" id="chart" hidden>
-            <canvas id="canvas"></canvas>
+            <!-- Содержимое рисуется скриптом, поэтому подпись задаётся там же:
+                 для скринридера холст сам по себе — пустое место. -->
+            <canvas id="canvas" role="img"></canvas>
             <p class="chart__empty" id="chart-empty" hidden>За этот период данных нет</p>
         </section>
 
