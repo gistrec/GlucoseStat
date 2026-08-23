@@ -93,10 +93,12 @@ def main() -> None:
     )
 
     backoff = BACKOFF_MIN
+    last_success: float | None = None
+
     while True:
         try:
             added = collector.poll()
-            publish()
+            last_success = time.time()
             log.info("stored %d new readings", added)
             backoff = BACKOFF_MIN
             delay = fetch_interval
@@ -114,6 +116,15 @@ def main() -> None:
             delay = backoff
             backoff = min(backoff * 2, BACKOFF_MAX)
             log.exception("poll failed, retrying in %ds", delay)
+
+        # Снимок переписывается и после неудачи: только так на странице
+        # появляется отметка, что сборщик молчит. Прежде publish() стоял
+        # внутри try и при недоступности Abbott не вызывался вовсе — страница
+        # продолжала показывать старые данные как свежие.
+        try:
+            publish(last_success=last_success)
+        except Exception:
+            log.exception("failed to publish the snapshot")
 
         time.sleep(delay)
 

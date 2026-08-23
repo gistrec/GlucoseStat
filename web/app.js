@@ -12,6 +12,10 @@ const STALE_AFTER_MS = 20 * 60 * 1000;
 
 const RELOAD_INTERVAL_MS = 60 * 1000;
 
+// Сборщик опрашивает LibreLinkUp раз в 5 минут, так что три пропуска подряд —
+// это уже не задержка, а молчание, о котором нужно сказать вслух.
+const COLLECTOR_SILENT_AFTER_MS = 15 * 60 * 1000;
+
 const RANGE_LABELS = { day: "24 часа", week: "7 дней", month: "30 дней" };
 
 let snapshot = null;
@@ -337,8 +341,35 @@ function drawChart() {
 
 /* ── Загрузка и события ────────────────────────────────────────────── */
 
+/* Состояние сборщика, а не возраст файла. Снимок перезаписывается каждые
+   пять минут независимо от того, отвечает ли Abbott, поэтому «обновлено
+   только что» само по себе ничего не говорит о свежести данных. */
+function renderCollectorState() {
+    const lastSuccess = (snapshot.collector || {}).last_success;
+
+    if (!lastSuccess) {
+        els.footUpdated.textContent = "Сборщик ещё не получал данные";
+        els.footUpdated.className = "foot__warn";
+        return;
+    }
+
+    const silence = Date.now() - lastSuccess * 1000;
+    if (silence > COLLECTOR_SILENT_AFTER_MS) {
+        els.footUpdated.textContent =
+            `Нет связи с LibreLinkUp. Последний успешный опрос — ${formatDateTime(new Date(lastSuccess * 1000))}.`;
+        els.footUpdated.className = "foot__warn";
+        return;
+    }
+
+    els.footUpdated.textContent = `Обновлено ${formatAgo(silence)}`;
+    els.footUpdated.className = "";
+}
+
 function render() {
     renderNow();
+    // До проверки на пустые данные: когда замеров нет вовсе, знать, жив ли
+    // сборщик, тем более важно.
+    renderCollectorState();
 
     if (!snapshot.latest) return;
 
@@ -346,9 +377,6 @@ function render() {
     els.chart.hidden = false;
     drawChart();
     renderStats();
-
-    const generated = new Date(snapshot.generated_at * 1000);
-    els.footUpdated.textContent = `Обновлено ${formatAgo(Date.now() - generated.getTime())}`;
 }
 
 async function load() {

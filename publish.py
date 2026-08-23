@@ -116,8 +116,15 @@ def _trend(readings: list[tuple[datetime, float]]) -> dict | None:
     return latest
 
 
-def publish(path: str = PUBLISH_PATH) -> None:
-    """Write the snapshot atomically so nginx never serves a half-written file."""
+def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None:
+    """Write the snapshot atomically so nginx never serves a half-written file.
+
+    ``last_success`` is when the collector last reached LibreLinkUp. It is
+    published separately from ``generated_at`` because the two diverge exactly
+    when it matters: while Abbott is unreachable the snapshot keeps being
+    rewritten, but the data behind it stops moving, and the page has to say so
+    rather than quietly showing yesterday's glucose as current.
+    """
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     window = max(span for span, _ in RANGES.values())
@@ -131,6 +138,9 @@ def publish(path: str = PUBLISH_PATH) -> None:
 
     snapshot = {
         "generated_at": int(now.replace(tzinfo=timezone.utc).timestamp()),
+        "collector": {
+            "last_success": int(last_success) if last_success else None,
+        },
         "target": {"low": TARGET_LOW_MGDL, "high": TARGET_HIGH_MGDL},
         # Не из readings: последнее измерение может быть старше окна графиков,
         # и тогда странице нужно показать «данных нет с такого-то числа».
