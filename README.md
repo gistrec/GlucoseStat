@@ -53,6 +53,17 @@ In production it runs under pm2:
 pm2 start ecosystem.config.js
 ```
 
+## Tests
+
+The snapshot maths — time in range, GMI, variability, downsampling, trend —
+is pure functions over a list of readings, so the tests need neither a
+database nor the network:
+
+```bash
+./venv/bin/pip install -r requirements-dev.txt
+./venv/bin/python -m pytest
+```
+
 ## Notes
 
 `librelinkup.py` is a hand-rolled client rather than the `pylibrelinkup`
