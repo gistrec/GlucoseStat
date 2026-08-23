@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Глюкоза">
+    <!-- Панель дашборда в миниатюре: тот же фон, тот же акцент. -->
+    <rect width="32" height="32" rx="7" fill="#0d0d14"/>
+    <!-- Целевой диапазон — подложкой, как на графике. -->
+    <rect x="4" y="15" width="24" height="9" rx="1.5" fill="#7efcb0" opacity="0.16"/>
+    <!-- Кривая: провал, подъём в пик, спуск обратно в диапазон. -->
+    <path d="M4 20 L8 22 L12 17 L16 7 L20 13 L24 19 L28 17"
+          fill="none" stroke="#7eb8f7" stroke-width="2.75"
+          stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
