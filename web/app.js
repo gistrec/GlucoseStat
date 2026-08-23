@@ -48,6 +48,12 @@ function formatMmol(mgdl, digits = 1) {
     });
 }
 
+/* Пробел перед знаком процента по типографике неразрывный: в узкой карточке
+   строка иначе рвётся между числом и знаком, оставляя «%» болтаться отдельно. */
+function percent(value) {
+    return `${value.toLocaleString("ru-RU")} %`;
+}
+
 function formatAgo(ms) {
     const minutes = Math.round(ms / 60000);
     if (minutes < 1) return "только что";
@@ -155,8 +161,8 @@ function renderStats() {
     }
 
     const cards = [
-        statCard("В целевом диапазоне", `${stats.tir.toLocaleString("ru-RU")} %`,
-            `ниже ${stats.below.toLocaleString("ru-RU")} % · выше ${stats.above.toLocaleString("ru-RU")} %`),
+        statCard("В целевом диапазоне", percent(stats.tir),
+            `ниже ${percent(stats.below)} · выше ${percent(stats.above)}`),
         statCard("Среднее", formatMmol(stats.avg), "ммоль/л"),
         statCard("Разброс", `${formatMmol(stats.min)} – ${formatMmol(stats.max)}`, "ммоль/л, минимум и максимум"),
     ];
@@ -165,14 +171,14 @@ function renderStats() {
     // (сенсор не отдаёт значений ниже 40 мг/дл), но обращение к методу у null
     // уронило бы отрисовку целиком — вместе с графиком и текущим значением.
     if (stats.cv !== null && stats.cv !== undefined) {
-        cards.push(statCard("Вариабельность", `${stats.cv.toLocaleString("ru-RU")} %`,
-            stats.cv <= 36 ? "стабильно, норма ≤ 36 %" : "выше нормы ≤ 36 %"));
+        cards.push(statCard("Вариабельность", percent(stats.cv),
+            stats.cv <= 36 ? `стабильно, норма ≤ ${percent(36)}` : `выше нормы ≤ ${percent(36)}`));
     }
 
     // GMI — оценка HbA1c по среднему уровню. На суточном окне она
     // статистически бессмысленна, поэтому только для недели и месяца.
     if (activeRange !== "day") {
-        cards.push(statCard("GMI", `${stats.gmi.toLocaleString("ru-RU")} %`, "расчётный HbA1c"));
+        cards.push(statCard("GMI", percent(stats.gmi), "расчётный HbA1c"));
     }
 
     cards.push(statCard("Измерений", stats.count.toLocaleString("ru-RU"), RANGE_LABELS[activeRange]));
@@ -286,7 +292,9 @@ function drawChart() {
     // Подписи по времени. Крайние выравниваются внутрь, иначе первая и
     // последняя наполовину уходят за край холста.
     ctx.textBaseline = "top";
-    const ticks = activeRange === "day" ? 4 : 5;
+    // На узком холсте пять подписей сливаются в сплошную строку цифр —
+    // «04:0610:06». Лучше меньше делений, чем нечитаемые.
+    const ticks = plotWidth < 340 ? 2 : activeRange === "day" ? 4 : 5;
     let previousDay = null;
 
     for (let i = 0; i <= ticks; i += 1) {
