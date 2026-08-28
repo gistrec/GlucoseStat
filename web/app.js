@@ -337,9 +337,10 @@ function drawChart() {
         return /^(#|rgb|hsl)/.test(value) ? value : fallback;
     };
 
-    const muted = themeColor("--muted", "#8a8fa3");
+    const muted = themeColor("--muted", "#8a90a6");
     const accent = themeColor("--accent", "#7eb8f7");
     const inRange = themeColor("--in-range", "#7efcb0");
+    const axisAlpha = Number(styles.getPropertyValue("--axis-alpha")) || 0.85;
 
     // Целевой диапазон — подложка, а не линии: так видно «сколько времени
     // график провёл внутри», не считая пересечения глазами.
@@ -369,7 +370,7 @@ function drawChart() {
         ctx.lineTo(width - padding.right, lineY);
         ctx.stroke();
 
-        ctx.globalAlpha = 0.7;
+        ctx.globalAlpha = axisAlpha;
         ctx.fillText(String(value), padding.left - 8, lineY);
     }
     ctx.globalAlpha = 1;
@@ -401,7 +402,7 @@ function drawChart() {
         previousDay = day;
 
         ctx.textAlign = i === 0 ? "left" : i === ticks ? "right" : "center";
-        ctx.globalAlpha = 0.7;
+        ctx.globalAlpha = axisAlpha;
         labels.forEach((text, line) => {
             ctx.fillText(text, x(t), height - padding.bottom + 8 + line * 13);
         });
