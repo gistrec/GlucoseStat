@@ -261,7 +261,7 @@ function drawChart() {
     const targetTop = y(toMmol(snapshot.target.high));
     const targetBottom = y(toMmol(snapshot.target.low));
     ctx.fillStyle = inRange;
-    ctx.globalAlpha = 0.07;
+    ctx.globalAlpha = Number(styles.getPropertyValue("--band-alpha")) || 0.07;
     ctx.fillRect(padding.left, targetTop, plotWidth, targetBottom - targetTop);
     ctx.globalAlpha = 1;
 
@@ -437,6 +437,14 @@ els.ranges.addEventListener("click", (event) => {
 });
 
 window.addEventListener("resize", () => {
+    if (snapshot && snapshot.latest) drawChart();
+});
+
+/* Разметка перекрашивается сама, а холст — нет: его цвета прочитаны из
+   CSS-переменных один раз при отрисовке. Без этого смена темы (на телефоне
+   она происходит по расписанию, посреди чтения) оставляла бы вчерашнюю
+   линию на новом фоне. */
+window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
     if (snapshot && snapshot.latest) drawChart();
 });
 
