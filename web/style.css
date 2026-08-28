@@ -36,6 +36,14 @@
     --in-range: #7efcb0;
     --high: #f77e9b;
 
+    /* События журнала. Это опознавательные цвета, а не оценка: еда и инсулин
+       не «хорошо» и не «плохо», поэтому зонные оттенки выше сюда не годятся.
+       Пара проверена на различимость при дальтонизме и на контраст к панели;
+       фиолетовый пришлось отвергнуть — в светлой теме он сливался с синей
+       линией глюкозы (ΔE 4,8 при дейтеранопии). */
+    --meal: #bd8a30;
+    --insulin: #cc4fb0;
+
     /* Прозрачность подложки целевого диапазона на графике. */
     --band-alpha: 0.07;
 
@@ -61,6 +69,9 @@
     --low: #a2560e;
     --in-range: #0f7a4d;
     --high: #c02546;
+
+    --meal: #9a6400;
+    --insulin: #a3208c;
 
     /* Плотнее ночных 7%: на белом фоне подложка бледнее при той же прозрачности,
        а полоса нормы — главное, что читают на графике. */
@@ -271,6 +282,198 @@ body {
     margin: 0;
     color: var(--muted);
     font-size: 0.9rem;
+}
+
+/* ── Легенда ───────────────────────────────────────────────────────── */
+
+/* Опознавать ряды по цвету на глаз — единственный канал, который отказывает
+   и при дальтонизме, и на распечатке. Легенда есть всегда, когда рядов больше
+   одного. */
+.legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    margin: 12px 0 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.78rem;
+    color: var(--muted);
+}
+
+.legend__item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* Метка ряда — цветная фигура рядом с подписью, а не сама подпись: светлый
+   оттенок в роли текста нечитаем, и контраст ему не набрать. */
+.legend__key {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    flex: none;
+}
+
+.legend__key--line {
+    height: 3px;
+    border-radius: 2px;
+}
+
+.legend__key--hollow {
+    background: none !important;
+    border: 2px solid currentColor;
+}
+
+/* ── Подсказка на графике ──────────────────────────────────────────── */
+
+.tip {
+    position: absolute;
+    z-index: 2;
+    min-width: 128px;
+    padding: 8px 10px;
+    background: var(--panel);
+    border: 1px solid var(--panel-chrome);
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgb(0 0 0 / 0.28);
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: var(--fg);
+    pointer-events: none;
+    transform: translate(-50%, calc(-100% - 14px));
+}
+
+.tip[hidden] {
+    display: none;
+}
+
+.tip__time {
+    margin: 0 0 2px;
+    color: var(--muted);
+    font-size: 0.72rem;
+}
+
+.tip__row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+}
+
+.tip__key {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex: none;
+}
+
+/* Видно только скринридеру: заголовок таблицы, который глазами читается из
+   заголовка секции над ней. display:none убрал бы его и оттуда тоже. */
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+/* ── Разбор приёмов пищи ───────────────────────────────────────────── */
+
+.review {
+    margin-bottom: 32px;
+}
+
+.review__title {
+    margin: 0 0 4px;
+    font-size: 1.05rem;
+    color: var(--fg);
+}
+
+.review__note {
+    margin: 0 0 16px;
+    font-size: 0.82rem;
+    color: var(--muted);
+    max-width: 62ch;
+}
+
+.review__panel {
+    position: relative;
+    background: var(--panel);
+    border: 1px solid var(--panel-chrome);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+#overlay {
+    display: block;
+    width: 100%;
+    height: 240px;
+}
+
+/* Список приёмов пищи — он же доступная замена картинке: все числа здесь
+   текстом, и подсказка на графике ничего не прячет. */
+.meals {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+}
+
+.meals th,
+.meals td {
+    padding: 8px 10px;
+    text-align: right;
+    border-bottom: 1px solid var(--panel-chrome);
+    font-variant-numeric: tabular-nums;
+}
+
+.meals th {
+    color: var(--muted);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.meals th:first-child,
+.meals td:first-child {
+    text-align: left;
+}
+
+.meals tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* Отметка исхода. Цвет здесь означает состояние, а не принадлежность, поэтому
+   он идёт вместе со значком и словом — цветом одним ничего не сказано. */
+.flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.flag--hypo {
+    color: var(--high);
+}
+
+.flag--ok {
+    color: var(--in-range);
+}
+
+.flag--skip {
+    color: var(--muted);
+}
+
+@media (max-width: 560px) {
+    .meals__wrap {
+        overflow-x: auto;
+    }
+
+    .meals {
+        min-width: 460px;
+    }
 }
 
 /* ── Статистика ────────────────────────────────────────────────────── */

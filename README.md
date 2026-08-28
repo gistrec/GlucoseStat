@@ -24,9 +24,51 @@ more, where it is statistically meaningful).
 Values are stored in mg/dL and displayed in mmol/L. The target range is
 70–180 mg/dL (3.9–10.0 mmol/L), the standard CGM consensus range.
 
-`data.json` carries nothing but timestamps and glucose values. The LibreLinkUp
-payload also contains the patient's name, date of birth and sensor serial, and
-none of that belongs on a public URL.
+The LibreLinkUp payload also contains the patient's name, date of birth and
+sensor serial, and none of that belongs on a public URL, so `data.json` carries
+none of it.
+
+It does now carry meal and insulin events (see below), which are more personal
+than the curve itself: they show when the day starts, when it ends, and what the
+treatment looks like. The page is `noindex` but it is not access-controlled — if
+that is not acceptable, put the events behind basic auth in nginx or drop
+`journal_entries` from the collector's reach.
+
+## Meals and insulin
+
+The events come from the journal that [GlucoseBot](https://github.com/gistrec/GlucoseBot)
+writes — carbohydrates estimated from a photo and confirmed by hand, and insulin
+doses logged by hand. The collector only reads that table, never creates it: if
+the bot was never deployed, `journal_since` returns nothing and the page renders
+exactly as before.
+
+Events are drawn as two lanes under the glucose line, sharing its time axis:
+carbohydrates in grams and insulin in units, each growing from its own baseline.
+Not a second vertical scale on the same plot — the alignment of two y-axes is
+arbitrary, and a chart built that way invents a correlation that isn't in the
+data. Short and long insulin share one lane because they share a unit; the short
+one is filled, the long one is an outline.
+
+Only the 24-hour window shows them. A month holds a hundred marks, and they
+merge into a solid band that says nothing.
+
+## Meal review
+
+For each meal over the last two weeks the page reports what happened in the four
+hours after it: the rise above the level at the moment of eating, how long the
+peak took, whether glucose came back, and whether a low followed. Curves are
+overlaid on the moment of eating, normalised to that level — in absolute values
+the median comes out nearly flat, because lunch starts from one level and dinner
+from another, and the two cancel exactly the rise the chart exists to show.
+
+Windows that are still open, and windows holding a second meal, are drawn but
+excluded from the medians: an unfinished window does not yet know its peak, and
+an overlapping one credits one meal with the rise from two.
+
+This describes outcomes and stops there. Whether a dose was right also depends on
+how long before the meal it went in, on activity, on illness and on insulin still
+active from an earlier injection — none of which is in this data, and the page
+says so.
 
 ## Configuration
 
@@ -101,6 +143,27 @@ In production it runs under pm2:
 ```bash
 pm2 start ecosystem.config.js
 ```
+
+## Preview
+
+`preview.py` serves the page from a throwaway copy of `web/` with a synthetic
+snapshot, so a change can be looked at before it reaches the server — no
+database, no LibreLinkUp, nothing written to `web/data.json`:
+
+```bash
+./venv/bin/python preview.py                 # синтетика, открывает браузер
+./venv/bin/python preview.py --real          # настоящий web/data.json
+./venv/bin/python preview.py --shot shots/   # снимки светлой и тёмной тем
+```
+
+The synthetic fortnight matters more than it looks: the real snapshot may carry
+no events at all — the journal is the bot's — and against that file the event
+lanes and the meal review render exactly as they did before any of them existed.
+It fakes a low every eleventh meal and an oversized rise every seventh, because
+a tidy curve would show a review of nothing but "в ориентире".
+
+`--shot` needs a headless Chrome; it looks in the Playwright cache first, then in
+`/Applications`, then on `PATH`. Without one it prints the URL and stops.
 
 ## Tests
 

@@ -75,9 +75,31 @@
                  для скринридера холст сам по себе — пустое место. -->
             <canvas id="canvas" role="img"></canvas>
             <p class="chart__empty" id="chart-empty" hidden>За этот период данных нет</p>
+            <!-- Подсказка следует за курсором; значения из неё продублированы
+                 в таблице ниже, чтобы ничего не пряталось за наведением. -->
+            <div class="tip" id="tip" hidden></div>
+            <ul class="legend" id="legend" hidden></ul>
         </section>
 
         <section class="stats" id="stats" hidden></section>
+
+        <section class="review" id="review" hidden>
+            <h2 class="review__title">Разбор приёмов пищи</h2>
+            <p class="review__note" id="review-note"></p>
+
+            <section class="stats" id="review-stats"></section>
+
+            <div class="review__panel">
+                <canvas id="overlay" role="img"></canvas>
+                <ul class="legend" id="overlay-legend"></ul>
+            </div>
+
+            <div class="meals__wrap">
+                <table class="meals" id="meals">
+                    <caption class="visually-hidden">Приёмы пищи и что было с глюкозой после каждого</caption>
+                </table>
+            </div>
+        </section>
 
         <footer class="foot">
             <p id="foot-updated"></p>

@@ -12,7 +12,8 @@ import os
 import tempfile
 from datetime import datetime, timedelta, timezone
 
-from database.queries import last_readings, readings_since
+from analysis import analyse
+from database.queries import journal_since, last_readings, readings_since
 
 
 PUBLISH_PATH = os.getenv(
@@ -36,6 +37,14 @@ RANGES = {
 # Окно для оценки тренда. Libre рисует стрелку по последним ~15 минутам;
 # на более коротком окне шум сенсора выдаёт скачки, которых нет.
 TREND_WINDOW = timedelta(minutes=15)
+
+# События рисуются только на суточной панели: сотня отметок на месячном окне
+# сливается в сплошную полосу, из которой ничего не прочитать.
+EVENT_WINDOW = timedelta(days=1)
+
+# А разбор приёмов пищи собирается за две недели: на суточном окне выборки
+# слишком мало, чтобы медиана подъёма что-то значила.
+ANALYSIS_WINDOW = timedelta(days=14)
 
 
 def _downsample(
@@ -116,6 +125,37 @@ def _trend(readings: list[tuple[datetime, float]]) -> dict | None:
     return latest
 
 
+def _events(
+    journal: list[tuple[datetime, str, float | None, float | None]], since: datetime
+) -> dict:
+    """Group journal entries into the three lanes the page draws.
+
+    Записи без своей величины пропускаются: столбик нулевой высоты на панели
+    неотличим от её отсутствия, а место в снимке занимает.
+    """
+
+    lanes: dict[str, list[list[float]]] = {"meals": [], "bolus": [], "basal": []}
+
+    for occurred_at, kind, carbs, units in journal:
+        if occurred_at < since:
+            continue
+
+        if kind == "meal":
+            lane, amount = "meals", carbs
+        elif kind in ("bolus", "basal"):
+            lane, amount = kind, units
+        else:
+            continue
+
+        if amount is None:
+            continue
+
+        seconds = int(occurred_at.replace(tzinfo=timezone.utc).timestamp())
+        lanes[lane].append([seconds, round(amount, 1)])
+
+    return lanes
+
+
 def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None:
     """Write the snapshot atomically so nginx never serves a half-written file.
 
@@ -136,6 +176,15 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
         series[name] = {"step": step_minutes, "points": _downsample(subset, step_minutes)}
         stats[name] = _stats(subset)
 
+    # Журнал ведёт бот, и его может не быть вовсе — тогда список пуст, панели
+    # событий на странице просто не появятся.
+    journal = journal_since(now - ANALYSIS_WINDOW)
+    meals = [
+        (occurred_at, carbs)
+        for occurred_at, kind, carbs, _ in journal
+        if kind == "meal" and carbs is not None
+    ]
+
     snapshot = {
         "generated_at": int(now.replace(tzinfo=timezone.utc).timestamp()),
         "collector": {
@@ -147,6 +196,8 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
         "latest": _trend(last_readings()),
         "series": series,
         "stats": stats,
+        "events": _events(journal, now - EVENT_WINDOW),
+        "analysis": analyse(meals, readings, now, hypo_mgdl=TARGET_LOW_MGDL),
     }
 
     directory = os.path.dirname(os.path.abspath(path))

@@ -1,12 +1,17 @@
 """Helper functions for common database operations."""
 
+import logging
 from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.dialects.mysql import insert
+from sqlalchemy.exc import SQLAlchemyError
 
 from .connection import session
-from .models import GlucoseReading
+from .models import GlucoseReading, journal_entries
+
+
+log = logging.getLogger("glucose.queries")
 
 
 def store_readings(readings: list[tuple[datetime, float]]) -> int:
@@ -62,3 +67,39 @@ def last_readings(limit: int = 10) -> list[tuple[datetime, float]]:
         ).all()
 
     return [(row.timestamp, row.mgdl) for row in reversed(rows)]
+
+
+def journal_since(start: datetime) -> list[tuple[datetime, str, float | None, float | None]]:
+    """Return journal events at or after ``start``, oldest first.
+
+    Возвращает пустой список, если таблицы нет. Журнал заводит бот, а
+    коллектор с дашбордом работали задолго до него и обязаны продолжать
+    работать без него: график глюкозы не должен пропадать оттого, что бота ещё
+    не развернули или его схему переименовали.
+    """
+
+    try:
+        with session() as db:
+            rows = db.execute(
+                select(
+                    journal_entries.c.occurred_at,
+                    journal_entries.c.kind,
+                    journal_entries.c.carbs_g,
+                    journal_entries.c.units,
+                )
+                .where(journal_entries.c.occurred_at >= start)
+                .order_by(journal_entries.c.occurred_at)
+            ).all()
+    except SQLAlchemyError as error:
+        log.warning("journal unavailable, publishing without events: %s", error)
+        return []
+
+    return [
+        (
+            row.occurred_at,
+            str(row.kind),
+            None if row.carbs_g is None else float(row.carbs_g),
+            None if row.units is None else float(row.units),
+        )
+        for row in rows
+    ]

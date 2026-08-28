@@ -1,10 +1,41 @@
 """SQLAlchemy models for database tables."""
 
-from sqlalchemy import Column, DateTime, Float
+from sqlalchemy import (
+    BigInteger,
+    Column,
+    DateTime,
+    Float,
+    MetaData,
+    Numeric,
+    String,
+    Table,
+    Text,
+)
 from sqlalchemy.orm import declarative_base
 
 
 Base = declarative_base()
+
+# Журнал событий принадлежит боту GlucoseBot — он его создаёт и в него пишет.
+# Здесь только чтение, и метаданные намеренно отдельные: попади таблица в
+# Base, init_schema() коллектора создавал бы её сам, и версия схемы зависела
+# бы от того, кто из двух процессов стартовал первым.
+journal_metadata = MetaData()
+
+journal_entries = Table(
+    "journal_entries",
+    journal_metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("occurred_at", DateTime, nullable=False),
+    Column("tg_user_id", BigInteger, nullable=False),
+    # В боте это ENUM('meal','bolus','basal'); читаем строкой, чтобы новое
+    # значение на той стороне не роняло выкладку снимка здесь.
+    Column("kind", String(16), nullable=False),
+    Column("carbs_g", Numeric(6, 1)),
+    Column("units", Numeric(5, 2)),
+    Column("note", Text),
+    Column("source", String(32)),
+)
 
 
 class GlucoseReading(Base):
