@@ -1,24 +1,61 @@
 /* Палитра и типографика повторяют gistrec.cloud, чтобы поддомен не выглядел
-   чужим: тот же фон, те же два шрифта, тот же голубой акцент. */
+   чужим: тот же фон, те же два шрифта, тот же голубой акцент.
+
+   Тема идёт за системой, а кнопка в шапке умеет её зафиксировать: кнопка
+   переставляет color-scheme, а light-dark() сам выбирает значение из пары.
+   Первая строка каждой пары — запасная, для браузеров без light-dark(): там
+   останется ночной вариант, как было до появления светлой темы.
+
+   Светлые цвета зон не осветлённые ночные, а подобранные заново: пастельный
+   зелёный, отлично читаемый на почти чёрной панели, на белой не виден вовсе.
+   Контраст проверен по WCAG, худшая пара — 4,95:1. */
 :root {
+    color-scheme: light dark;
+
     --bg: #07070b;
+    --bg: light-dark(#f4f5f9, #07070b);
     --fg: #dde1ec;
+    --fg: light-dark(#12141c, #dde1ec);
     --muted: #4f546a;
+    --muted: light-dark(#5b6070, #4f546a);
     --accent: #7eb8f7;
+    --accent: light-dark(#1f6fd0, #7eb8f7);
     --panel: #0d0d14;
+    --panel: light-dark(#ffffff, #0d0d14);
     --panel-chrome: #111118;
+    --panel-chrome: light-dark(#e2e5ef, #111118);
 
     /* Зоны гликемии. Зелёный — тот же оттенок, что --code на основном сайте. */
     --low: #f7b77e;
+    --low: light-dark(#a2560e, #f7b77e);
     --in-range: #7efcb0;
+    --in-range: light-dark(#0f7a4d, #7efcb0);
     --high: #f77e9b;
+    --high: light-dark(#c02546, #f77e9b);
 
-    /* Прозрачность подложки целевого диапазона на графике. Живёт в CSS, а не
-       в app.js, потому что зависит от темы: на светлом фоне те же 7% зелёного
-       не видно вовсе. */
+    /* Прозрачность подложки целевого диапазона на графике. Здесь light-dark()
+       не помощник — она работает только с цветом, — поэтому светлый вариант
+       задан правилами ниже: на белом те же 7% зелёного не видно. */
     --band-alpha: 0.07;
 
     --radius: 12px;
+}
+
+/* Ручной выбор: кнопка ставит атрибут, атрибут задаёт color-scheme, всё
+   остальное вытекает из него само. */
+:root[data-theme="light"] {
+    color-scheme: light;
+    --band-alpha: 0.12;
+}
+
+:root[data-theme="dark"] {
+    color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+        --band-alpha: 0.12;
+    }
 }
 
 * {
@@ -48,6 +85,10 @@ body {
 
 /* ── Шапка ─────────────────────────────────────────────────────────── */
 .head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
     margin-bottom: 32px;
 }
 
@@ -56,9 +97,46 @@ body {
     font-size: clamp(2rem, 7vw, 2.75rem);
     font-weight: 800;
     background: linear-gradient(120deg, #ffffff, var(--accent));
+    /* Белый конец градиента уместен на чёрном фоне, а на светлом стирал первую
+       половину слова, поэтому в светлой теме он становится чернильным. */
+    background: linear-gradient(120deg, light-dark(#0b0d14, #ffffff), var(--accent));
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
+}
+
+/* Кнопка темы. Размер не зависит от подписи: «Авто» короче «Светлой», и без
+   фиксированной ширины шапка дёргалась бы при каждом переключении. */
+.theme {
+    flex: none;
+    min-width: 7.5rem;
+    margin-top: 6px;
+    padding: 8px 12px;
+    background: var(--panel);
+    border: 1px solid var(--panel-chrome);
+    border-radius: var(--radius);
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.theme:hover {
+    color: var(--fg);
+    border-color: var(--accent);
+}
+
+@media (max-width: 420px) {
+    /* На узком экране заголовок и так занимает всю строку — подпись кнопки
+       уезжает, остаётся значок. */
+    .theme {
+        min-width: 0;
+    }
+
+    .theme__label {
+        display: none;
+    }
 }
 
 .head__sub {
@@ -245,37 +323,3 @@ body {
     color: var(--low);
 }
 
-/* ── Светлая тема ──────────────────────────────────────────────────────
-   Не отдельная страница и не переключатель: браузер уже знает, какую тему
-   выбрал пользователь, а на телефоне она к тому же меняется по расписанию.
-   Ниже только палитра — вёрстка держится на тех же переменных, и холст
-   читает их через getComputedStyle, так что график перекрашивается заодно.
-
-   Цвета зон здесь темнее ночных: пастельный зелёный, отлично читаемый на
-   почти чёрной панели, на белой не читается вовсе. Контраст проверен по
-   WCAG — ни одна пара не ниже 4.9:1. */
-@media (prefers-color-scheme: light) {
-    :root {
-        --bg: #f4f5f9;
-        --fg: #12141c;
-        --muted: #5b6070;
-        --accent: #1f6fd0;
-        --panel: #ffffff;
-        --panel-chrome: #e2e5ef;
-
-        --low: #a2560e;
-        --in-range: #0f7a4d;
-        --high: #c02546;
-
-        --band-alpha: 0.12;
-    }
-
-    /* Градиент заголовка идёт от чернил к акценту. Белый конец, уместный на
-       чёрном фоне, на светлом стирал первую половину слова. Свойства clip
-       повторены намеренно: сокращение background сбрасывает их. */
-    .head__title {
-        background: linear-gradient(120deg, #0b0d14, var(--accent));
-        -webkit-background-clip: text;
-        background-clip: text;
-    }
-}

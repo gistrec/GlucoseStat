@@ -33,7 +33,82 @@ const els = {
     canvas: document.getElementById("canvas"),
     stats: document.getElementById("stats"),
     footUpdated: document.getElementById("foot-updated"),
+    theme: document.getElementById("theme"),
+    themeColor: document.getElementById("theme-color"),
 };
+
+/* ── Тема ──────────────────────────────────────────────────────────── */
+
+/* Три состояния, а не два. «Как в системе» — не то же самое, что «тёмная»:
+   телефон переключается на закате сам, и человеку, которого это устраивает,
+   незачем выбирать вручную дважды в сутки. Порядок перебора начинается с
+   системы, чтобы к ней всегда можно было вернуться. */
+const THEMES = [
+    { id: "auto", glyph: "◐", label: "Авто", hint: "Тема как в системе" },
+    { id: "light", glyph: "☀", label: "Светлая", hint: "Всегда светлая тема" },
+    { id: "dark", glyph: "☾", label: "Тёмная", hint: "Всегда тёмная тема" },
+];
+
+// Те же значения, что у --bg в style.css: сюда попадает цвет панели Safari.
+const THEME_BG = { light: "#f4f5f9", dark: "#07070b" };
+
+let theme = "auto";
+
+function systemPrefersDark() {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+/* Хранилище недоступно в приватном режиме Safari, и обращение к нему там
+   бросает исключение. Тема — не та вещь, ради которой страница вправе не
+   открыться, поэтому оба обращения обёрнуты. */
+function storedTheme() {
+    try {
+        const saved = localStorage.getItem("theme");
+        return THEMES.some((item) => item.id === saved) ? saved : "auto";
+    } catch (error) {
+        return "auto";
+    }
+}
+
+function rememberTheme(id) {
+    try {
+        localStorage.setItem("theme", id);
+    } catch (error) {
+        /* Забудется после закрытия вкладки — не повод ломать переключение. */
+    }
+}
+
+function applyTheme(id) {
+    const current = THEMES.find((item) => item.id === id) || THEMES[0];
+    theme = current.id;
+
+    if (theme === "auto") {
+        delete document.documentElement.dataset.theme;
+    } else {
+        document.documentElement.dataset.theme = theme;
+    }
+
+    const glyph = document.createElement("span");
+    glyph.setAttribute("aria-hidden", "true");
+    glyph.textContent = `${current.glyph} `;
+
+    const label = document.createElement("span");
+    label.className = "theme__label";
+    label.textContent = current.label;
+
+    els.theme.replaceChildren(glyph, label);
+    // На узком экране подпись скрыта, и значок остаётся единственным
+    // указанием — для скринридера он не значит ничего.
+    els.theme.setAttribute("aria-label", current.hint);
+    els.theme.title = current.hint;
+
+    const dark = theme === "dark" || (theme === "auto" && systemPrefersDark());
+    els.themeColor.setAttribute("content", dark ? THEME_BG.dark : THEME_BG.light);
+
+    // Разметка перекрашивается сама, холст — нет: его цвета прочитаны из
+    // CSS-переменных один раз, при отрисовке.
+    if (snapshot && snapshot.latest) drawChart();
+}
 
 /* ── Форматирование ────────────────────────────────────────────────── */
 
@@ -440,13 +515,20 @@ window.addEventListener("resize", () => {
     if (snapshot && snapshot.latest) drawChart();
 });
 
-/* Разметка перекрашивается сама, а холст — нет: его цвета прочитаны из
-   CSS-переменных один раз при отрисовке. Без этого смена темы (на телефоне
-   она происходит по расписанию, посреди чтения) оставляла бы вчерашнюю
-   линию на новом фоне. */
-window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
-    if (snapshot && snapshot.latest) drawChart();
+els.theme.addEventListener("click", () => {
+    const next = THEMES[(THEMES.findIndex((item) => item.id === theme) + 1) % THEMES.length];
+    applyTheme(next.id);
+    rememberTheme(next.id);
 });
+
+/* В режиме «как в системе» смена темы приходит извне — на телефоне она
+   случается по расписанию, посреди чтения. Перерисовать нужно и холст, и
+   цвет панели Safari, что applyTheme делает заодно. */
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if (theme === "auto") applyTheme("auto");
+});
+
+applyTheme(storedTheme());
 
 load();
 setInterval(load, RELOAD_INTERVAL_MS);

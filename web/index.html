@@ -7,10 +7,25 @@
          прокрутки, поле поиска по странице — в тёмном варианте поверх
          светлой страницы. -->
     <meta name="color-scheme" content="dark light" />
-    <!-- Панель Safari на iOS красится в этот цвет. Одного значения мало:
-         чёрная полоса над белой страницей выглядит обрезком чужого сайта. -->
-    <meta name="theme-color" content="#07070b" media="(prefers-color-scheme: dark)" />
-    <meta name="theme-color" content="#f4f5f9" media="(prefers-color-scheme: light)" />
+    <!-- Панель Safari на iOS красится в этот цвет. Значение ставит app.js: по
+         медиазапросу оно отвечало бы за систему даже тогда, когда тему выбрали
+         кнопкой вручную. -->
+    <meta name="theme-color" id="theme-color" content="#07070b" />
+
+    <script>
+        /* Выбранная тема применяется до первой отрисовки. Остальной скрипт
+           грузится в конце body, и без этих трёх строк светлая страница
+           моргала бы чёрным на каждом открытии. */
+        try {
+            const saved = localStorage.getItem("theme");
+            if (saved === "light" || saved === "dark") {
+                document.documentElement.dataset.theme = saved;
+            }
+        } catch (error) {
+            /* Приватный режим Safari запрещает localStorage: тема не
+               запомнится, но страница обязана открыться. */
+        }
+    </script>
     <title>Глюкоза — gistrec.cloud</title>
     <meta name="description" content="Показания сенсора FreeStyle Libre 3, обновляются каждые пять минут." />
     <meta name="robots" content="noindex" />
@@ -26,8 +41,13 @@
 <body>
     <main class="page">
         <header class="head">
-            <h1 class="head__title">Глюкоза</h1>
-            <p class="head__sub">FreeStyle Libre 3 → LibreLinkUp, обновление каждые 5 минут</p>
+            <div class="head__text">
+                <h1 class="head__title">Глюкоза</h1>
+                <p class="head__sub">FreeStyle Libre 3 → LibreLinkUp, обновление каждые 5 минут</p>
+            </div>
+            <!-- Подпись и заголовок задаёт app.js: кнопка перебирает три
+                 состояния, и её текст — единственное, что о них сообщает. -->
+            <button class="theme" id="theme" type="button"></button>
         </header>
 
         <section class="now" id="now" hidden>
