@@ -78,11 +78,24 @@ function readNumber(name, fallback) {
 
 /* Ряды графика в одном месте: отсюда берут цвет и холст, и легенда, и
    подсказка — разъехавшись, они перестали бы опознавать одно и то же. */
+/* Название — в легенде, единица — в подсказке рядом с числом. Разводить их
+   стоит потому, что в легенде единица не к чему приложить, а в подсказке
+   название дублирует цветную метку слева от него.
+
+   У длинного инсулина единица не просто «ед»: он делит и цвет, и шкалу с
+   коротким, и две строки «5 ед» / «8 ед» различались бы только заливкой
+   квадратика. */
 const SERIES = {
-    glucose: { token: "--accent", fallback: "#7eb8f7", label: "Глюкоза" },
-    meal: { token: "--meal", fallback: "#bd8a30", label: "Еда, г углеводов" },
-    insulin: { token: "--insulin", fallback: "#cc4fb0", label: "Короткий инсулин, ед" },
-    basal: { token: "--insulin", fallback: "#cc4fb0", label: "Длинный инсулин, ед", hollow: true },
+    glucose: { token: "--accent", fallback: "#7eb8f7", label: "Глюкоза", unit: "ммоль/л" },
+    meal: { token: "--meal", fallback: "#bd8a30", label: "Углеводы", unit: "г" },
+    insulin: { token: "--insulin", fallback: "#cc4fb0", label: "Короткий инсулин", unit: "ед" },
+    basal: {
+        token: "--insulin",
+        fallback: "#cc4fb0",
+        label: "Длинный инсулин",
+        unit: "ед длинного",
+        hollow: true,
+    },
 };
 
 /* ── Тема ──────────────────────────────────────────────────────────── */
@@ -761,7 +774,9 @@ function showTip(clientX) {
     const rows = [];
 
     if (point) {
-        rows.push(tipRow(SERIES.glucose, `${formatMmol(point[1])} ммоль/л`));
+        rows.push(
+            tipRow(SERIES.glucose, `${formatMmol(point[1])} ${SERIES.glucose.unit}`)
+        );
     }
 
     // Событие в пределах четверти часа от курсора: столбик и точка кривой
@@ -769,7 +784,7 @@ function showTip(clientX) {
     for (const box of geometry.laneBoxes) {
         for (const bar of box.lane.bars) {
             if (Math.abs(bar.t - hoverTime) <= 900) {
-                rows.push(tipRow(bar.series, `${bar.series.label}: ${formatAmount(bar.v)}`));
+                rows.push(tipRow(bar.series, `${formatAmount(bar.v)} ${bar.series.unit}`));
             }
         }
     }
