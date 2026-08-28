@@ -11,9 +11,11 @@ from notify import (
     HIGH,
     LOW,
     LOW_MGDL,
+    LOW_SOUND,
     REPEAT_AFTER,
     URGENT,
     URGENT_MGDL,
+    URGENT_SOUND,
     _minutes,
     _mmol,
     decide,
@@ -50,6 +52,13 @@ class TestFirstAlert:
 
         assert alert.level == URGENT
         assert alert.priority == EMERGENCY
+
+    def test_the_two_levels_sound_different(self):
+        # Звук задан явно, а не оставлен на настройку приложения, и у порогов
+        # он разный — критическую гипогликемию слышно, не доставая телефон.
+        assert decide(65, FRESH, {}, NOW)[0].sound == LOW_SOUND
+        assert decide(50, FRESH, {}, NOW)[0].sound == URGENT_SOUND
+        assert LOW_SOUND != URGENT_SOUND
 
     def test_the_threshold_itself_is_still_in_range(self):
         # 70 мг/дл — граница целевого диапазона, а не выход из него.

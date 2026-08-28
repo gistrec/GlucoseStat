@@ -61,6 +61,12 @@ other poll.
 Readings older than 15 minutes never alert. Otherwise a restart would fire an
 alarm over last week's hypo, still sitting in the database as the latest row.
 
+Each level names its sound — `falling` for a low, `siren` for a critical one —
+instead of leaving it to whatever default tone the app happens to be set to,
+which also tells the two apart before the phone is out of a pocket. Neither
+gets past an iPhone's mute switch: Pushover holds no critical-alert
+entitlement, so a silenced phone stays silent, priority 2 included.
+
 This is an addition to the alarms of the Libre app, not a replacement: nothing
 fires while Abbott is unreachable, the sensor is off, or the collector is down.
 

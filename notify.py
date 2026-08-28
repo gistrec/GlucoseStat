@@ -60,6 +60,16 @@ EMERGENCY = 2
 EMERGENCY_RETRY = 120
 EMERGENCY_EXPIRE = 30 * 60
 
+# Звук задаётся явно. Без параметра Pushover играет «тон по умолчанию» — тот,
+# что выбран в приложении когда-то и для чего угодно; тревога, которую можно
+# не отличить от почты, тревогой не работает. Два разных звука ещё и отделяют
+# критическую гипогликемию от низкого сахара на слух, до того как достанут
+# телефон. Обойти беззвучный режим ни один из них не может: у Pushover нет
+# entitlement на Apple Critical Alerts, и переключатель на боку iPhone глушит
+# в том числе priority 2.
+LOW_SOUND = "falling"
+URGENT_SOUND = "siren"
+
 LOW = "low"
 URGENT = "urgent"
 SEVERITY = {LOW: 1, URGENT: 2}
@@ -73,6 +83,7 @@ class Alert:
     title: str
     message: str
     priority: int
+    sound: str
 
 
 def _level(mgdl: float) -> str | None:
@@ -116,6 +127,7 @@ def _alert(level: str, mgdl: float, duration: float) -> Alert:
         title="Критически низкий сахар" if urgent else "Низкий сахар",
         message=message,
         priority=EMERGENCY if urgent else HIGH,
+        sound=URGENT_SOUND if urgent else LOW_SOUND,
     )
 
 
@@ -231,6 +243,7 @@ class Notifier:
             "title": alert.title,
             "message": alert.message,
             "priority": alert.priority,
+            "sound": alert.sound,
             # Время замера, а не отправки: Pushover покажет его в часовом поясе
             # телефона, а сам процесс живёт в UTC.
             "timestamp": int(timestamp),
