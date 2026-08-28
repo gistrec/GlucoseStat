@@ -172,3 +172,24 @@ class TestEvents:
         lanes = _events(journal, BASE - timedelta(days=1))
 
         assert lanes == {"meals": [], "bolus": [], "basal": []}
+
+
+class TestJournalAbsent:
+    """Дашборд обязан пережить отсутствие журнала.
+
+    Таблицу заводит бот, и до его первой выкладки её на сервере нет. Если
+    запрос к ней уронит publish(), страница перестанет обновляться — то есть
+    выкладка коллектора сломает то, что работало годами.
+    """
+
+    def test_missing_table_yields_no_events(self, monkeypatch):
+        from sqlalchemy import create_engine
+
+        from database import connection
+        from database.queries import journal_since
+
+        # База без единой таблицы — ровно то, что увидит коллектор до бота
+        empty = create_engine("sqlite://")
+        monkeypatch.setattr(connection, "_engine", lambda: empty)
+
+        assert journal_since(BASE - timedelta(days=1)) == []
