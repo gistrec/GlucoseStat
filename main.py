@@ -12,10 +12,13 @@ import time
 from dotenv import load_dotenv
 
 from database.connection import init_schema
-from database.queries import store_readings
+from database.queries import last_readings, store_readings
 from librelinkup import COOLDOWN_MAX, AuthError, LibreLinkUp, RateLimited
+from notify import Notifier
 from publish import publish
 
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Полное окно ретраев — от минуты до получаса. Верхняя граница выбрана так,
 # чтобы после долгой недоступности Abbott сборщик всё же догнал историю:
@@ -89,8 +92,9 @@ def main() -> None:
         email,
         password,
         region=os.getenv("LLU_REGION", "de"),
-        token_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".llu-token.json"),
+        token_path=os.path.join(BASE_DIR, ".llu-token.json"),
     )
+    notifier = Notifier.from_env(state_path=os.path.join(BASE_DIR, ".alerts.json"))
 
     backoff = BACKOFF_MIN
     last_success: float | None = None
@@ -116,6 +120,16 @@ def main() -> None:
             delay = backoff
             backoff = min(backoff * 2, BACKOFF_MAX)
             log.exception("poll failed, retrying in %ds", delay)
+
+        # Тревога считается по свежайшей строке в базе, а не по ответу Abbott:
+        # при пустом graph или неудачном опросе последнее известное значение
+        # остаётся старым, и notify отсеет его по возрасту — вместо того чтобы
+        # поднять тревогу по позавчерашней гипогликемии.
+        if notifier:
+            try:
+                notifier.check(last_readings(1))
+            except Exception:
+                log.exception("failed to check the alert thresholds")
 
         # Снимок переписывается и после неудачи: только так на странице
         # появляется отметка, что сборщик молчит. Прежде publish() стоял

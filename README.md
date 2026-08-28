@@ -4,13 +4,14 @@ Collects FreeStyle Libre 3 readings from LibreLinkUp into MySQL and renders a
 public dashboard from them — live at
 [glucose.gistrec.cloud](https://glucose.gistrec.cloud).
 
-A single pm2 process does both jobs: it polls LibreLinkUp every five minutes,
-stores whatever is new, and rewrites `web/data.json`. nginx serves `web/` as
-plain static files, so a page view never touches MySQL and never reaches
-Abbott.
+A single pm2 process does the lot: it polls LibreLinkUp every five minutes,
+stores whatever is new, rewrites `web/data.json`, and pushes a phone alert if
+the reading is low. nginx serves `web/` as plain static files, so a page view
+never touches MySQL and never reaches Abbott.
 
 ```
 LibreLinkUp ──poll 5m──▶ main.py ──▶ MySQL ──▶ publish.py ──▶ web/data.json ──▶ nginx
+                             └──────────────▶ notify.py ───▶ Pushover
 ```
 
 ## What the page shows
@@ -37,6 +38,31 @@ Copy `.env.example` to `.env` and fill it in:
   start.
 * `MYSQL_SSL_CA` — only for managed databases that require TLS.
 * `FETCH_INTERVAL_MINUTES` — polling interval, defaults to `5`.
+* `PUSHOVER_TOKEN`, `PUSHOVER_USER` — turn on the low-glucose alerts below.
+  Unset, the collector stores readings and alerts about nothing.
+
+## Alerts
+
+With Pushover configured, every poll checks the newest reading and sends a
+notification when it is low: below 70 mg/dL (3.9 mmol/L) at priority 1, which
+arrives even during quiet hours, and below 55 mg/dL (3.0 mmol/L) at priority 2,
+which Pushover keeps repeating every two minutes until it is acknowledged in
+the app.
+
+The same low arrives on every poll, so the collector remembers the episode in
+`.alerts.json` — in a file rather than in memory, because pm2 restarts the
+process on any failure and a forgotten episode means the phone buzzes again
+about a low it already reported. Within one episode it repeats at most every
+30 minutes, and it escalates immediately if a low turns critical. The episode
+closes only at 80 mg/dL, ten above the threshold: without that margin a reading
+hovering around 70 would open a new episode — and send a new alert — every
+other poll.
+
+Readings older than 15 minutes never alert. Otherwise a restart would fire an
+alarm over last week's hypo, still sitting in the database as the latest row.
+
+This is an addition to the alarms of the Libre app, not a replacement: nothing
+fires while Abbott is unreachable, the sensor is off, or the collector is down.
 
 ## Running
 
@@ -56,8 +82,8 @@ pm2 start ecosystem.config.js
 ## Tests
 
 The snapshot maths — time in range, GMI, variability, downsampling, trend —
-is pure functions over a list of readings, so the tests need neither a
-database nor the network:
+is pure functions over a list of readings, and so is the alert decision, so
+the tests need neither a database nor the network:
 
 ```bash
 ./venv/bin/pip install -r requirements-dev.txt

@@ -211,3 +211,6 @@ web/data.json
 
 # Cached LibreLinkUp session token
 .llu-token.json*
+
+# Alert state — which low has already been reported
+.alerts.json*
