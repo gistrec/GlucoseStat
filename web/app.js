@@ -18,8 +18,25 @@ const COLLECTOR_SILENT_AFTER_MS = 15 * 60 * 1000;
 
 const RANGE_LABELS = { day: "24 часа", week: "7 дней", month: "30 дней" };
 
+// Высота холста без дорожек событий — та же, что была до их появления.
+const PLOT_HEIGHT = 340;
+const LANE_HEIGHT = 34;
+const LANE_GAP = 8;
+const COLUMN_WIDTH = 7;
+
+// Больше шести столбиков — и подписи над ними начинают наезжать друг на друга.
+// Тогда подписывается только самый крупный, остальное читается наведением и
+// таблицей разбора.
+const LABEL_LIMIT = 6;
+
 let snapshot = null;
 let activeRange = "day";
+
+// Раскладка последней отрисовки: по ней работает наведение. Пересчитывать её
+// на каждое движение мыши — значит дублировать всю геометрию и однажды
+// разойтись с тем, что нарисовано.
+let geometry = null;
+let hoverTime = null;
 
 const els = {
     now: document.getElementById("now"),
@@ -32,9 +49,40 @@ const els = {
     chartEmpty: document.getElementById("chart-empty"),
     canvas: document.getElementById("canvas"),
     stats: document.getElementById("stats"),
+    legend: document.getElementById("legend"),
+    tip: document.getElementById("tip"),
+    review: document.getElementById("review"),
+    reviewNote: document.getElementById("review-note"),
+    reviewStats: document.getElementById("review-stats"),
+    overlay: document.getElementById("overlay"),
+    overlayLegend: document.getElementById("overlay-legend"),
+    meals: document.getElementById("meals"),
     footUpdated: document.getElementById("foot-updated"),
     theme: document.getElementById("theme"),
     themeColor: document.getElementById("theme-color"),
+};
+
+/* Пользовательское свойство приходит сюда невычисленным — как записано в CSS.
+   Значение, которое не является цветом (так было с light-dark()), канвас молча
+   игнорирует и продолжает рисовать предыдущим, то есть чёрным: график исчезал
+   на тёмном фоне, не оставив следа в консоли. Поэтому цвет проверяется, а не
+   берётся на веру. */
+function readColor(name, fallback) {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return /^(#|rgb|hsl)/.test(value) ? value : fallback;
+}
+
+function readNumber(name, fallback) {
+    return Number(getComputedStyle(document.documentElement).getPropertyValue(name)) || fallback;
+}
+
+/* Ряды графика в одном месте: отсюда берут цвет и холст, и легенда, и
+   подсказка — разъехавшись, они перестали бы опознавать одно и то же. */
+const SERIES = {
+    glucose: { token: "--accent", fallback: "#7eb8f7", label: "Глюкоза" },
+    meal: { token: "--meal", fallback: "#bd8a30", label: "Еда, г углеводов" },
+    insulin: { token: "--insulin", fallback: "#cc4fb0", label: "Короткий инсулин, ед" },
+    basal: { token: "--insulin", fallback: "#cc4fb0", label: "Длинный инсулин, ед", hollow: true },
 };
 
 /* ── Тема ──────────────────────────────────────────────────────────── */
@@ -104,9 +152,12 @@ function applyTheme(id) {
 
     els.themeColor.setAttribute("content", THEME_BG[theme]);
 
-    // Разметка перекрашивается сама, холст — нет: его цвета прочитаны из
+    // Разметка перекрашивается сама, холсты — нет: их цвета прочитаны из
     // CSS-переменных один раз, при отрисовке.
-    if (snapshot && snapshot.latest) drawChart();
+    if (snapshot && snapshot.latest) {
+        drawChart();
+        renderReview();
+    }
 }
 
 /* ── Форматирование ────────────────────────────────────────────────── */
@@ -290,14 +341,135 @@ function niceScale(points) {
     return { min: Math.floor(min) - 0.5, max: Math.ceil(max) + 0.5 };
 }
 
+/* Событийные дорожки рисуются только на суточном окне. За месяц отметок
+   набирается сотня: они сливаются в сплошную полосу, из которой ничего не
+   прочитать. На длинных окнах за события отвечает разбор ниже, а не график. */
+function eventLanes() {
+    if (activeRange !== "day") return [];
+
+    const events = snapshot.events || {};
+    const lanes = [];
+
+    if ((events.meals || []).length) {
+        lanes.push({
+            unit: "г",
+            bars: events.meals.map(([t, v]) => ({ t, v, series: SERIES.meal })),
+        });
+    }
+
+    /* Короткий и длинный в одной дорожке: и то и другое меряется единицами, а
+       разные шкалы для одной величины — тот самый второй вертикальный масштаб,
+       который выдумывает связь на пустом месте. Различаются заливкой:
+       короткий сплошной, длинный контуром. */
+    const insulin = [
+        ...(events.bolus || []).map(([t, v]) => ({ t, v, series: SERIES.insulin })),
+        ...(events.basal || []).map(([t, v]) => ({ t, v, series: SERIES.basal })),
+    ].sort((a, b) => a.t - b.t);
+
+    if (insulin.length) {
+        lanes.push({ unit: "ед", bars: insulin });
+    }
+
+    return lanes;
+}
+
+/* Столбик со скруглённой макушкой и прямым основанием: основание сидит на
+   базовой линии дорожки, и округлять его — значит отрывать столбик от нуля. */
+function columnPath(ctx, left, top, width, bottom) {
+    const radius = Math.min(width / 2, 3, Math.max(0, bottom - top));
+
+    ctx.beginPath();
+    ctx.moveTo(left, bottom);
+    ctx.lineTo(left, top + radius);
+    ctx.quadraticCurveTo(left, top, left + radius, top);
+    ctx.lineTo(left + width - radius, top);
+    ctx.quadraticCurveTo(left + width, top, left + width, top + radius);
+    ctx.lineTo(left + width, bottom);
+    ctx.closePath();
+}
+
+function drawLane(ctx, lane, box, x, muted, axisAlpha) {
+    const bottom = box.top + LANE_HEIGHT;
+
+    // Базовая линия — своя у каждой дорожки: столбики растут от неё, а не от
+    // чужого нуля.
+    ctx.strokeStyle = muted;
+    ctx.globalAlpha = 0.25;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(box.left, Math.round(bottom) + 0.5);
+    ctx.lineTo(box.right, Math.round(bottom) + 0.5);
+    ctx.stroke();
+
+    // Единица в левом отступе, там же, где числа основной оси. Полное название
+    // ряда даёт легенда — в 38 пикселях оно всё равно не поместится.
+    ctx.globalAlpha = axisAlpha;
+    ctx.fillStyle = muted;
+    ctx.font = '10px "JetBrains Mono", monospace';
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    ctx.fillText(lane.unit, box.left - 8, box.top + LANE_HEIGHT / 2);
+    ctx.globalAlpha = 1;
+
+    // Запас сверху, чтобы подпись самого высокого столбика не упиралась в
+    // соседнюю дорожку.
+    const peak = Math.max(...lane.bars.map((bar) => bar.v));
+    const scale = peak > 0 ? (LANE_HEIGHT - 12) / peak : 0;
+    const labelAll = lane.bars.length <= LABEL_LIMIT;
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+
+    for (const bar of lane.bars) {
+        const centre = x(bar.t);
+        if (centre < box.left - COLUMN_WIDTH || centre > box.right + COLUMN_WIDTH) continue;
+
+        // Минимальная высота: доза в половину единицы иначе рисуется в ноль
+        // пикселей и выглядит как пропущенная запись.
+        const top = bottom - Math.max(3, bar.v * scale);
+        const left = centre - COLUMN_WIDTH / 2;
+        const color = readColor(bar.series.token, bar.series.fallback);
+
+        columnPath(ctx, left, top, COLUMN_WIDTH, bottom);
+        if (bar.series.hollow) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        } else {
+            ctx.fillStyle = color;
+            ctx.fill();
+        }
+
+        // Подписи — только пока их немного: у дорожки нет своей оси, и при
+        // четырёх столбиках подпись и есть шкала. Дальше числа сливаются, и
+        // их читают наведением и таблицей разбора.
+        if (labelAll || bar.v === peak) {
+            ctx.fillStyle = muted;
+            ctx.globalAlpha = axisAlpha;
+            ctx.fillText(formatAmount(bar.v), centre, top - 2);
+            ctx.globalAlpha = 1;
+        }
+    }
+}
+
+function formatAmount(value) {
+    return value.toLocaleString("ru-RU", { maximumFractionDigits: 1 });
+}
+
 function drawChart() {
     const series = snapshot.series[activeRange];
     const points = series.points;
+    const lanes = eventLanes();
 
     els.chartEmpty.hidden = points.length > 0;
     els.canvas.setAttribute("aria-label", chartDescription(points));
+    renderLegend(lanes);
 
     const canvas = els.canvas;
+    // Холст растёт вместе с дорожками. Подписи оси обязаны остаться внутри:
+    // не хватит высоты — и у карточки заведётся собственная полоса прокрутки.
+    canvas.style.height = `${PLOT_HEIGHT + lanes.length * (LANE_HEIGHT + LANE_GAP)}px`;
+
     const ratio = window.devicePixelRatio || 1;
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
@@ -309,12 +481,17 @@ function drawChart() {
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, width, height);
 
-    if (!points.length) return;
+    if (!points.length) {
+        geometry = null;
+        hideTip();
+        return;
+    }
 
     // bottom с запасом на вторую строку подписи — дату на смене дня.
     const padding = { top: 12, right: 12, bottom: 38, left: 38 };
     const plotWidth = width - padding.left - padding.right;
-    const plotHeight = height - padding.top - padding.bottom;
+    const lanesHeight = lanes.length * (LANE_HEIGHT + LANE_GAP);
+    const plotHeight = height - padding.top - padding.bottom - lanesHeight;
 
     const scale = niceScale(points);
     const now = snapshot.generated_at;
@@ -327,20 +504,10 @@ function drawChart() {
 
     const styles = getComputedStyle(document.documentElement);
 
-    /* Пользовательское свойство приходит сюда невычисленным — как записано в
-       CSS. Значение, которое не является цветом (так было с light-dark()),
-       канвас молча игнорирует и продолжает рисовать предыдущим, то есть
-       чёрным: график исчезал на тёмном фоне, не оставив следа в консоли.
-       Поэтому цвет проверяется, а не берётся на веру. */
-    const themeColor = (name, fallback) => {
-        const value = styles.getPropertyValue(name).trim();
-        return /^(#|rgb|hsl)/.test(value) ? value : fallback;
-    };
-
-    const muted = themeColor("--muted", "#8a90a6");
-    const accent = themeColor("--accent", "#7eb8f7");
-    const inRange = themeColor("--in-range", "#7efcb0");
-    const axisAlpha = Number(styles.getPropertyValue("--axis-alpha")) || 0.85;
+    const muted = readColor("--muted", "#8a90a6");
+    const accent = readColor("--accent", "#7eb8f7");
+    const inRange = readColor("--in-range", "#7efcb0");
+    const axisAlpha = readNumber("--axis-alpha", 0.85);
 
     // Целевой диапазон — подложка, а не линии: так видно «сколько времени
     // график провёл внутри», не считая пересечения глазами.
@@ -449,6 +616,509 @@ function drawChart() {
             ctx.fill();
         }
     }
+
+    // Дорожки событий — под графиком, над подписями оси.
+    const laneBoxes = lanes.map((lane, index) => ({
+        lane,
+        left: padding.left,
+        right: width - padding.right,
+        top: padding.top + plotHeight + LANE_GAP + index * (LANE_HEIGHT + LANE_GAP),
+    }));
+
+    for (const box of laneBoxes) {
+        drawLane(ctx, box.lane, box, x, muted, axisAlpha);
+    }
+
+    // Геометрия нужна обработчику наведения: пересчитывать её на каждое
+    // движение мыши — значит дублировать всю раскладку и однажды разойтись
+    // с тем, что нарисовано.
+    geometry = {
+        points,
+        laneBoxes,
+        x,
+        y,
+        startTime,
+        spanSeconds,
+        plotTop: padding.top,
+        plotBottom: padding.top + plotHeight,
+        left: padding.left,
+        right: width - padding.right,
+        bottom: height - padding.bottom,
+    };
+
+    drawCrosshair(ctx, muted);
+}
+
+/* Вертикаль через график и обе дорожки: она связывает столбик еды с точкой на
+   кривой, ради чего всё это и рисуется рядом. */
+function drawCrosshair(ctx, muted) {
+    if (hoverTime === null || !geometry) return;
+
+    const px = Math.round(geometry.x(hoverTime)) + 0.5;
+    if (px < geometry.left || px > geometry.right) return;
+
+    ctx.strokeStyle = muted;
+    ctx.globalAlpha = 0.45;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(px, geometry.plotTop);
+    ctx.lineTo(px, geometry.bottom);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    const point = nearestPoint(hoverTime);
+    if (!point) return;
+
+    // Кольцо цветом панели: без него точка теряется там, где пересекает
+    // собственную линию.
+    ctx.beginPath();
+    ctx.arc(geometry.x(point[0]), geometry.y(toMmol(point[1])), 4, 0, Math.PI * 2);
+    ctx.fillStyle = readColor("--accent", "#7eb8f7");
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = readColor("--panel", "#0d0d14");
+    ctx.stroke();
+}
+
+/* ── Легенда и подсказка ───────────────────────────────────────────── */
+
+function legendItem(series) {
+    const item = document.createElement("li");
+    item.className = "legend__item";
+
+    const key = document.createElement("span");
+    key.className = series.hollow
+        ? "legend__key legend__key--hollow"
+        : `legend__key${series.line ? " legend__key--line" : ""}`;
+    // Контурная метка красится через currentColor — так одна и та же переменная
+    // задаёт и заливку, и рамку.
+    key.style.color = `var(${series.token})`;
+    key.style.background = `var(${series.token})`;
+
+    const text = document.createElement("span");
+    text.textContent = series.label;
+
+    item.append(key, text);
+    return item;
+}
+
+/* Легенда есть всегда, когда рядов больше одного: опознавать их по цвету на
+   глаз — единственный канал, который отказывает и при дальтонизме, и на
+   распечатке. Один ряд легенды не требует — его называет заголовок. */
+function renderLegend(lanes) {
+    if (!lanes.length) {
+        els.legend.hidden = true;
+        els.legend.replaceChildren();
+        return;
+    }
+
+    const events = snapshot.events || {};
+    const shown = [{ ...SERIES.glucose, line: true }];
+    if ((events.meals || []).length) shown.push(SERIES.meal);
+    if ((events.bolus || []).length) shown.push(SERIES.insulin);
+    if ((events.basal || []).length) shown.push(SERIES.basal);
+
+    els.legend.replaceChildren(...shown.map(legendItem));
+    els.legend.hidden = false;
+}
+
+function nearestPoint(t) {
+    if (!geometry || !geometry.points.length) return null;
+
+    let best = null;
+    for (const point of geometry.points) {
+        const distance = Math.abs(point[0] - t);
+        if (best === null || distance < best[0]) best = [distance, point];
+    }
+    // Дальше получаса — это уже другой участок кривой, а не то, на что навели.
+    return best[0] > 1800 ? null : best[1];
+}
+
+function tipRow(series, text) {
+    const row = document.createElement("p");
+    row.className = "tip__row";
+
+    const key = document.createElement("span");
+    key.className = "tip__key";
+    key.style.background = `var(${series.token})`;
+    key.style.color = `var(${series.token})`;
+    if (series.hollow) {
+        key.style.background = "none";
+        key.style.border = "1.5px solid currentColor";
+    }
+
+    const label = document.createElement("span");
+    label.textContent = text;
+
+    row.append(key, label);
+    return row;
+}
+
+function showTip(clientX) {
+    if (hoverTime === null || !geometry) return hideTip();
+
+    const point = nearestPoint(hoverTime);
+    const rows = [];
+
+    if (point) {
+        rows.push(tipRow(SERIES.glucose, `${formatMmol(point[1])} ммоль/л`));
+    }
+
+    // Событие в пределах четверти часа от курсора: столбик и точка кривой
+    // почти никогда не совпадают по времени секунда в секунду.
+    for (const box of geometry.laneBoxes) {
+        for (const bar of box.lane.bars) {
+            if (Math.abs(bar.t - hoverTime) <= 900) {
+                rows.push(tipRow(bar.series, `${bar.series.label}: ${formatAmount(bar.v)}`));
+            }
+        }
+    }
+
+    if (!rows.length) return hideTip();
+
+    const time = document.createElement("p");
+    time.className = "tip__time";
+    time.textContent = new Date(hoverTime * 1000).toLocaleTimeString("ru-RU", {
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+
+    els.tip.replaceChildren(time, ...rows);
+    els.tip.hidden = false;
+
+    // Позиция считается от карточки, а не от холста: у карточки есть внутренний
+    // отступ, и без поправки подсказка уезжает на его ширину.
+    const chart = els.chart.getBoundingClientRect();
+    const canvas = els.canvas.getBoundingClientRect();
+    const width = els.tip.offsetWidth;
+    const half = width / 2;
+    const wanted = clientX - chart.left;
+
+    els.tip.style.left = `${Math.min(
+        Math.max(wanted, half + 4),
+        chart.width - half - 4
+    )}px`;
+    els.tip.style.top = `${canvas.top - chart.top + geometry.plotTop}px`;
+}
+
+function hideTip() {
+    els.tip.hidden = true;
+}
+
+/* ── Разбор приёмов пищи ───────────────────────────────────────────── */
+
+/* Ряды оверлея. Отдельные кривые намеренно приглушены: они дают форму и
+   разброс, а читается по ним медиана. */
+const OVERLAY_SERIES = {
+    single: { token: "--muted", fallback: "#8a90a6", label: "Отдельные приёмы", line: true },
+    median: { token: "--accent", fallback: "#7eb8f7", label: "Медиана", line: true },
+};
+
+const OVERLAY_HEIGHT = 240;
+
+// Сколько кривых должно накрыть отметку времени, чтобы медиана в ней что-то
+// значила. На двух это просто среднее двух обедов, выданное за общую картину.
+const MEDIAN_MIN_CURVES = 3;
+
+function formatDelta(mgdl) {
+    return toMmol(mgdl).toLocaleString("ru-RU", {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+        signDisplay: "exceptZero",
+    });
+}
+
+function medianCurve(curves) {
+    const buckets = new Map();
+
+    for (const curve of curves) {
+        for (const [offset, mgdl] of curve) {
+            // Кривые сенсора идут пятиминутным шагом, но у каждой свой сдвиг
+            // относительно момента еды — без округления они не сложились бы.
+            const slot = Math.round(offset / 5) * 5;
+            if (!buckets.has(slot)) buckets.set(slot, []);
+            buckets.get(slot).push(mgdl);
+        }
+    }
+
+    const curve = [];
+    for (const [slot, values] of [...buckets].sort((a, b) => a[0] - b[0])) {
+        if (values.length < MEDIAN_MIN_CURVES) continue;
+        values.sort((a, b) => a - b);
+        const middle = values.length >> 1;
+        curve.push([
+            slot,
+            values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2,
+        ]);
+    }
+    return curve;
+}
+
+function drawOverlay(analysis) {
+    const canvas = els.overlay;
+    const ratio = window.devicePixelRatio || 1;
+    const width = canvas.clientWidth;
+    const height = OVERLAY_HEIGHT;
+
+    canvas.width = width * ratio;
+    canvas.height = height * ratio;
+
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    const drawn = analysis.meals.filter((meal) => meal.curve.length > 1);
+    if (!drawn.length) return;
+
+    /* Кривые приводятся к уровню в момент еды. В абсолютных значениях медиана
+       выходит почти плоской: обед начинается с 6, ужин с 9, и разные исходные
+       уровни гасят как раз тот подъём, ради которого всё это рисуется. */
+    const curves = drawn.map((meal) =>
+        meal.curve.map(([offset, mgdl]) => [offset, mgdl - meal.baseline])
+    );
+
+    const padding = { top: 12, right: 12, bottom: 26, left: 44 };
+    const plotWidth = width - padding.left - padding.right;
+    const plotHeight = height - padding.top - padding.bottom;
+    const span = analysis.window_min;
+    const target = toMmol(analysis.targets.rise);
+
+    // Ориентир и ноль всегда в кадре: без них подъём не с чем сопоставить.
+    const deltas = curves.flat().map(([, mgdl]) => toMmol(mgdl));
+    const min = Math.floor(Math.min(-2, ...deltas));
+    const max = Math.ceil(Math.max(target + 1, ...deltas));
+
+    const x = (minutes) => padding.left + (minutes / span) * plotWidth;
+    const y = (mmol) => padding.top + plotHeight - ((mmol - min) / (max - min)) * plotHeight;
+
+    const muted = readColor("--muted", "#8a90a6");
+    const accent = readColor("--accent", "#7eb8f7");
+    const axisAlpha = readNumber("--axis-alpha", 0.85);
+
+    ctx.strokeStyle = muted;
+    ctx.fillStyle = muted;
+    ctx.font = '11px "JetBrains Mono", monospace';
+    ctx.lineWidth = 1;
+
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    const gridStep = max - min > 12 ? 4 : 2;
+    for (let value = Math.ceil(min / gridStep) * gridStep; value <= max; value += gridStep) {
+        const lineY = Math.round(y(value)) + 0.5;
+        ctx.globalAlpha = 0.15;
+        ctx.beginPath();
+        ctx.moveTo(padding.left, lineY);
+        ctx.lineTo(width - padding.right, lineY);
+        ctx.stroke();
+
+        ctx.globalAlpha = axisAlpha;
+        ctx.fillText(value > 0 ? `+${value}` : String(value), padding.left - 8, lineY);
+    }
+
+    ctx.textBaseline = "top";
+    for (let minutes = 0; minutes <= span; minutes += 60) {
+        ctx.textAlign = minutes === 0 ? "left" : minutes === span ? "right" : "center";
+        ctx.globalAlpha = axisAlpha;
+        ctx.fillText(`${minutes / 60} ч`, x(minutes), height - padding.bottom + 8);
+    }
+    ctx.globalAlpha = 1;
+
+    // Уровень в момент еды. Всё, что выше этой линии, — и есть подъём.
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(padding.left, Math.round(y(0)) + 0.5);
+    ctx.lineTo(width - padding.right, Math.round(y(0)) + 0.5);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // Отдельные кривые — тонкие и приглушённые: они дают разброс и форму, а
+    // числа читаются в таблице.
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.3;
+    for (const curve of curves) {
+        ctx.beginPath();
+        curve.forEach(([offset, mgdl], index) => {
+            const px = x(Math.min(offset, span));
+            const py = y(toMmol(mgdl));
+            if (index === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+        });
+        ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    const median = medianCurve(curves);
+    if (median.length > 1) {
+        ctx.strokeStyle = accent;
+        ctx.lineWidth = 2;
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        median.forEach(([offset, mgdl], index) => {
+            const px = x(Math.min(offset, span));
+            const py = y(toMmol(mgdl));
+            if (index === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+        });
+        ctx.stroke();
+    }
+
+    // Ориентир подписывается прямо на линии: считать, какая это по счёту
+    // клетка сетки, никто не станет.
+    const targetY = Math.round(y(target)) + 0.5;
+    ctx.strokeStyle = muted;
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.55;
+    ctx.beginPath();
+    ctx.moveTo(padding.left, targetY);
+    ctx.lineTo(width - padding.right, targetY);
+    ctx.stroke();
+
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = readColor("--panel", "#ffffff");
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    const label = `ориентир +${formatMmol(analysis.targets.rise)}`;
+    const box = ctx.measureText(label).width + 8;
+    ctx.fillRect(width - padding.right - box, targetY - 7, box, 14);
+    ctx.fillStyle = muted;
+    ctx.fillText(label, width - padding.right - 4, targetY);
+
+    canvas.setAttribute(
+        "aria-label",
+        `Отклонение глюкозы от уровня в момент еды после ${drawn.length} приёмов пищи. ` +
+            "Все значения перечислены в таблице ниже."
+    );
+
+    els.overlayLegend.replaceChildren(
+        legendItem(OVERLAY_SERIES.single),
+        legendItem(OVERLAY_SERIES.median)
+    );
+}
+
+function outcome(meal, targets) {
+    if (meal.hypo) return ["flag--hypo", "⚠ гипогликемия"];
+    if (!meal.complete) return ["flag--skip", "· окно не закрылось"];
+    if (meal.overlap) return ["flag--skip", "· наложение с другой едой"];
+    if (meal.rise <= targets.rise) return ["flag--ok", "✓ в ориентире"];
+    return ["flag--skip", "· подъём выше ориентира"];
+}
+
+function renderMeals(analysis) {
+    const head = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    for (const title of ["Когда", "Углеводы", "Подъём", "Пик через", "Возврат", "Исход"]) {
+        const cell = document.createElement("th");
+        cell.scope = "col";
+        cell.textContent = title;
+        headRow.append(cell);
+    }
+    head.append(headRow);
+
+    const body = document.createElement("tbody");
+    // Свежие сверху: разбор читают сразу после еды, а не спустя две недели.
+    for (const meal of [...analysis.meals].reverse()) {
+        const row = document.createElement("tr");
+        const [flagClass, flagText] = outcome(meal, analysis.targets);
+
+        const cells = [
+            formatDateTime(new Date(meal.t * 1000)),
+            `${formatAmount(meal.carbs)} г`,
+            `${formatDelta(meal.rise)}`,
+            `${meal.peak_min} мин`,
+            meal.ret === null ? "—" : formatDelta(meal.ret),
+        ];
+
+        for (const text of cells) {
+            const cell = document.createElement("td");
+            cell.textContent = text;
+            row.append(cell);
+        }
+
+        const flagCell = document.createElement("td");
+        const flag = document.createElement("span");
+        // Значок и слово рядом с цветом: состояние, названное одним цветом, не
+        // названо никак.
+        flag.className = `flag ${flagClass}`;
+        flag.textContent = flagText;
+        flagCell.append(flag);
+        row.append(flagCell);
+
+        body.append(row);
+    }
+
+    const caption = els.meals.querySelector("caption");
+    els.meals.replaceChildren(...(caption ? [caption] : []), head, body);
+}
+
+function renderReviewStats(analysis) {
+    const summary = analysis.summary;
+    els.reviewStats.replaceChildren();
+
+    if (!summary) {
+        els.reviewStats.hidden = true;
+        return;
+    }
+
+    const targets = analysis.targets;
+    const cards = [
+        statCard(
+            "Разобрано приёмов",
+            String(summary.count),
+            summary.skipped
+                ? `пропущено ${summary.skipped}: окно не закрылось или наложилось`
+                : "за последние две недели"
+        ),
+        statCard(
+            "Подъём, медиана",
+            formatDelta(summary.rise),
+            `ммоль/л, ориентир до ${formatMmol(targets.rise)}`
+        ),
+        statCard(
+            "Пик через",
+            `${summary.peak_min} мин`,
+            `обычно ${targets.peak_min[0]}–${targets.peak_min[1]} мин`
+        ),
+        statCard(
+            "С гипогликемией",
+            `${summary.hypo} из ${summary.count}`,
+            `ниже ${formatMmol(targets.hypo)} ммоль/л в течение 4 часов`
+        ),
+        statCard(
+            "Уложились в ориентир",
+            `${summary.good} из ${summary.count}`,
+            "подъём в пределах ориентира и без гипогликемии"
+        ),
+    ];
+
+    els.reviewStats.append(...cards);
+    els.reviewStats.hidden = false;
+}
+
+function renderReview() {
+    const analysis = snapshot.analysis;
+
+    // Ни одного разобранного приёма пищи — секции просто нет. Пустая таблица с
+    // прочерками сообщает не больше, чем её отсутствие, а места занимает экран.
+    if (!analysis || !analysis.meals.length) {
+        els.review.hidden = true;
+        return;
+    }
+
+    els.reviewNote.textContent =
+        `На сколько глюкоза отклонялась от уровня в момент еды в течение ` +
+        `${analysis.window_min / 60} часов после каждого приёма пищи за последние две ` +
+        "недели. Это описание исхода, а не оценка дозы: на результат влияют и то, за " +
+        "сколько до еды сделан укол, и активность, и остаток предыдущей дозы — ничего " +
+        "из этого здесь нет.";
+
+    // Раскрыть до отрисовки: у скрытой секции холст имеет нулевую ширину, и
+    // рисовать в него — значит рисовать в ничто.
+    els.review.hidden = false;
+
+    renderReviewStats(analysis);
+    drawOverlay(analysis);
+    renderMeals(analysis);
 }
 
 /* ── Загрузка и события ────────────────────────────────────────────── */
@@ -489,6 +1159,9 @@ function render() {
     els.chart.hidden = false;
     drawChart();
     renderStats();
+    // Разбор не зависит от выбранного окна: он всегда за две недели, поэтому
+    // кнопки периода его не перерисовывают.
+    renderReview();
 }
 
 async function load() {
@@ -523,6 +1196,35 @@ els.ranges.addEventListener("click", (event) => {
 });
 
 window.addEventListener("resize", () => {
+    if (snapshot && snapshot.latest) {
+        drawChart();
+        renderReview();
+    }
+});
+
+/* pointer, а не mouse: тем же обработчиком обслуживается касание, и на телефоне
+   подсказка появляется по тапу вместо того, чтобы быть недоступной вовсе. */
+els.canvas.addEventListener("pointermove", (event) => {
+    if (!geometry) return;
+
+    const rect = els.canvas.getBoundingClientRect();
+    const px = event.clientX - rect.left;
+    if (px < geometry.left || px > geometry.right) {
+        hoverTime = null;
+        drawChart();
+        hideTip();
+        return;
+    }
+
+    const share = (px - geometry.left) / (geometry.right - geometry.left);
+    hoverTime = Math.round(geometry.startTime + share * geometry.spanSeconds);
+    drawChart();
+    showTip(event.clientX);
+});
+
+els.canvas.addEventListener("pointerleave", () => {
+    hoverTime = null;
+    hideTip();
     if (snapshot && snapshot.latest) drawChart();
 });
 

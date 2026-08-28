@@ -13,6 +13,7 @@ from publish import (
     TARGET_HIGH_MGDL,
     TARGET_LOW_MGDL,
     _downsample,
+    _events,
     _stats,
     _trend,
 )
@@ -129,3 +130,45 @@ class TestTrend:
     def test_readings_inside_the_window_do_not_set_a_rate(self):
         # Оба замера моложе окна тренда — сравнивать по-прежнему не с чем.
         assert _trend(readings(100, 110, step_minutes=1))["rate"] is None
+
+
+class TestEvents:
+    def entry(self, kind, minutes_ago, carbs=None, units=None):
+        return (BASE - timedelta(minutes=minutes_ago), kind, carbs, units)
+
+    def test_splits_into_three_lanes(self):
+        journal = [
+            self.entry("meal", 60, carbs=62.0),
+            self.entry("bolus", 75, units=6.0),
+            self.entry("basal", 600, units=18.0),
+        ]
+
+        lanes = _events(journal, BASE - timedelta(days=1))
+
+        assert len(lanes["meals"]) == 1
+        assert len(lanes["bolus"]) == 1
+        assert len(lanes["basal"]) == 1
+        assert lanes["meals"][0][1] == 62.0
+
+    def test_older_than_the_window_is_dropped(self):
+        # Панель событий рисуется только на суточном окне: сотня отметок за
+        # месяц сливается в сплошную полосу.
+        journal = [self.entry("meal", 60 * 30, carbs=62.0)]
+
+        assert _events(journal, BASE - timedelta(days=1))["meals"] == []
+
+    def test_entry_without_an_amount_is_skipped(self):
+        # Столбик нулевой высоты неотличим от отсутствия столбика.
+        journal = [self.entry("meal", 60), self.entry("bolus", 60)]
+
+        lanes = _events(journal, BASE - timedelta(days=1))
+
+        assert lanes["meals"] == [] and lanes["bolus"] == []
+
+    def test_unknown_kind_does_not_break_publishing(self):
+        # Бот может завести новый вид записи раньше, чем дашборд про него узнает.
+        journal = [self.entry("exercise", 60, units=30.0)]
+
+        lanes = _events(journal, BASE - timedelta(days=1))
+
+        assert lanes == {"meals": [], "bolus": [], "basal": []}
