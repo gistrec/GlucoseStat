@@ -18,9 +18,12 @@
            моргала бы чёрным на каждом открытии. */
         try {
             const saved = localStorage.getItem("theme");
-            if (saved === "light" || saved === "dark") {
-                document.documentElement.dataset.theme = saved;
-            }
+            document.documentElement.dataset.theme =
+                saved === "light" || saved === "dark"
+                    ? saved
+                    : window.matchMedia("(prefers-color-scheme: dark)").matches
+                      ? "dark"
+                      : "light";
         } catch (error) {
             /* Приватный режим Safari запрещает localStorage: тема не
                запомнится, но страница обязана открыться. */

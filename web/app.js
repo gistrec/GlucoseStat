@@ -39,20 +39,17 @@ const els = {
 
 /* ── Тема ──────────────────────────────────────────────────────────── */
 
-/* Три состояния, а не два. «Как в системе» — не то же самое, что «тёмная»:
-   телефон переключается на закате сам, и человеку, которого это устраивает,
-   незачем выбирать вручную дважды в сутки. Порядок перебора начинается с
-   системы, чтобы к ней всегда можно было вернуться. */
+/* Два состояния. Системную тему кнопка не предлагает — она лишь берётся при
+   первом заходе, пока выбор не сделан. */
 const THEMES = [
-    { id: "auto", glyph: "◐", label: "Авто", hint: "Тема как в системе" },
-    { id: "light", glyph: "☀", label: "Светлая", hint: "Всегда светлая тема" },
-    { id: "dark", glyph: "☾", label: "Тёмная", hint: "Всегда тёмная тема" },
+    { id: "light", glyph: "☀", label: "Светлая", next: "тёмную" },
+    { id: "dark", glyph: "☾", label: "Тёмная", next: "светлую" },
 ];
 
 // Те же значения, что у --bg в style.css: сюда попадает цвет панели Safari.
 const THEME_BG = { light: "#f4f5f9", dark: "#07070b" };
 
-let theme = "auto";
+let theme = "dark";
 
 function systemPrefersDark() {
     return window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -64,10 +61,17 @@ function systemPrefersDark() {
 function storedTheme() {
     try {
         const saved = localStorage.getItem("theme");
-        return THEMES.some((item) => item.id === saved) ? saved : "auto";
+        return THEMES.some((item) => item.id === saved) ? saved : null;
     } catch (error) {
-        return "auto";
+        return null;
     }
+}
+
+/* Пока выбор не сделан, страница открывается в системной теме: попасть на
+   белый экран ночью только потому, что настройка ещё не тронута, — плохое
+   первое впечатление. После первого нажатия решает кнопка. */
+function initialTheme() {
+    return storedTheme() || (systemPrefersDark() ? "dark" : "light");
 }
 
 function rememberTheme(id) {
@@ -79,14 +83,9 @@ function rememberTheme(id) {
 }
 
 function applyTheme(id) {
-    const current = THEMES.find((item) => item.id === id) || THEMES[0];
+    const current = THEMES.find((item) => item.id === id) || THEMES[1];
     theme = current.id;
-
-    if (theme === "auto") {
-        delete document.documentElement.dataset.theme;
-    } else {
-        document.documentElement.dataset.theme = theme;
-    }
+    document.documentElement.dataset.theme = theme;
 
     const glyph = document.createElement("span");
     glyph.setAttribute("aria-hidden", "true");
@@ -97,13 +96,13 @@ function applyTheme(id) {
     label.textContent = current.label;
 
     els.theme.replaceChildren(glyph, label);
-    // На узком экране подпись скрыта, и значок остаётся единственным
-    // указанием — для скринридера он не значит ничего.
-    els.theme.setAttribute("aria-label", current.hint);
-    els.theme.title = current.hint;
+    // Подпись называет текущую тему, а на узком экране её и вовсе не видно —
+    // отсюда полное описание: и что сейчас, и что будет по нажатию.
+    const hint = `Тема ${current.label.toLowerCase()}, переключить на ${current.next}`;
+    els.theme.setAttribute("aria-label", hint);
+    els.theme.title = hint;
 
-    const dark = theme === "dark" || (theme === "auto" && systemPrefersDark());
-    els.themeColor.setAttribute("content", dark ? THEME_BG.dark : THEME_BG.light);
+    els.themeColor.setAttribute("content", THEME_BG[theme]);
 
     // Разметка перекрашивается сама, холст — нет: его цвета прочитаны из
     // CSS-переменных один раз, при отрисовке.
@@ -327,9 +326,20 @@ function drawChart() {
         padding.top + plotHeight - ((mmol - scale.min) / (scale.max - scale.min)) * plotHeight;
 
     const styles = getComputedStyle(document.documentElement);
-    const muted = styles.getPropertyValue("--muted").trim();
-    const accent = styles.getPropertyValue("--accent").trim();
-    const inRange = styles.getPropertyValue("--in-range").trim();
+
+    /* Пользовательское свойство приходит сюда невычисленным — как записано в
+       CSS. Значение, которое не является цветом (так было с light-dark()),
+       канвас молча игнорирует и продолжает рисовать предыдущим, то есть
+       чёрным: график исчезал на тёмном фоне, не оставив следа в консоли.
+       Поэтому цвет проверяется, а не берётся на веру. */
+    const themeColor = (name, fallback) => {
+        const value = styles.getPropertyValue(name).trim();
+        return /^(#|rgb|hsl)/.test(value) ? value : fallback;
+    };
+
+    const muted = themeColor("--muted", "#8a8fa3");
+    const accent = themeColor("--accent", "#7eb8f7");
+    const inRange = themeColor("--in-range", "#7efcb0");
 
     // Целевой диапазон — подложка, а не линии: так видно «сколько времени
     // график провёл внутри», не считая пересечения глазами.
@@ -521,14 +531,13 @@ els.theme.addEventListener("click", () => {
     rememberTheme(next.id);
 });
 
-/* В режиме «как в системе» смена темы приходит извне — на телефоне она
-   случается по расписанию, посреди чтения. Перерисовать нужно и холст, и
-   цвет панели Safari, что applyTheme делает заодно. */
-window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-    if (theme === "auto") applyTheme("auto");
+/* Пока выбор не сохранён, страница продолжает следовать системе: на телефоне
+   она переключается по расписанию, в том числе посреди чтения. */
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (event) => {
+    if (!storedTheme()) applyTheme(event.matches ? "dark" : "light");
 });
 
-applyTheme(storedTheme());
+applyTheme(initialTheme());
 
 load();
 setInterval(load, RELOAD_INTERVAL_MS);
