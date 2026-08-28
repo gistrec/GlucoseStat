@@ -70,6 +70,23 @@ entitlement, so a silenced phone stays silent, priority 2 included.
 This is an addition to the alarms of the Libre app, not a replacement: nothing
 fires while Abbott is unreachable, the sensor is off, or the collector is down.
 
+## Staleness
+
+Which is why silence is watched from outside the process. Every poll stamps
+`.last-reading` with the mtime of the newest reading in the database — not
+with the current time, or a collector that came back after a day off would
+report the data as fresh the moment it started. Netdata's `filecheck` reads
+that mtime and alerts when it stops moving:
+
+```
+/etc/netdata/go.d/filecheck.conf     # job "glucose" -> .last-reading
+/etc/netdata/health.d/glucose.conf   # warn at 30m, crit at 1h, to fleetcrit
+```
+
+An hour-long gap is not always a fault: LibreLinkUp reports nothing at all
+while no sensor is on, so a sensor change shows up here as a hole the width of
+however long the new one took to go on.
+
 ## Running
 
 ```bash

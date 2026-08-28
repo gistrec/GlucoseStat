@@ -214,3 +214,6 @@ web/data.json
 
 # Alert state — which low has already been reported
 .alerts.json*
+
+# Freshness mark for Netdata — mtime of the newest reading
+.last-reading

@@ -8,6 +8,7 @@ long-lived process: it never exits on a transient failure, it backs off.
 import logging
 import os
 import time
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
@@ -19,6 +20,13 @@ from publish import publish
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Метка свежести для Netdata. Её mtime — время самого свежего измерения в базе,
+# поэтому «файл не трогали полчаса» буквально означает «полчаса нет данных», и
+# следить за этим можно снаружи процесса, коллектором filecheck. Пустой файл, а
+# не содержимое: filecheck читает только stat, а тревога, которой нужен разбор
+# JSON, — это ещё одна программа, способная сломаться молча.
+FRESHNESS_PATH = os.path.join(BASE_DIR, ".last-reading")
 
 # Полное окно ретраев — от минуты до получаса. Верхняя граница выбрана так,
 # чтобы после долгой недоступности Abbott сборщик всё же догнал историю:
@@ -77,6 +85,26 @@ class Collector:
         return store_readings([(item.timestamp, item.mgdl) for item in readings])
 
 
+def stamp_freshness(
+    readings: list[tuple[datetime, float]], path: str = FRESHNESS_PATH
+) -> None:
+    """Point the sentinel file's mtime at the newest reading.
+
+    Deliberately not "now": after an outage the collector backfills the whole
+    graph window, and a file touched on every poll would report the data as
+    fresh the moment the process came back, however old the readings were.
+    """
+
+    if not readings:
+        return
+
+    timestamp = readings[-1][0].replace(tzinfo=timezone.utc).timestamp()
+
+    with open(path, "a", encoding="utf-8"):
+        pass
+    os.utime(path, (timestamp, timestamp))
+
+
 def main() -> None:
     load_dotenv()
 
@@ -121,15 +149,26 @@ def main() -> None:
             backoff = min(backoff * 2, BACKOFF_MAX)
             log.exception("poll failed, retrying in %ds", delay)
 
-        # Тревога считается по свежайшей строке в базе, а не по ответу Abbott:
-        # при пустом graph или неудачном опросе последнее известное значение
-        # остаётся старым, и notify отсеет его по возрасту — вместо того чтобы
-        # поднять тревогу по позавчерашней гипогликемии.
+        # И тревога, и метка свежести считаются по свежайшей строке в базе, а не
+        # по ответу Abbott: при пустом graph или неудачном опросе последнее
+        # известное значение остаётся старым, и notify отсеет его по возрасту —
+        # вместо того чтобы поднять тревогу по позавчерашней гипогликемии.
+        try:
+            latest = last_readings(1)
+        except Exception:
+            log.exception("failed to read the latest reading")
+            latest = []
+
         if notifier:
             try:
-                notifier.check(last_readings(1))
+                notifier.check(latest)
             except Exception:
                 log.exception("failed to check the alert thresholds")
+
+        try:
+            stamp_freshness(latest)
+        except Exception:
+            log.exception("failed to stamp the freshness file")
 
         # Снимок переписывается и после неудачи: только так на странице
         # появляется отметка, что сборщик молчит. Прежде publish() стоял
