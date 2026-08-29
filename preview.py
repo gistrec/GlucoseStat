@@ -31,19 +31,7 @@ import threading
 import webbrowser
 from datetime import datetime, timedelta, timezone
 
-from analysis import analyse
-from publish import (
-    ANALYSIS_WINDOW,
-    EVENT_WINDOW,
-    PUBLISH_PATH,
-    RANGES,
-    TARGET_HIGH_MGDL,
-    TARGET_LOW_MGDL,
-    _downsample,
-    _events,
-    _stats,
-    _trend,
-)
+from publish import PUBLISH_PATH, build_snapshot
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -151,29 +139,14 @@ def synthetic_snapshot(now: datetime | None = None) -> dict:
     ]
     journal.sort()
 
-    series, stats = {}, {}
-    for name, (span, step_minutes) in RANGES.items():
-        subset = [item for item in readings if item[0] >= now - span]
-        series[name] = {"step": step_minutes, "points": _downsample(subset, step_minutes)}
-        stats[name] = _stats(subset)
-
-    meals = [
-        (occurred_at, carbs)
-        for occurred_at, kind, carbs, _ in journal
-        if kind == "meal" and occurred_at >= now - ANALYSIS_WINDOW
-    ]
-    stamp = int(now.replace(tzinfo=timezone.utc).timestamp())
-
-    return {
-        "generated_at": stamp,
-        "collector": {"last_success": stamp},
-        "target": {"low": TARGET_LOW_MGDL, "high": TARGET_HIGH_MGDL},
-        "latest": _trend(readings),
-        "series": series,
-        "stats": stats,
-        "events": _events(journal, now - EVENT_WINDOW),
-        "analysis": analyse(meals, readings, now, hypo_mgdl=TARGET_LOW_MGDL),
-    }
+    # Снимок собирает publish, а не этот файл. Своя сборка молча расходилась бы
+    # с боевой при каждом новом ключе — так превью и проглядело gmi.
+    return build_snapshot(
+        readings,
+        journal,
+        now,
+        last_success=now.replace(tzinfo=timezone.utc).timestamp(),
+    )
 
 
 def build_site(target: str, snapshot: dict) -> None:

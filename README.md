@@ -18,8 +18,15 @@ LibreLinkUp ──poll 5m──▶ main.py ──▶ MySQL ──▶ publish.py 
 
 Current value with a trend arrow, a chart over 24 hours / 7 days / 30 days,
 and per-period statistics: time in range, average, spread, coefficient of
-variation, and GMI (estimated HbA1c, shown only for windows of a week or
-more, where it is statistically meaningful).
+variation, and GMI.
+
+GMI is the one figure that ignores the selected period: it is always the
+estimated HbA1c over the last **14 days**, the window Bergenstal et al. (2018)
+calibrated the formula on. Tying it to the buttons would put two different
+numbers — a week's GMI and a month's — under one name, and neither would be
+what a clinician means by it. Below 70% CGM coverage over those two weeks the
+card disappears rather than showing a figure: an HbA1c estimated from three
+days looks exactly as authoritative as one estimated from fourteen.
 
 Values are stored in mg/dL and displayed in mmol/L. The target range is
 70–180 mg/dL (3.9–10.0 mmol/L), the standard CGM consensus range.

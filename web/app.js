@@ -319,10 +319,16 @@ function renderStats() {
             stats.cv <= 36 ? `стабильно, норма ≤ ${percent(36)}` : `выше нормы ≤ ${percent(36)}`));
     }
 
-    // GMI — оценка HbA1c по среднему уровню. На суточном окне она
-    // статистически бессмысленна, поэтому только для недели и месяца.
-    if (activeRange !== "day") {
-        cards.push(statCard("GMI", percent(stats.gmi), "расчётный HbA1c"));
+    /* GMI живёт по своему окну в две недели, а не по выбранному периоду: под
+       одним названием иначе оказывались бы два разных числа. Снимок отдаёт
+       null, когда за две недели набралось меньше 70 % измерений — тогда
+       карточки просто нет, вместо солидно выглядящей выдумки. На суточной
+       панели не показываем: она про сегодня, а GMI — про две недели. */
+    const gmi = snapshot.gmi;
+    if (activeRange !== "day" && gmi) {
+        cards.push(
+            statCard("GMI", percent(gmi.value), `расчётный HbA1c за ${gmi.days} дней`)
+        );
     }
 
     cards.push(statCard("Измерений", stats.count.toLocaleString("ru-RU"), RANGE_LABELS[activeRange]));

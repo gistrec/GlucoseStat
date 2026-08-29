@@ -12,8 +12,10 @@ import pytest
 from publish import (
     TARGET_HIGH_MGDL,
     TARGET_LOW_MGDL,
+    CGM_READINGS_PER_DAY,
     _downsample,
     _events,
+    _gmi,
     _stats,
     _trend,
 )
@@ -85,12 +87,6 @@ class TestStats:
         assert stats["min"] == 80
         assert stats["max"] == 120
         assert stats["count"] == 3
-
-    def test_gmi_follows_the_published_formula(self):
-        # Bergenstal et al. 2018: GMI = 3.31 + 0.02392 × среднее в мг/дл.
-        stats = _stats(readings(100, 100))
-
-        assert stats["gmi"] == pytest.approx(3.31 + 0.02392 * 100, abs=0.05)
 
     def test_constant_readings_have_no_variation(self):
         assert _stats(readings(120, 120, 120))["cv"] == 0.0
@@ -193,3 +189,43 @@ class TestJournalAbsent:
         monkeypatch.setattr(connection, "_engine", lambda: empty)
 
         assert journal_since(BASE - timedelta(days=1)) == []
+
+
+class TestGmi:
+    """GMI считается по своим двум неделям, а не по выбранному на странице окну."""
+
+    EXPECTED_AT_100 = 3.31 + 0.02392 * 100
+
+    def fortnight(self, value=100.0):
+        count = CGM_READINGS_PER_DAY * 14
+        start = BASE - timedelta(days=14)
+        return [(start + timedelta(minutes=5 * i), value) for i in range(count)]
+
+    def test_follows_the_published_formula(self):
+        # Bergenstal et al. 2018: GMI = 3.31 + 0.02392 × среднее в мг/дл.
+        result = _gmi(self.fortnight(100.0), BASE)
+
+        assert result["value"] == pytest.approx(self.EXPECTED_AT_100, abs=0.05)
+        assert result["days"] == 14
+
+    def test_thin_coverage_yields_nothing(self):
+        """Расчётный HbA1c по трём дням выглядит так же солидно, как по
+        четырнадцати, а означает совсем другое."""
+
+        sparse = self.fortnight()[: CGM_READINGS_PER_DAY * 3]
+
+        assert _gmi(sparse, BASE) is None
+
+    def test_readings_older_than_the_window_do_not_count(self):
+        # Тысяча измерений по 400 мг/дл сдвинула бы среднее, попади они в расчёт
+        old = [
+            (BASE - timedelta(days=30) + timedelta(minutes=5 * i), 400.0)
+            for i in range(1000)
+        ]
+
+        result = _gmi(old + self.fortnight(100.0), BASE)
+
+        assert result["value"] == pytest.approx(self.EXPECTED_AT_100, abs=0.05)
+
+    def test_no_readings(self):
+        assert _gmi([], BASE) is None

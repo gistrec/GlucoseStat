@@ -38,6 +38,19 @@ RANGES = {
 # на более коротком окне шум сенсора выдаёт скачки, которых нет.
 TREND_WINDOW = timedelta(minutes=15)
 
+# GMI считается по своему окну, а не по выбранному на странице: иначе под одним
+# названием живут два разных числа — «GMI за неделю» и «GMI за месяц», — и ни
+# одно из них не то, что понимает под GMI врач. Bergenstal et al. (2018)
+# калибровали формулу на 14 днях при покрытии не ниже 70 %; ниже этого порога
+# число не показывается вовсе, потому что оценка HbA1c по трём дням — это не
+# осторожная оценка, а выдумка.
+GMI_WINDOW = timedelta(days=14)
+GMI_MIN_COVERAGE = 0.7
+
+# Номинальный шаг CGM: 288 измерений в сутки. Libre 3 отдаёт чаще, так что
+# порог покрытия получается консервативным — и хорошо.
+CGM_READINGS_PER_DAY = 288
+
 # События рисуются только на суточной панели: сотня отметок на месячном окне
 # сливается в сплошную полосу, из которой ничего не прочитать.
 EVENT_WINDOW = timedelta(days=1)
@@ -94,10 +107,33 @@ def _stats(readings: list[tuple[datetime, float]]) -> dict | None:
         "above": round(100 * above / count, 1),
         # Коэффициент вариации: ≤36% считается стабильной гликемией.
         "cv": round(100 * deviation / average, 1) if average else None,
-        # Glucose Management Indicator — оценка HbA1c по среднему CGM
-        # (Bergenstal et al., 2018). Осмысленна на окне от двух недель,
-        # поэтому на дневной панели её не показываем.
-        "gmi": round(3.31 + 0.02392 * average, 1),
+    }
+
+
+def _gmi(readings: list[tuple[datetime, float]], now: datetime) -> dict | None:
+    """Glucose Management Indicator over its own fortnight, or nothing.
+
+    Возвращает ``None``, когда данных за две недели слишком мало: показать
+    расчётный HbA1c по трём дням хуже, чем не показать ничего — число выглядит
+    так же солидно, а означает совсем другое.
+    """
+
+    window = [item for item in readings if item[0] >= now - GMI_WINDOW]
+    if not window:
+        return None
+
+    expected = CGM_READINGS_PER_DAY * GMI_WINDOW.days
+    coverage = len(window) / expected
+    if coverage < GMI_MIN_COVERAGE:
+        return None
+
+    average = sum(mgdl for _, mgdl in window) / len(window)
+
+    return {
+        "value": round(3.31 + 0.02392 * average, 1),
+        "days": GMI_WINDOW.days,
+        # Больше 100 % — норма: Libre отдаёт чаще номинальных 288 в сутки.
+        "coverage": round(100 * coverage),
     }
 
 
@@ -156,6 +192,48 @@ def _events(
     return lanes
 
 
+def build_snapshot(
+    readings: list[tuple[datetime, float]],
+    journal: list[tuple[datetime, str, float | None, float | None]],
+    now: datetime,
+    last_success: float | None = None,
+    latest: dict | None = None,
+) -> dict:
+    """Assemble the snapshot the page reads. Pure: no database, no clock.
+
+    Отдельно от ``publish`` ради ``preview.py``: собирая снимок сам, превью
+    показывало бы вчерашнюю форму страницы и молча расходилось бы с боевой —
+    именно так оно и проглядело добавленный ключ ``gmi``.
+    """
+
+    series, stats = {}, {}
+    for name, (span, step_minutes) in RANGES.items():
+        subset = [item for item in readings if item[0] >= now - span]
+        series[name] = {"step": step_minutes, "points": _downsample(subset, step_minutes)}
+        stats[name] = _stats(subset)
+
+    meals = [
+        (occurred_at, carbs)
+        for occurred_at, kind, carbs, _ in journal
+        if kind == "meal" and carbs is not None
+    ]
+
+    return {
+        "generated_at": int(now.replace(tzinfo=timezone.utc).timestamp()),
+        "collector": {
+            "last_success": int(last_success) if last_success else None,
+        },
+        "target": {"low": TARGET_LOW_MGDL, "high": TARGET_HIGH_MGDL},
+        "latest": latest if latest is not None else _trend(readings),
+        "series": series,
+        "stats": stats,
+        # Своё окно, не выбранное на странице — см. GMI_WINDOW.
+        "gmi": _gmi(readings, now),
+        "events": _events(journal, now - EVENT_WINDOW),
+        "analysis": analyse(meals, readings, now, hypo_mgdl=TARGET_LOW_MGDL),
+    }
+
+
 def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None:
     """Write the snapshot atomically so nginx never serves a half-written file.
 
@@ -170,35 +248,19 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
     window = max(span for span, _ in RANGES.values())
     readings = readings_since(now - window)
 
-    series, stats = {}, {}
-    for name, (span, step_minutes) in RANGES.items():
-        subset = [item for item in readings if item[0] >= now - span]
-        series[name] = {"step": step_minutes, "points": _downsample(subset, step_minutes)}
-        stats[name] = _stats(subset)
-
     # Журнал ведёт бот, и его может не быть вовсе — тогда список пуст, панели
     # событий на странице просто не появятся.
     journal = journal_since(now - ANALYSIS_WINDOW)
-    meals = [
-        (occurred_at, carbs)
-        for occurred_at, kind, carbs, _ in journal
-        if kind == "meal" and carbs is not None
-    ]
 
-    snapshot = {
-        "generated_at": int(now.replace(tzinfo=timezone.utc).timestamp()),
-        "collector": {
-            "last_success": int(last_success) if last_success else None,
-        },
-        "target": {"low": TARGET_LOW_MGDL, "high": TARGET_HIGH_MGDL},
+    snapshot = build_snapshot(
+        readings,
+        journal,
+        now,
+        last_success=last_success,
         # Не из readings: последнее измерение может быть старше окна графиков,
         # и тогда странице нужно показать «данных нет с такого-то числа».
-        "latest": _trend(last_readings()),
-        "series": series,
-        "stats": stats,
-        "events": _events(journal, now - EVENT_WINDOW),
-        "analysis": analyse(meals, readings, now, hypo_mgdl=TARGET_LOW_MGDL),
-    }
+        latest=_trend(last_readings()),
+    )
 
     directory = os.path.dirname(os.path.abspath(path))
     os.makedirs(directory, exist_ok=True)
