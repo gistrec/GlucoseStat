@@ -38,6 +38,13 @@ DOSE_WINDOW = timedelta(minutes=30)
 # режет окна соседей и разбирается сам.
 SNACK_CARBS = 10
 
+# Насколько близко идущие записи — один приём пищи. Тарелка и добавка через
+# четверть часа порознь дают первой огрызок окна, а второй — опору посреди
+# подъёма первой; полчаса взяты по той же причине, что и в ``DOSE_WINDOW``.
+# Промежуток считается от начала приёма, а не от последней записи: иначе еда
+# каждые двадцать минут склеилась бы в один приём длиной в день.
+SAME_MEAL_GAP = timedelta(minutes=30)
+
 # Сколько показаний должно быть в окне, чтобы разбор что-то значил. Ожидается
 # около 48 (4 часа по 5 минут); на половине от этого форма кривой ещё читается,
 # ниже — уже додумывается.
@@ -71,6 +78,24 @@ def _nearest(
             best = (distance, mgdl)
 
     return None if best is None else best[1]
+
+
+def _merge(
+    meals: list[tuple[datetime, float]],
+) -> list[list[tuple[datetime, float]]]:
+    """Сгруппировать записи ближе ``SAME_MEAL_GAP``: группа — один приём пищи.
+
+    Приём начинается с первой своей записи: подъём считается от опоры до еды, а
+    не от уровня, до которого она уже успела поднять.
+    """
+
+    merged: list[list[tuple[datetime, float]]] = []
+    for record in meals:
+        if merged and record[0] - merged[-1][0][0] <= SAME_MEAL_GAP:
+            merged[-1].append(record)
+        else:
+            merged.append([record])
+    return merged
 
 
 def _doses(
@@ -113,6 +138,7 @@ def excursion(
     other_meals: list[datetime],
     hypo_mgdl: int,
     dose: dict | None = None,
+    parts: list[tuple[datetime, float]] | None = None,
 ) -> dict | None:
     """Разобрать один приём пищи. ``None``, если данных под ним нет.
 
@@ -121,7 +147,8 @@ def excursion(
     следующая еда, обрезается по её моменту; ``cut`` ставится, если подъём к
     этому моменту вышел за ориентир. ``dose`` — болюс этой еды из ``_doses``;
     он показывается рядом, но вывода о нём здесь нет и быть не может — см.
-    модуль.
+    модуль. ``parts`` — записи, из которых сложился приём, если их было
+    несколько.
     """
 
     started, carbs = meal
@@ -158,6 +185,11 @@ def excursion(
     return {
         "t": _seconds(started),
         "carbs": round(carbs, 1),
+        # None у приёма из одной записи: страница объясняет звёздочкой только
+        # то число, которое сложено, а на дорожке графика стоит порознь.
+        "parts": None
+        if parts is None
+        else [[_seconds(moment), round(grams, 1)] for moment, grams in parts],
         "dose": dose,
         "baseline": round(baseline),
         "peak": round(peak),
@@ -227,7 +259,8 @@ def analyse(
 ) -> dict:
     """Разобрать последние приёмы пищи и свести их в итог.
 
-    Перекусы не разбираются — см. SNACK_CARBS. ``boluses`` — уколы короткого
+    Перекусы не разбираются — см. SNACK_CARBS, а записи, идущие подряд, сперва
+    сливаются в один приём — см. SAME_MEAL_GAP. ``boluses`` — уколы короткого
     инсулина; каждый привязывается к ближайшей разбираемой еде в пределах
     ``DOSE_WINDOW``. ``limit`` ограничивает число кривых, уезжающих на
     страницу: каждая — до полусотни точек, и три десятка их хватает, чтобы
@@ -240,14 +273,23 @@ def analyse(
     # окна и не получают своего разбора — см. SNACK_CARBS. На главном графике
     # они остаются столбиками, как и были. Себя приём не режет:
     # ``started < other`` строгое.
-    reviewed = sorted(meal for meal in meals if meal[1] > SNACK_CARBS)
+    sittings = _merge(sorted(meal for meal in meals if meal[1] > SNACK_CARBS))
+    reviewed = [
+        (records[0][0], sum(grams for _, grams in records)) for records in sittings
+    ]
     significant = [moment for moment, _ in reviewed]
     doses = _doses(significant, boluses or [])
 
     excursions = []
-    for meal in reviewed:
+    for meal, records in zip(reviewed, sittings):
         item = excursion(
-            meal, readings, now, significant, hypo_mgdl, dose=doses.get(meal[0])
+            meal,
+            readings,
+            now,
+            significant,
+            hypo_mgdl,
+            dose=doses.get(meal[0]),
+            parts=records if len(records) > 1 else None,
         )
         if item is not None:
             excursions.append(item)

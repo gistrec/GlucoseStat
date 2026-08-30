@@ -1,6 +1,6 @@
 """Postprandial analysis: rise, peak, return, and what gets excluded."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from analysis import SNACK_CARBS, TARGET_RISE, WINDOW, analyse, excursion, summarise
 
@@ -286,6 +286,65 @@ class TestAnalyse:
         result = analyse(meals, readings, LATER, HYPO, boluses=boluses)
 
         assert result["meals"][0]["dose"] == {"units": 4.0, "lead_min": -25}
+
+    def test_two_records_in_a_row_are_one_meal(self):
+        """Тарелка и добавка через двадцать минут — один ужин: порознь первая
+        получила бы огрызок окна, а вторая — опору посреди её подъёма."""
+
+        readings = rising_then_back(100, 160)
+        meals = [(START, 20.0), (START + timedelta(minutes=20), 20.0)]
+
+        result = analyse(meals, readings, LATER, HYPO)
+
+        assert len(result["meals"]) == 1
+        assert result["meals"][0]["carbs"] == 40.0
+        assert result["meals"][0]["curve"][-1][0] == 240
+
+    def test_a_merged_meal_keeps_the_records_it_was_made_of(self):
+        """Число в колонке углеводов сложено — страница объясняет, из чего."""
+
+        readings = rising_then_back(100, 160)
+        second = START + timedelta(minutes=20)
+        meals = [(START, 20.0), (second, 20.0)]
+
+        result = analyse(meals, readings, LATER, HYPO)
+
+        assert result["meals"][0]["parts"] == [
+            [int(START.replace(tzinfo=timezone.utc).timestamp()), 20.0],
+            [int(second.replace(tzinfo=timezone.utc).timestamp()), 20.0],
+        ]
+
+    def test_a_single_record_has_nothing_to_explain(self):
+        readings = rising_then_back(100, 160)
+
+        result = analyse([(START, 60.0)], readings, LATER, HYPO)
+
+        assert result["meals"][0]["parts"] is None
+
+    def test_a_chain_of_records_does_not_grow_past_the_gap(self):
+        """Промежуток считается от начала приёма: еда каждые двадцать минут
+        иначе склеилась бы в один приём длиной в день."""
+
+        meals = [
+            (START, 20.0),
+            (START + timedelta(minutes=20), 20.0),
+            (START + timedelta(minutes=40), 20.0),
+        ]
+
+        result = analyse(meals, rising_then_back(100, 160), LATER, HYPO)
+
+        assert [meal["carbs"] for meal in result["meals"]] == [40.0, 20.0]
+
+    def test_the_second_helping_keeps_its_bolus(self):
+        """Укол под добавку — доза того же ужина, а не пропавшая строка."""
+
+        readings = rising_then_back(100, 160)
+        meals = [(START, 20.0), (START + timedelta(minutes=20), 20.0)]
+        boluses = [(START + timedelta(minutes=20), 4.0)]
+
+        result = analyse(meals, readings, LATER, HYPO, boluses=boluses)
+
+        assert result["meals"][0]["dose"] == {"units": 4.0, "lead_min": -20}
 
     def test_a_real_second_meal_cuts_the_first(self):
         readings = rising_then_back(100, 220)

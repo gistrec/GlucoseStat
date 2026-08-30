@@ -79,7 +79,12 @@ whether the insulin made it to the peak.
 
 A window that runs into the next meal is cut short at that meal: the points
 after it belong to two events at once, so only the clean prefix of the curve is
-kept. Snacks of ten grams of carbs or less play no part in the review — they
+kept. Records less than half an hour apart are one meal, summed and reviewed
+from the first of them: a plate and the second helping after it, taken apart,
+leave the first a stub of a window and the second a baseline read mid-rise. The
+review table marks such a meal with a star that lists its records on hover — on
+the daily lane they still stand as separate columns.
+Snacks of ten grams of carbs or less play no part in the review — they
 cut nothing and get no window of their own: a square of chocolate barely shows
 on the curve, it should not cost a whole lunch its review, and a window opened
 on it would re-measure the neighbouring meal's rise from a mid-excursion

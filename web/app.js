@@ -1084,6 +1084,35 @@ function formatDose(dose) {
     return `${units} с едой`;
 }
 
+function textCell(text) {
+    const cell = document.createElement("td");
+    cell.textContent = text;
+    return cell;
+}
+
+/* Приём, записанный в несколько заходов, разбирается как одна еда, а на
+   дорожке главного графика его записи стоят порознь. Звёздочка объясняет
+   расхождение и под наведением перечисляет заходы. */
+function carbsCell(meal) {
+    const cell = textCell(`${formatAmount(meal.carbs)} г`);
+    if (!meal.parts) return cell;
+
+    const mark = document.createElement("abbr");
+    mark.className = "parts";
+    mark.textContent = "∗";
+    mark.title = meal.parts
+        .map(([seconds, carbs]) => {
+            const at = new Date(seconds * 1000).toLocaleTimeString("ru-RU", {
+                hour: "2-digit",
+                minute: "2-digit",
+            });
+            return `${at} — ${formatAmount(carbs)} г`;
+        })
+        .join(", ");
+    cell.append(" ", mark);
+    return cell;
+}
+
 function renderMeals(analysis) {
     const head = document.createElement("thead");
     const headRow = document.createElement("tr");
@@ -1101,20 +1130,14 @@ function renderMeals(analysis) {
         const row = document.createElement("tr");
         const [flagClass, flagText] = outcome(meal, analysis.targets);
 
-        const cells = [
-            formatDateTime(new Date(meal.t * 1000)),
-            `${formatAmount(meal.carbs)} г`,
-            formatDose(meal.dose),
-            `${formatDelta(meal.rise)}`,
-            `${meal.peak_min} мин`,
-            meal.ret === null ? "—" : formatDelta(meal.ret),
-        ];
-
-        for (const text of cells) {
-            const cell = document.createElement("td");
-            cell.textContent = text;
-            row.append(cell);
-        }
+        row.append(
+            textCell(formatDateTime(new Date(meal.t * 1000))),
+            carbsCell(meal),
+            textCell(formatDose(meal.dose)),
+            textCell(formatDelta(meal.rise)),
+            textCell(`${meal.peak_min} мин`),
+            textCell(meal.ret === null ? "—" : formatDelta(meal.ret))
+        );
 
         const flagCell = document.createElement("td");
         const flag = document.createElement("span");
