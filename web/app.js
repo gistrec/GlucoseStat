@@ -1034,13 +1034,18 @@ function outcome(meal, targets) {
 /* Болюс еды: доза и её упреждение. Абсолютное время укола не нужно — оно
    читается из колонки «Когда», а связка «сколько и за сколько до еды» — то,
    ради чего колонка существует. */
+
+// Укол в пределах пяти минут от еды — «с едой»: журнал ведётся руками, и пара
+// минут в нём — точность записи, а не осмысленное упреждение.
+const DOSE_WITH_MEAL_MIN = 5;
+
 function formatDose(dose) {
     if (!dose) return "—";
     // Неразрывные пробелы внутри половин: ячейка может сложиться в две строки
     // «7,2 ед / за 15 мин до», но не оставить «до» болтаться на своей.
     const units = `${formatAmount(dose.units)} ед`;
-    if (dose.lead_min > 0) return `${units} за ${dose.lead_min} мин до`;
-    if (dose.lead_min < 0) return `${units} через ${-dose.lead_min} мин`;
+    if (dose.lead_min > DOSE_WITH_MEAL_MIN) return `${units} за ${dose.lead_min} мин до`;
+    if (dose.lead_min < -DOSE_WITH_MEAL_MIN) return `${units} через ${-dose.lead_min} мин`;
     return `${units} с едой`;
 }
 
