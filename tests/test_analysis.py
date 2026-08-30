@@ -194,8 +194,35 @@ class TestSummarise:
         assert result["good"] == 1
         assert result["hypo"] == 1
 
-    def test_nothing_clean_means_no_summary(self):
-        assert summarise([self.make(40, complete=False)], HYPO) is None
+    def test_hypo_on_a_cut_window_still_counts(self):
+        """Реакция на гипо — еда, а еда режет окно; счёт по одним чистым окнам
+        терял бы ровно те гипогликемии, которые случились."""
+
+        items = [self.make(40), self.make(10, hypo=True, cut=True)]
+
+        result = summarise(items, HYPO)
+
+        assert result["count"] == 1
+        assert result["total"] == 2
+        assert result["hypo"] == 1
+
+    def test_nothing_clean_keeps_the_safety_counts(self):
+        """Без чистых окон медианы мерить не по чему — но гипогликемия из
+        прерванного окна не вправе пропасть со страницы вместе с ними."""
+
+        items = [
+            self.make(40, complete=False),
+            self.make(10, hypo=True, cut=True),
+        ]
+
+        result = summarise(items, HYPO)
+
+        assert result["count"] == 0
+        assert result["total"] == 2
+        assert result["rise"] is None
+        assert result["peak_min"] is None
+        assert result["hypo"] == 1
+        assert result["skipped"] == 2
 
     def test_empty_input(self):
         assert summarise([], HYPO) is None
@@ -211,17 +238,32 @@ class TestAnalyse:
         assert len(result["meals"]) == 1
         assert result["summary"]["count"] == 1
 
-    def test_snack_does_not_cut_a_meal_window(self):
-        """Долька шоколада не должна стоить обеду его разбора."""
+    def test_snack_neither_cuts_nor_gets_reviewed(self):
+        """Долька шоколада не должна ни стоить обеду разбора, ни получать
+        свой: её «окно» перемеряло бы кривую обеда с опоры посреди подъёма."""
 
         readings = rising_then_back(100, 160)
         meals = [(START, 60.0), (START + timedelta(hours=1), float(SNACK_CARBS))]
 
         result = analyse(meals, readings, LATER, HYPO)
 
+        assert len(result["meals"]) == 1
         lunch = result["meals"][0]
         assert lunch["cut"] is False
         assert lunch["curve"][-1][0] == 240
+        assert result["summary"]["count"] == 1
+
+    def test_snack_does_not_steal_the_bolus(self):
+        """Укол между обедом и перекусом принадлежит обеду: перекус не
+        разбирается, и доза, ушедшая к нему, пропала бы со страницы."""
+
+        readings = rising_then_back(100, 160)
+        meals = [(START, 60.0), (START + timedelta(minutes=40), float(SNACK_CARBS))]
+        boluses = [(START + timedelta(minutes=25), 4.0)]
+
+        result = analyse(meals, readings, LATER, HYPO, boluses=boluses)
+
+        assert result["meals"][0]["dose"] == {"units": 4.0, "lead_min": -25}
 
     def test_a_real_second_meal_cuts_the_first(self):
         readings = rising_then_back(100, 160)

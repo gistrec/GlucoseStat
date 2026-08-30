@@ -61,9 +61,12 @@ merge into a solid band that says nothing.
 
 ## Meal review
 
-For each meal over the last two weeks the page reports what happened in the four
-hours after it: the rise above the level at the moment of eating, how long the
-peak took, whether glucose came back, and whether a low followed. Curves are
+For each recent meal the page reports what happened in the four hours after it:
+the rise above the level at the moment of eating, how long the peak took,
+whether glucose came back, and whether a low followed. The journal is read a
+fortnight back, but the snapshot carries at most the two dozen freshest windows
+— so the page names the actual date its review starts from rather than
+promising the full fortnight. Curves are
 overlaid on the moment of eating, normalised to that level — in absolute values
 the median comes out nearly flat, because lunch starts from one level and dinner
 from another, and the two cancel exactly the rise the chart exists to show.
@@ -76,10 +79,16 @@ whether the insulin made it to the peak.
 
 A window that runs into the next meal is cut short at that meal: the points
 after it belong to two events at once, so only the clean prefix of the curve is
-kept. Snacks of ten grams of carbs or less cut nothing — a square of chocolate
-barely shows on the curve, and it should not cost a whole lunch its review.
-Windows still open and windows cut short are drawn but excluded from the
-medians: neither has seen its four hours out, so neither knows its peak.
+kept. Snacks of ten grams of carbs or less play no part in the review — they
+cut nothing and get no window of their own: a square of chocolate barely shows
+on the curve, it should not cost a whole lunch its review, and a window opened
+on it would re-measure the neighbouring meal's rise from a mid-excursion
+baseline. Windows still open and windows cut short are drawn, but the summary
+medians are computed without them: neither has seen its four hours out, so
+neither knows its peak. Lows are the exception — the hypoglycaemia count covers
+every window shown, because the usual answer to a low is food, food cuts the
+window, and a count over clean windows only would drop exactly the lows that
+happened.
 
 This describes outcomes and stops there. Whether a dose was right also depends
 on activity, on illness and on insulin still active from an earlier injection —
