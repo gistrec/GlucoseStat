@@ -16,8 +16,13 @@ from analysis import analyse
 from database.queries import journal_since, last_readings, readings_since
 
 
-PUBLISH_PATH = os.getenv(
-    "PUBLISH_PATH", os.path.join(os.path.dirname(__file__), "web", "data.json")
+# Читается при загрузке модуля, до всякого .env, — потому и задавать его нужно
+# в окружении: так его видят все трое (сборщик, превью, ручной пересбор), а не
+# один из них. Через ``or``, а не значением по умолчанию: пустую переменную оно
+# принимало за путь, и запись уходила в никуда — временный файл появлялся в
+# каталоге над рабочим, а переименование в "" падало.
+PUBLISH_PATH = os.getenv("PUBLISH_PATH") or os.path.join(
+    os.path.dirname(__file__), "web", "data.json"
 )
 
 # Стандартный целевой диапазон для CGM (ADA/ATTD consensus): 70–180 mg/dL,
@@ -303,14 +308,30 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
 
     # NamedTemporaryFile в том же каталоге: os.replace атомарен только внутри
     # одной файловой системы.
-    with tempfile.NamedTemporaryFile(
-        "w", encoding="utf-8", dir=directory, delete=False, suffix=".tmp"
-    ) as handle:
-        json.dump(snapshot, handle, separators=(",", ":"))
-        temp_path = handle.name
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=directory, delete=False, suffix=".tmp"
+        ) as handle:
+            temp_path = handle.name
+            json.dump(snapshot, handle, separators=(",", ":"))
+            # Переименование атомарно для читателя, но не для диска: без
+            # сброса оно может лечь раньше самих данных, и жёсткая перезагрузка
+            # оставит на месте живого снимка обрезанный.
+            handle.flush()
+            os.fsync(handle.fileno())
 
-    os.chmod(temp_path, 0o644)
-    os.replace(temp_path, path)
+        os.chmod(temp_path, 0o644)
+        os.replace(temp_path, path)
+    except BaseException:
+        # Каталог раздаёт nginx: недописанный снимок нельзя оставлять в нём
+        # лежать. На успешном пути удалять нечего — replace уже переименовал.
+        if temp_path:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+        raise
 
 
 if __name__ == "__main__":
@@ -322,9 +343,11 @@ if __name__ == "__main__":
 
     load_dotenv()
 
-    # Путь при этом остаётся тем, что вычислен при импорте. Перечитать его
-    # после .env было бы хуже, чем не читать вовсе: у сборщика он связан
-    # аргументом по умолчанию, а превью импортирует константу по значению, —
-    # так что PUBLISH_PATH из .env знал бы только ручной запуск, писал бы в
-    # свой файл и стамповал в него «сборщик ещё не получал данные».
+    # Путь при этом остаётся тем, что вычислен при импорте, — то есть строку
+    # PUBLISH_PATH в .env не увидит никто, и ручной пересбор тоже. Перечитать
+    # её здесь было бы хуже, чем не читать вовсе: у сборщика путь связан
+    # аргументом по умолчанию, а превью импортирует константу по значению, так
+    # что слушался бы её один этот запуск — писал бы в свой файл и штамповал в
+    # него «сборщик ещё не получал данные». Задавать переменную нужно в
+    # окружении, тогда её видят все трое.
     publish()

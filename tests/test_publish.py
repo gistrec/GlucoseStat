@@ -1,11 +1,19 @@
 """Tests for the snapshot maths.
 
-Everything here is a pure function over a list of readings — no database, no
-network. Importing ``publish`` is safe without configuration because the
-engine is built lazily on first use.
+Almost everything here is a pure function over a list of readings — no
+database, no network. Importing ``publish`` is safe without configuration
+because the engine is built lazily on first use.
+
+The exception is ``TestStandaloneEntryPoint``, which starts ``publish.py`` as a
+process, because the wiring it guards is not reachable any other way. It still
+reaches no database: the address it passes points at a port nothing listens on.
 """
 
 import json
+import os
+import pathlib
+import subprocess
+import sys
 from datetime import datetime, timedelta
 
 import pytest
@@ -287,3 +295,68 @@ class TestPublishCarryForward:
             snapshot = json.load(handle)
 
         assert snapshot["collector"]["last_success"] == 1756500000
+
+    def test_a_failed_write_leaves_no_half_snapshot_behind(self, tmp_path, monkeypatch):
+        """Каталог раздаёт nginx: недописанный снимок в нём остаться не должен."""
+
+        monkeypatch.setattr("publish.readings_since", lambda since: [])
+        monkeypatch.setattr("publish.journal_since", lambda since: [])
+        monkeypatch.setattr("publish.last_readings", list)
+
+        # Каталог на месте файла: переименовать в него нельзя, и publish
+        # свалится уже после того, как временный файл написан.
+        target = tmp_path / "data.json"
+        target.mkdir()
+
+        with pytest.raises(OSError):
+            publish(path=str(target))
+
+        assert [item.name for item in tmp_path.iterdir()] == ["data.json"]
+
+
+class TestStandaloneEntryPoint:
+    """The documented one-off rebuild has to start.
+
+    Всё остальное здесь — чистые функции, и они оставались зелёными всё то
+    время, пока `python publish.py` падал на незаданных настройках: сломана
+    была обвязка ``__main__``, которой ни один тест не касался. Поэтому запуск
+    проверяется как запуск — подпроцессом.
+    """
+
+    SCRIPT = pathlib.Path(__file__).resolve().parent.parent / "publish.py"
+    DOTENV = SCRIPT.parent / ".env"
+
+    # Настройки без окружения может дать только .env — в этом и проверка.
+    # Найти его подменой переменных нельзя: dotenv ищет файл рядом с модулем,
+    # поэтому «а если .env нет» проверяется пропуском, а не подделкой.
+    @pytest.mark.skipif(
+        not DOTENV.is_file(), reason="проверяет чтение .env, а его здесь нет"
+    )
+    def test_it_reads_dotenv_without_exported_variables(self, tmp_path):
+        """Команда из README запускается без единой экспортированной переменной.
+
+        Адрес базы задан здесь — заведомо мёртвый порт, чтобы прогон тестов не
+        ходил в настоящую базу и не зависел от сети. Пользователя, пароль и имя
+        базы взять неоткуда, кроме .env, — в этом и проверка: без него запуск
+        падал бы на незаданных настройках, а не на отказе в соединении.
+        PUBLISH_PATH уводит запись в temp, подальше от снимка, который раздаёт
+        nginx.
+        """
+
+        result = subprocess.run(
+            [sys.executable, str(self.SCRIPT)],
+            env={
+                "PATH": os.environ["PATH"],
+                "PUBLISH_PATH": str(tmp_path / "snapshot.json"),
+                "MYSQL_HOST": "127.0.0.1",
+                "MYSQL_PORT": "1",
+            },
+            capture_output=True,
+            text=True,
+            timeout=60,
+            # Упереться в недоступную базу — законный исход: проверяется не
+            # успех пересборки, а то, что настройки нашлись.
+            check=False,
+        )
+
+        assert "MYSQL_USER, MYSQL_PASSWORD" not in result.stderr
