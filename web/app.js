@@ -219,6 +219,19 @@ function formatDateTime(date) {
     });
 }
 
+function formatDay(date) {
+    return date.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+}
+
+/* «Со 2 августа», «с 24 августа»: дата старейшего разобранного приёма вместо
+   обещания «за две недели» — лимит кривых в снимке срабатывает раньше
+   двухнедельного окна. Предлог меняется только перед «2», а неразрывные
+   пробелы держат фразу одним куском — см. formatDose. */
+function sinceLabel(date) {
+    const label = formatDay(date).replace(" ", " ");
+    return `${date.getDate() === 2 ? "со" : "с"} ${label}`;
+}
+
 /* Стрелка тренда по скорости в мг/дл за минуту — те же пороги, по которым
    рисует стрелку сам Libre. */
 function trendArrow(rate) {
@@ -859,12 +872,21 @@ function medianCurve(curves) {
     const buckets = new Map();
 
     for (const curve of curves) {
+        // Кривые сенсора идут пятиминутным шагом, но у каждой свой сдвиг
+        // относительно момента еды — без округления они не сложились бы.
+        // Внутри слота кривая схлопывается до одного значения: сборщик пишет
+        // и пятиминутную сетку, и внеочередное текущее измерение, так что без
+        // схлопывания плотнее опрошенная еда весила бы в медиане вдвое, а два
+        // обеда сходили бы за три кривые для MEDIAN_MIN_CURVES.
+        const own = new Map();
         for (const [offset, mgdl] of curve) {
-            // Кривые сенсора идут пятиминутным шагом, но у каждой свой сдвиг
-            // относительно момента еды — без округления они не сложились бы.
             const slot = Math.round(offset / 5) * 5;
+            if (!own.has(slot)) own.set(slot, []);
+            own.get(slot).push(mgdl);
+        }
+        for (const [slot, values] of own) {
             if (!buckets.has(slot)) buckets.set(slot, []);
-            buckets.get(slot).push(mgdl);
+            buckets.get(slot).push(values.reduce((sum, v) => sum + v, 0) / values.length);
         }
     }
 
@@ -1112,30 +1134,50 @@ function renderReviewStats(analysis) {
             "Разобрано приёмов",
             String(summary.count),
             summary.skipped
-                ? `пропущено ${summary.skipped}: окно не закрылось или наложилось`
-                : "за последние две недели"
-        ),
-        statCard(
-            "Подъём, медиана",
-            formatDelta(summary.rise),
-            `ммоль/л, ориентир до ${formatMmol(targets.rise)}`
-        ),
-        statCard(
-            "Пик через",
-            `${summary.peak_min} мин`,
-            `обычно ${targets.peak_min[0]}–${targets.peak_min[1]} мин`
-        ),
-        statCard(
-            "С гипогликемией",
-            `${summary.hypo} из ${summary.count}`,
-            `ниже ${formatMmol(targets.hypo)} ммоль/л в течение 4 часов`
-        ),
-        statCard(
-            "Уложились в ориентир",
-            `${summary.good} из ${summary.count}`,
-            "подъём в пределах ориентира и без гипогликемии"
+                ? `пропущено ${summary.skipped}: окно не закрылось или прервано`
+                : sinceLabel(new Date(analysis.meals[0].t * 1000))
         ),
     ];
+
+    // Медианы бывают null — когда ни одно окно не дожило до конца чистым.
+    // Карточек с прочерками не рисуем: отсутствие честнее выдуманного нуля.
+    if (summary.rise !== null) {
+        cards.push(
+            statCard(
+                "Подъём, медиана",
+                formatDelta(summary.rise),
+                `ммоль/л, ориентир до ${formatMmol(targets.rise)}`
+            )
+        );
+    }
+    if (summary.peak_min !== null) {
+        cards.push(
+            statCard(
+                "Пик через",
+                `${summary.peak_min} мин`,
+                `обычно ${targets.peak_min[0]}–${targets.peak_min[1]} мин`
+            )
+        );
+    }
+
+    cards.push(
+        statCard(
+            "С гипогликемией",
+            // ?? — снимок от прежнего сборщика мог ещё не знать total.
+            `${summary.hypo} из ${summary.total ?? summary.count}`,
+            `ниже ${formatMmol(targets.hypo)} ммоль/л, считая незакрытые и прерванные окна`
+        )
+    );
+
+    if (summary.count) {
+        cards.push(
+            statCard(
+                "Уложились в ориентир",
+                `${summary.good} из ${summary.count}`,
+                "подъём в пределах ориентира и без гипогликемии"
+            )
+        );
+    }
 
     els.reviewStats.append(...cards);
     els.reviewStats.hidden = false;
@@ -1151,10 +1193,11 @@ function renderReview() {
         return;
     }
 
+    const reviewSince = sinceLabel(new Date(analysis.meals[0].t * 1000));
     els.reviewNote.textContent =
         `На сколько глюкоза отклонялась от уровня в момент еды в течение ` +
-        `${analysis.window_min / 60} часов после каждого приёма пищи за последние две ` +
-        "недели. Это описание исхода, а не оценка дозы: на результат влияют и " +
+        `${analysis.window_min / 60} часов после каждого приёма пищи ${reviewSince}. ` +
+        "Это описание исхода, а не оценка дозы: на результат влияют и " +
         "активность, и болезнь, и остаток предыдущей дозы — ничего из этого здесь нет.";
 
     // Раскрыть до отрисовки: у скрытой секции холст имеет нулевую ширину, и
@@ -1193,6 +1236,12 @@ function renderCollectorState() {
 }
 
 function render() {
+    // Баннер живёт до первой удачной отрисовки: страница перечитывает снимок
+    // каждую минуту, и один моргнувший fetch не должен навсегда повесить
+    // «не удалось загрузить» над живыми данными. renderNow() вернёт баннер,
+    // если показывать по-прежнему нечего.
+    els.empty.hidden = true;
+
     renderNow();
     // До проверки на пустые данные: когда замеров нет вовсе, знать, жив ли
     // сборщик, тем более важно.
@@ -1204,8 +1253,8 @@ function render() {
     els.chart.hidden = false;
     drawChart();
     renderStats();
-    // Разбор не зависит от выбранного окна: он всегда за две недели, поэтому
-    // кнопки периода его не перерисовывают.
+    // Разбор не зависит от выбранного окна графика: у него свой период,
+    // названный в его же заметке, поэтому кнопки его не перерисовывают.
     renderReview();
 }
 
