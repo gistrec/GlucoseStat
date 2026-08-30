@@ -66,8 +66,12 @@ class Collector:
         self._client.login(force=force)
         self._logged_in = True
 
-    def poll(self) -> int:
-        """Fetch new readings and store them. Returns rows added."""
+    def poll(self) -> list[tuple[datetime, float]]:
+        """Fetch the current readings window, oldest first.
+
+        Хранение — забота вызывающего: скачанные показания нужны и тогда,
+        когда записать их некуда, — по ним поднимается тревога.
+        """
 
         if not self._logged_in:
             self._login()
@@ -82,7 +86,10 @@ class Collector:
             self._login(force=True)
             readings = self._client.readings()
 
-        return store_readings([(item.timestamp, item.mgdl) for item in readings])
+        # Сортировка своя: порядок graphData — привычка Abbott, а не контракт,
+        # а последним элементом обязан быть свежайший замер — по нему
+        # поднимается тревога.
+        return sorted((item.timestamp, item.mgdl) for item in readings)
 
 
 def stamp_freshness(
@@ -103,6 +110,84 @@ def stamp_freshness(
     with open(path, "a", encoding="utf-8"):
         pass
     os.utime(path, (timestamp, timestamp))
+
+
+def run_once(
+    collector: Collector,
+    notifier: "Notifier | None",
+    fetch_interval: int,
+    backoff: int,
+    last_success: float | None,
+) -> tuple[int, int, float | None]:
+    """Один цикл опроса: скачать, сохранить, оповестить, отметить, опубликовать.
+
+    Возвращает (пауза до следующего цикла, следующий backoff, last_success).
+    Никогда не бросает: сборщик переживает всё — сеть, MySQL, смену пароля.
+    Отдельной функцией ради тестов: цикл ``while True`` не проверить, а
+    порядок «тревога не зависит от базы» — ровно то, что нельзя сломать молча.
+    """
+
+    # Показания этого опроса, пока они в руках: если скачать удалось, а
+    # записать — нет, тревога всё равно должна подняться.
+    fetched: list[tuple[datetime, float]] = []
+
+    try:
+        fetched = collector.poll()
+        added = store_readings(fetched)
+        last_success = time.time()
+        log.info("stored %d new readings", added)
+        backoff = BACKOFF_MIN
+        delay = fetch_interval
+    except RateLimited as error:
+        # Тот же потолок, что у файла блокировки: разойдись они — цикл
+        # спал бы дольше, чем действует запрет, и попытка не состоялась
+        # бы в срок. Retry-After у Abbott доходит до суток, но на слово
+        # мы ему не верим.
+        delay = min(error.retry_after or RATE_LIMIT_MIN, COOLDOWN_MAX)
+        log.warning("rate limited by LibreLinkUp, sleeping %ds", delay)
+    except Exception:
+        # Сборщик переживает всё: сеть, MySQL, смену пароля. Падение здесь
+        # означало бы бесконечный цикл рестартов pm2 с логином на каждой
+        # итерации — быстрый способ получить бан от Abbott.
+        delay = backoff
+        backoff = min(backoff * 2, BACKOFF_MAX)
+        log.exception("poll failed, retrying in %ds", delay)
+
+    # Метка свежести считается по свежайшей строке в базе, а не по ответу
+    # Abbott: она отвечает за весь конвейер, включая запись, и при лежащей
+    # MySQL обязана устареть — чтобы внешний мониторинг это заметил.
+    try:
+        latest = last_readings(1)
+    except Exception:
+        log.exception("failed to read the latest reading")
+        latest = []
+
+    if notifier:
+        # Тревога — по показаниям, только что скачанным у Abbott: гипогликемия,
+        # которая уже в руках, не должна молчать из-за недоступной MySQL. Когда
+        # опрос не удался или graph пуст, остаётся свежайшая строка базы — её
+        # notify отсеет по возрасту, вместо того чтобы поднять тревогу по
+        # позавчерашней гипогликемии.
+        try:
+            notifier.check(fetched or latest)
+        except Exception:
+            log.exception("failed to check the alert thresholds")
+
+    try:
+        stamp_freshness(latest)
+    except Exception:
+        log.exception("failed to stamp the freshness file")
+
+    # Снимок переписывается и после неудачи: только так на странице
+    # появляется отметка, что сборщик молчит. Прежде publish() стоял
+    # внутри try и при недоступности Abbott не вызывался вовсе — страница
+    # продолжала показывать старые данные как свежие.
+    try:
+        publish(last_success=last_success)
+    except Exception:
+        log.exception("failed to publish the snapshot")
+
+    return delay, backoff, last_success
 
 
 def main() -> None:
@@ -128,57 +213,9 @@ def main() -> None:
     last_success: float | None = None
 
     while True:
-        try:
-            added = collector.poll()
-            last_success = time.time()
-            log.info("stored %d new readings", added)
-            backoff = BACKOFF_MIN
-            delay = fetch_interval
-        except RateLimited as error:
-            # Тот же потолок, что у файла блокировки: разойдись они — цикл
-            # спал бы дольше, чем действует запрет, и попытка не состоялась
-            # бы в срок. Retry-After у Abbott доходит до суток, но на слово
-            # мы ему не верим.
-            delay = min(error.retry_after or RATE_LIMIT_MIN, COOLDOWN_MAX)
-            log.warning("rate limited by LibreLinkUp, sleeping %ds", delay)
-        except Exception:
-            # Сборщик переживает всё: сеть, MySQL, смену пароля. Падение здесь
-            # означало бы бесконечный цикл рестартов pm2 с логином на каждой
-            # итерации — быстрый способ получить бан от Abbott.
-            delay = backoff
-            backoff = min(backoff * 2, BACKOFF_MAX)
-            log.exception("poll failed, retrying in %ds", delay)
-
-        # И тревога, и метка свежести считаются по свежайшей строке в базе, а не
-        # по ответу Abbott: при пустом graph или неудачном опросе последнее
-        # известное значение остаётся старым, и notify отсеет его по возрасту —
-        # вместо того чтобы поднять тревогу по позавчерашней гипогликемии.
-        try:
-            latest = last_readings(1)
-        except Exception:
-            log.exception("failed to read the latest reading")
-            latest = []
-
-        if notifier:
-            try:
-                notifier.check(latest)
-            except Exception:
-                log.exception("failed to check the alert thresholds")
-
-        try:
-            stamp_freshness(latest)
-        except Exception:
-            log.exception("failed to stamp the freshness file")
-
-        # Снимок переписывается и после неудачи: только так на странице
-        # появляется отметка, что сборщик молчит. Прежде publish() стоял
-        # внутри try и при недоступности Abbott не вызывался вовсе — страница
-        # продолжала показывать старые данные как свежие.
-        try:
-            publish(last_success=last_success)
-        except Exception:
-            log.exception("failed to publish the snapshot")
-
+        delay, backoff, last_success = run_once(
+            collector, notifier, fetch_interval, backoff, last_success
+        )
         time.sleep(delay)
 
 
