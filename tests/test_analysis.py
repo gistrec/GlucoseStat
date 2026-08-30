@@ -82,10 +82,32 @@ class TestExcursion:
 
         result = excursion((START, 60.0), readings, LATER, others, HYPO)
 
-        assert result["cut"] is True
         assert result["curve"][-1][0] == 60
 
-    def test_cut_window_has_no_return(self):
+    def test_cut_marks_only_a_window_left_over_the_target(self):
+        """Следующая еда пришла на подъём выше ориентира: чем он кончился,
+        никто не видел."""
+
+        readings = rising_then_back(100, 220)
+        others = [START + timedelta(hours=1)]
+
+        result = excursion((START, 60.0), readings, LATER, others, HYPO)
+
+        assert result["rise"] > TARGET_RISE
+        assert result["cut"] is True
+
+    def test_a_rise_within_the_target_survives_the_cut(self):
+        """Подъём, уложившийся в ориентир, — уже исход: обрезка его не унесла."""
+
+        readings = rising_then_back(100, 160)
+        others = [START + timedelta(hours=1)]
+
+        result = excursion((START, 60.0), readings, LATER, others, HYPO)
+
+        assert result["rise"] <= TARGET_RISE
+        assert result["cut"] is False
+
+    def test_truncated_window_has_no_return(self):
         """Уровень в момент следующей еды — её опора, а не возврат после этой."""
 
         readings = rising_then_back(100, 160)
@@ -95,7 +117,7 @@ class TestExcursion:
 
         assert result["ret"] is None
 
-    def test_cut_window_judges_coverage_by_its_own_length(self):
+    def test_truncated_window_judges_coverage_by_its_own_length(self):
         """Часовому огрызку хватает дюжины точек — мерить его полными четырьмя
         часами значило бы браковать каждое обрезанное окно."""
 
@@ -198,7 +220,7 @@ class TestSummarise:
         """Реакция на гипо — еда, а еда режет окно; счёт по одним чистым окнам
         терял бы ровно те гипогликемии, которые случились."""
 
-        items = [self.make(40), self.make(10, hypo=True, cut=True)]
+        items = [self.make(40), self.make(TARGET_RISE + 20, hypo=True, cut=True)]
 
         result = summarise(items, HYPO)
 
@@ -212,7 +234,7 @@ class TestSummarise:
 
         items = [
             self.make(40, complete=False),
-            self.make(10, hypo=True, cut=True),
+            self.make(TARGET_RISE + 20, hypo=True, cut=True),
         ]
 
         result = summarise(items, HYPO)
@@ -266,7 +288,7 @@ class TestAnalyse:
         assert result["meals"][0]["dose"] == {"units": 4.0, "lead_min": -25}
 
     def test_a_real_second_meal_cuts_the_first(self):
-        readings = rising_then_back(100, 160)
+        readings = rising_then_back(100, 220)
         meals = [(START, 60.0), (START + timedelta(hours=1), SNACK_CARBS + 1.0)]
 
         result = analyse(meals, readings, LATER, HYPO)

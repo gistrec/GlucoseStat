@@ -83,12 +83,14 @@ kept. Snacks of ten grams of carbs or less play no part in the review — they
 cut nothing and get no window of their own: a square of chocolate barely shows
 on the curve, it should not cost a whole lunch its review, and a window opened
 on it would re-measure the neighbouring meal's rise from a mid-excursion
-baseline. Windows still open and windows cut short are drawn, but the summary
-medians are computed without them: neither has seen its four hours out, so
-neither knows its peak. Lows are the exception — the hypoglycaemia count covers
-every window shown, because the usual answer to a low is food, food cuts the
-window, and a count over clean windows only would drop exactly the lows that
-happened.
+baseline. Windows still open are drawn but left out of the summary medians: one
+that has not seen its four hours out does not know its peak. A window cut short
+is left out only when its rise had already passed the target by then — nobody
+saw where that one ended, while a rise that stayed within the target is an
+outcome the cut did not take away, and it counts like any other. Lows are the
+exception — the hypoglycaemia count covers every window shown, because the usual
+answer to a low is food, food cuts the window, and a count over clean windows
+only would drop exactly the lows that happened.
 
 This describes outcomes and stops there. Whether a dose was right also depends
 on activity, on illness and on insulin still active from an earlier injection —
