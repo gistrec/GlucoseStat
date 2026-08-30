@@ -217,6 +217,12 @@ def build_snapshot(
         for occurred_at, kind, carbs, _ in journal
         if kind == "meal" and carbs is not None
     ]
+    # Только короткий инсулин: базальный — суточный фон, к еде он не относится.
+    boluses = [
+        (occurred_at, units)
+        for occurred_at, kind, _, units in journal
+        if kind == "bolus" and units is not None
+    ]
 
     return {
         "generated_at": int(now.replace(tzinfo=timezone.utc).timestamp()),
@@ -230,7 +236,9 @@ def build_snapshot(
         # Своё окно, не выбранное на странице — см. GMI_WINDOW.
         "gmi": _gmi(readings, now),
         "events": _events(journal, now - EVENT_WINDOW),
-        "analysis": analyse(meals, readings, now, hypo_mgdl=TARGET_LOW_MGDL),
+        "analysis": analyse(
+            meals, readings, now, hypo_mgdl=TARGET_LOW_MGDL, boluses=boluses
+        ),
     }
 
 

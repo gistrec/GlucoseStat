@@ -1031,10 +1031,23 @@ function outcome(meal, targets) {
     return ["flag--skip", "· подъём выше ориентира"];
 }
 
+/* Болюс еды: доза и её упреждение. Абсолютное время укола не нужно — оно
+   читается из колонки «Когда», а связка «сколько и за сколько до еды» — то,
+   ради чего колонка существует. */
+function formatDose(dose) {
+    if (!dose) return "—";
+    // Неразрывные пробелы внутри половин: ячейка может сложиться в две строки
+    // «7,2 ед / за 15 мин до», но не оставить «до» болтаться на своей.
+    const units = `${formatAmount(dose.units)} ед`;
+    if (dose.lead_min > 0) return `${units} за ${dose.lead_min} мин до`;
+    if (dose.lead_min < 0) return `${units} через ${-dose.lead_min} мин`;
+    return `${units} с едой`;
+}
+
 function renderMeals(analysis) {
     const head = document.createElement("thead");
     const headRow = document.createElement("tr");
-    for (const title of ["Когда", "Углеводы", "Подъём", "Пик через", "Возврат", "Исход"]) {
+    for (const title of ["Когда", "Углеводы", "Инсулин", "Подъём", "Пик через", "Возврат", "Исход"]) {
         const cell = document.createElement("th");
         cell.scope = "col";
         cell.textContent = title;
@@ -1051,6 +1064,7 @@ function renderMeals(analysis) {
         const cells = [
             formatDateTime(new Date(meal.t * 1000)),
             `${formatAmount(meal.carbs)} г`,
+            formatDose(meal.dose),
             `${formatDelta(meal.rise)}`,
             `${meal.peak_min} мин`,
             meal.ret === null ? "—" : formatDelta(meal.ret),
@@ -1135,9 +1149,8 @@ function renderReview() {
     els.reviewNote.textContent =
         `На сколько глюкоза отклонялась от уровня в момент еды в течение ` +
         `${analysis.window_min / 60} часов после каждого приёма пищи за последние две ` +
-        "недели. Это описание исхода, а не оценка дозы: на результат влияют и то, за " +
-        "сколько до еды сделан укол, и активность, и остаток предыдущей дозы — ничего " +
-        "из этого здесь нет.";
+        "недели. Это описание исхода, а не оценка дозы: на результат влияют и " +
+        "активность, и болезнь, и остаток предыдущей дозы — ничего из этого здесь нет.";
 
     // Раскрыть до отрисовки: у скрытой секции холст имеет нулевую ширину, и
     // рисовать в него — значит рисовать в ничто.

@@ -232,6 +232,57 @@ class TestAnalyse:
         assert result["meals"][0]["cut"] is True
         assert result["meals"][0]["curve"][-1][0] == 60
 
+    def test_bolus_near_the_meal_is_attached(self):
+        readings = rising_then_back(100, 160)
+        boluses = [(START - timedelta(minutes=15), 6.0)]
+
+        result = analyse([(START, 60.0)], readings, LATER, HYPO, boluses=boluses)
+
+        assert result["meals"][0]["dose"] == {"units": 6.0, "lead_min": 15}
+
+    def test_distant_bolus_is_not_attached(self):
+        """Коррекция за два часа до обеда — не его доза."""
+
+        readings = rising_then_back(100, 160)
+        boluses = [(START - timedelta(hours=2), 6.0)]
+
+        result = analyse([(START, 60.0)], readings, LATER, HYPO, boluses=boluses)
+
+        assert result["meals"][0]["dose"] is None
+
+    def test_bolus_goes_to_the_nearest_meal_only(self):
+        """Доза между двумя приёмами не должна красоваться в двух строках."""
+
+        readings = rising_then_back(100, 160)
+        meals = [(START, 60.0), (START + timedelta(minutes=40), 30.0)]
+        boluses = [(START + timedelta(minutes=25), 4.0)]
+
+        result = analyse(meals, readings, LATER, HYPO, boluses=boluses)
+
+        assert result["meals"][0]["dose"] is None
+        assert result["meals"][1]["dose"] == {"units": 4.0, "lead_min": 15}
+
+    def test_split_dose_sums_units_and_keeps_the_first_lead(self):
+        """Именно первый укол решает, успел ли инсулин к пику."""
+
+        readings = rising_then_back(100, 160)
+        boluses = [
+            (START - timedelta(minutes=20), 4.0),
+            (START + timedelta(minutes=10), 2.0),
+        ]
+
+        result = analyse([(START, 60.0)], readings, LATER, HYPO, boluses=boluses)
+
+        assert result["meals"][0]["dose"] == {"units": 6.0, "lead_min": 20}
+
+    def test_bolus_after_the_meal_has_negative_lead(self):
+        readings = rising_then_back(100, 160)
+        boluses = [(START + timedelta(minutes=10), 6.0)]
+
+        result = analyse([(START, 60.0)], readings, LATER, HYPO, boluses=boluses)
+
+        assert result["meals"][0]["dose"] == {"units": 6.0, "lead_min": -10}
+
     def test_meal_without_readings_disappears(self):
         result = analyse([(START, 60.0)], [], LATER, HYPO)
 

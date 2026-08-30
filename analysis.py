@@ -4,10 +4,10 @@ Pure functions over readings and journal entries — no database, no network, so
 the arithmetic is testable without either.
 
 This module describes outcomes and never prescribes. It reports how far glucose
-rose, when it peaked, whether it came back, and whether a low followed; it never
-judges a dose. Whether an injection was "right" depends on how long before the
-meal it went in, on activity, illness, and on insulin still active from an
-earlier dose — none of which is in this data.
+rose, when it peaked, whether it came back, and whether a low followed; it shows
+the meal's bolus and how far ahead it went in, but it never judges a dose.
+Whether an injection was "right" also depends on activity, illness, and on
+insulin still active from an earlier dose — none of which is in this data.
 """
 
 import statistics
@@ -23,6 +23,11 @@ WINDOW = timedelta(hours=4)
 # точку раз в пять минут, так что четверть часа переживает один пропуск, но не
 # выдаёт за опору показание из совсем другого места кривой.
 NEAREST_TOLERANCE = timedelta(minutes=15)
+
+# Как далеко от отметки еды искать её болюс. Укол «к еде» бывает и заранее
+# (упреждение), и после первых ложек — полчаса в обе стороны накрывают оба
+# случая, не подбирая коррекцию, сделанную по совсем другому поводу.
+DOSE_WINDOW = timedelta(minutes=30)
 
 # Граница перекуса, в граммах углеводов. Еда не больше этого — долька шоколада,
 # пара крекеров — почти не заметна на кривой, и обрывать из-за неё чужое окно
@@ -65,19 +70,54 @@ def _nearest(
     return None if best is None else best[1]
 
 
+def _doses(
+    moments: list[datetime],
+    boluses: list[tuple[datetime, float]],
+) -> dict[datetime, dict]:
+    """Привязать болюсы к ближайшей еде в пределах ``DOSE_WINDOW``.
+
+    Каждый укол достаётся ровно одной еде — ближайшей: доза между обедом и
+    перекусом не должна красоваться в двух строках сразу. Разбитая доза
+    суммируется, а упреждение считается по первому уколу: именно он решает,
+    успел ли инсулин к пику.
+    """
+
+    attached: dict[datetime, list[tuple[datetime, float]]] = {}
+    for occurred_at, units in boluses:
+        nearest = min(
+            (moment for moment in moments if abs(moment - occurred_at) <= DOSE_WINDOW),
+            key=lambda moment: abs(moment - occurred_at),
+            default=None,
+        )
+        if nearest is not None:
+            attached.setdefault(nearest, []).append((occurred_at, units))
+
+    doses = {}
+    for moment, shots in attached.items():
+        first = min(occurred_at for occurred_at, _ in shots)
+        doses[moment] = {
+            "units": round(sum(units for _, units in shots), 1),
+            # Положительное упреждение — укол до еды, отрицательное — после.
+            "lead_min": round((moment - first).total_seconds() / 60),
+        }
+    return doses
+
+
 def excursion(
     meal: tuple[datetime, float],
     readings: list[tuple[datetime, float]],
     now: datetime,
     other_meals: list[datetime],
     hypo_mgdl: int,
+    dose: dict | None = None,
 ) -> dict | None:
     """Разобрать один приём пищи. ``None``, если данных под ним нет.
 
     Возвращает описание того, что произошло: опора, пик, время до пика,
     возврат к исходному и была ли гипогликемия. Окно, в которое попала
-    следующая еда, обрезается по её моменту и помечается ``cut``. Вывода о
-    дозе здесь нет и быть не может — см. модуль.
+    следующая еда, обрезается по её моменту и помечается ``cut``. ``dose`` —
+    болюс этой еды из ``_doses``; он показывается рядом, но вывода о нём здесь
+    нет и быть не может — см. модуль.
     """
 
     started, carbs = meal
@@ -109,6 +149,7 @@ def excursion(
     return {
         "t": _seconds(started),
         "carbs": round(carbs, 1),
+        "dose": dose,
         "baseline": round(baseline),
         "peak": round(peak),
         "peak_min": int((peak_at - started).total_seconds() // 60),
@@ -160,23 +201,28 @@ def analyse(
     readings: list[tuple[datetime, float]],
     now: datetime,
     hypo_mgdl: int,
+    boluses: list[tuple[datetime, float]] | None = None,
     limit: int = 24,
 ) -> dict:
     """Разобрать последние приёмы пищи и свести их в итог.
 
-    ``limit`` ограничивает число кривых, уезжающих на страницу: каждая — до
-    полусотни точек, и три десятка их хватает, чтобы увидеть форму, не утроив
-    вес снимка.
+    ``boluses`` — уколы короткого инсулина; каждый привязывается к ближайшей
+    еде в пределах ``DOSE_WINDOW``. ``limit`` ограничивает число кривых,
+    уезжающих на страницу: каждая — до полусотни точек, и три десятка их
+    хватает, чтобы увидеть форму, не утроив вес снимка.
     """
 
     ordered = sorted(meals)
     # Окно режет только значимая еда: перекус оставляет соседние окна в покое —
     # см. SNACK_CARBS. Себя приём не режет: ``started < other`` строгое.
     significant = [moment for moment, carbs in ordered if carbs > SNACK_CARBS]
+    doses = _doses([moment for moment, _ in ordered], boluses or [])
 
     excursions = []
     for meal in ordered:
-        item = excursion(meal, readings, now, significant, hypo_mgdl)
+        item = excursion(
+            meal, readings, now, significant, hypo_mgdl, dose=doses.get(meal[0])
+        )
         if item is not None:
             excursions.append(item)
 
