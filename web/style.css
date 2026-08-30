@@ -325,6 +325,13 @@ body {
     border: 2px solid currentColor;
 }
 
+/* Метка выбранной кривой повторяет её вид на холсте: там она толще медианы,
+   и легенда, отличающаяся одним цветом, обещала бы линию, которую на графике
+   узнают иначе. */
+.legend__key--thick {
+    height: 5px;
+}
+
 /* ── Подсказка на графике ──────────────────────────────────────────── */
 
 .tip {
@@ -445,12 +452,73 @@ body {
     border-bottom: none;
 }
 
-/* Звёздочка у приёма, сложенного из нескольких записей: под наведением она
-   перечисляет заходы, из которых вышло число слева от неё. */
+/* Знак суммы у приёма, сложенного из нескольких записей: под наведением он
+   перечисляет заходы, из которых вышло число справа от него. Стоит перед
+   числом, чтобы не разгонять выровненную по правому краю колонку. */
 .parts {
     color: var(--muted);
     cursor: help;
     text-decoration: none;
+}
+
+/* Выбор приёма для оверлея. Наведение показывает кривую, нажатие закрепляет —
+   вся строка отзывается на курсор, но нажимается кнопка с датой: у неё есть
+   роль и состояние, которых у строки таблицы быть не может.
+
+   Отмечает строку полоса слева, а не подложка: таблица лежит прямо на фоне
+   страницы, и любая заливка утягивает контраст «Исхода» — зелёного и красного
+   на светлой теме — ниже AA. Полоса ничего под собой не красит. */
+.meals tbody tr td:first-child {
+    box-shadow: inset 3px 0 0 transparent;
+}
+
+.meals tbody tr:hover td:first-child {
+    box-shadow: inset 3px 0 0 var(--muted);
+}
+
+.meals tbody tr.is-picked td:first-child {
+    box-shadow: inset 3px 0 0 var(--meal);
+}
+
+.meals__pick {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: inherit;
+    text-align: inherit;
+    cursor: pointer;
+    text-decoration: none;
+    text-underline-offset: 3px;
+}
+
+/* Подчёркивание появляется под курсором и под фокусом, а не стоит в каждой
+   строке: два десятка пунктиров в колонке чисел — шум, а сказать, что дату
+   можно нажать, есть кому — подписи под графиком. Цвет — currentColor: у
+   приглушённого пунктир не дотягивал до 3:1 на светлой теме, а он здесь
+   единственный знак того, что дата нажимается. */
+.meals tbody tr:hover .meals__pick,
+.meals__pick:focus-visible {
+    text-decoration: underline dotted currentColor;
+}
+
+.meals__pick:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 3px;
+}
+
+/* Закреплённая — сплошной линией цвета еды: тем же, каким её кривая выделена
+   на графике, чтобы строку и линию связывал не только фон. */
+.meals tbody tr.is-pinned .meals__pick {
+    text-decoration: underline solid var(--meal);
+}
+
+.review__hint {
+    margin: 10px 0 0;
+    color: var(--muted);
+    font-size: 0.78rem;
+    line-height: 1.5;
 }
 
 /* Отметка исхода. Цвет здесь означает состояние, а не принадлежность, поэтому

@@ -740,7 +740,9 @@ function legendItem(series) {
     const key = document.createElement("span");
     key.className = series.hollow
         ? "legend__key legend__key--hollow"
-        : `legend__key${series.line ? " legend__key--line" : ""}`;
+        : `legend__key${series.line ? " legend__key--line" : ""}${
+              series.thick ? " legend__key--thick" : ""
+          }`;
     // Контурная метка красится через currentColor — так одна и та же переменная
     // задаёт и заливку, и рамку.
     key.style.color = `var(${series.token})`;
@@ -865,7 +867,34 @@ function hideTip() {
 const OVERLAY_SERIES = {
     single: { token: "--muted", fallback: "#8a90a6", label: "Отдельные приёмы", line: true },
     median: { token: "--accent", fallback: "#7eb8f7", label: "Медиана", line: true },
+    // Цвет еды, а не акцента: акцентом нарисована медиана, и вторая синяя
+    // линия читалась бы как ещё одна сводка, а не как один приём.
+    picked: {
+        token: "--meal",
+        fallback: "#bd8a30",
+        label: "Выбранный приём",
+        line: true,
+        thick: true,
+    },
 };
+
+/* Какой приём подсвечен на оверлее. Закреплённый нажатием — состояние покоя,
+   к которому подсветка возвращается; указатель и фокус поверх него только
+   показывают, на что сейчас смотрят. Так строка под курсором всегда означает
+   свою кривую на графике, а не иногда — в зависимости от того, закреплено ли
+   что-то ещё. Приём опознаётся временем: оно уникально и переживает
+   перерисовку таблицы, так что закрепление не слетает от обновления снимка.
+
+   Указатель и фокус держатся порознь и решают последним словом: увести мышь
+   со стола, не погасив кривую, выбранную с клавиатуры, — и наоборот. */
+let hoveredMeal = null;
+let focusedMeal = null;
+let previewMeal = null;
+let pinnedMeal = null;
+
+function pickedMeal() {
+    return previewMeal ?? pinnedMeal;
+}
 
 const OVERLAY_HEIGHT = 240;
 
@@ -993,11 +1022,7 @@ function drawOverlay(analysis) {
     ctx.stroke();
     ctx.globalAlpha = 1;
 
-    // Отдельные кривые — тонкие и приглушённые: они дают разброс и форму, а
-    // числа читаются в таблице.
-    ctx.lineWidth = 1;
-    ctx.globalAlpha = 0.3;
-    for (const curve of curves) {
+    const stroke = (curve) => {
         ctx.beginPath();
         curve.forEach(([offset, mgdl], index) => {
             const px = x(Math.min(offset, span));
@@ -1006,7 +1031,20 @@ function drawOverlay(analysis) {
             else ctx.lineTo(px, py);
         });
         ctx.stroke();
-    }
+    };
+
+    // Выбранная кривая рисуется последней, поверх медианы: подсветка, лежащая
+    // под ней, теряется как раз там, где кривые сходятся плотнее всего.
+    const picked = drawn.findIndex((meal) => meal.t === pickedMeal());
+
+    // Отдельные кривые — тонкие и приглушённые: они дают разброс и форму, а
+    // числа читаются в таблице. Когда одна выбрана, остальные отступают, но не
+    // исчезают: ниже 0.2 разброс перестаёт читаться, а он и есть их работа.
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = picked >= 0 ? 0.2 : 0.3;
+    curves.forEach((curve, index) => {
+        if (index !== picked) stroke(curve);
+    });
     ctx.globalAlpha = 1;
 
     const median = medianCurve(curves);
@@ -1015,14 +1053,25 @@ function drawOverlay(analysis) {
         ctx.lineWidth = 2;
         ctx.lineJoin = "round";
         ctx.lineCap = "round";
-        ctx.beginPath();
-        median.forEach(([offset, mgdl], index) => {
-            const px = x(Math.min(offset, span));
-            const py = y(toMmol(mgdl));
-            if (index === 0) ctx.moveTo(px, py);
-            else ctx.lineTo(px, py);
-        });
-        ctx.stroke();
+        stroke(median);
+    }
+
+    if (picked >= 0) {
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        // Ореол цветом панели, а под ним линия толще медианы. Цвет здесь —
+        // не единственное отличие нарочно: у --meal и --accent в светлой теме
+        // совпадает светлота, и на монохромном экране, при дальтонизме и на
+        // распечатке кривые различались бы только шириной и просветом вокруг.
+        ctx.strokeStyle = readColor("--panel", "#ffffff");
+        ctx.lineWidth = 6;
+        ctx.globalAlpha = 0.75;
+        stroke(curves[picked]);
+
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = readColor("--meal", "#bd8a30");
+        ctx.lineWidth = 3;
+        stroke(curves[picked]);
     }
 
     // Ориентир подписывается прямо на линии: считать, какая это по счёту
@@ -1046,16 +1095,21 @@ function drawOverlay(analysis) {
     ctx.fillStyle = muted;
     ctx.fillText(label, width - padding.right - 4, targetY);
 
+    // Что именно выделено, из картинки не прочитать — говорим словами: иначе
+    // кнопка сообщает «нажато», а чем это кончилось на холсте, неизвестно.
+    const pickedAt = picked >= 0 ? formatDateTime(new Date(drawn[picked].t * 1000)) : null;
     canvas.setAttribute(
         "aria-label",
         `Отклонение глюкозы от уровня в момент еды после ${drawn.length} приёмов пищи. ` +
+            (pickedAt ? `Выделен приём ${pickedAt}. ` : "") +
             "Все значения перечислены в таблице ниже."
     );
 
-    els.overlayLegend.replaceChildren(
-        legendItem(OVERLAY_SERIES.single),
-        legendItem(OVERLAY_SERIES.median)
-    );
+    const legend = [legendItem(OVERLAY_SERIES.single), legendItem(OVERLAY_SERIES.median)];
+    // Ряд появляется только когда есть что называть: пустая строка легенды
+    // обещала бы линию, которой на холсте нет.
+    if (picked >= 0) legend.push(legendItem(OVERLAY_SERIES.picked));
+    els.overlayLegend.replaceChildren(...legend);
 }
 
 function outcome(meal, targets) {
@@ -1091,16 +1145,16 @@ function textCell(text) {
 }
 
 /* Приём, записанный в несколько заходов, разбирается как одна еда, а на
-   дорожке главного графика его записи стоят порознь. Звёздочка объясняет
-   расхождение и под наведением перечисляет заходы. */
+   дорожке главного графика его записи стоят порознь. Знак суммы объясняет
+   расхождение и под наведением перечисляет заходы. Стоит он перед числом:
+   колонка выровнена по правому краю, и хвостовая пометка сдвигала бы числа
+   друг относительно друга — то самое выравнивание, ради которого колонка и
+   набрана моноширинными цифрами. */
 function carbsCell(meal) {
     const cell = textCell(`${formatAmount(meal.carbs)} г`);
     if (!meal.parts) return cell;
 
-    const mark = document.createElement("abbr");
-    mark.className = "parts";
-    mark.textContent = "∗";
-    mark.title = meal.parts
+    const sittings = meal.parts
         .map(([seconds, carbs]) => {
             const at = new Date(seconds * 1000).toLocaleTimeString("ru-RU", {
                 hour: "2-digit",
@@ -1109,7 +1163,23 @@ function carbsCell(meal) {
             return `${at} — ${formatAmount(carbs)} г`;
         })
         .join(", ");
-    cell.append(" ", mark);
+
+    // Знак — только для глаз: Σ ничего не сокращает, так что <abbr> здесь ни
+    // при чём, а озвучивать «греческая заглавная сигма» перед числом незачем.
+    const mark = document.createElement("span");
+    mark.className = "parts";
+    mark.textContent = "Σ";
+    mark.title = sittings;
+    mark.setAttribute("aria-hidden", "true");
+
+    // Состав словами: title не показывается на телефоне и не читается вслух,
+    // а без него знак остаётся необъяснённым.
+    const spoken = document.createElement("span");
+    spoken.className = "visually-hidden";
+    spoken.textContent = `, сложено из записей: ${sittings}`;
+
+    cell.prepend(mark, " ");
+    cell.append(spoken);
     return cell;
 }
 
@@ -1130,8 +1200,45 @@ function renderMeals(analysis) {
         const row = document.createElement("tr");
         const [flagClass, flagText] = outcome(meal, analysis.targets);
 
+        // Наведение показывает кривую по всей строке — вести курсор в одну
+        // колонку никто не станет. Но нажимается настоящая кнопка внутри
+        // первой ячейки: у неё есть роль, состояние и клавиатура даром, а
+        // восьмой колонки ради этого заводить не пришлось.
+        //
+        // Кнопки нет там, где нечего показать: у только что записанной еды в
+        // окне ещё нет двух измерений, и оверлей её не рисует. Такая строка
+        // стоит первой — то есть выбирать нечего ровно тогда, когда разбор
+        // открывают чаще всего, — и нажатие обещало бы кривую, которой нет.
+        const drawable = meal.curve.length > 1;
+        row.dataset.meal = meal.t;
+        if (drawable) {
+            row.addEventListener("mouseenter", () => setHovered(meal.t));
+            row.addEventListener("mouseleave", () => setHovered(null));
+        }
+
+        const when = document.createElement("td");
+        if (drawable) {
+            const pick = document.createElement("button");
+            pick.type = "button";
+            pick.className = "meals__pick";
+            pick.textContent = formatDateTime(new Date(meal.t * 1000));
+            // Имя кнопки не меняется вместе с состоянием: состояние говорит
+            // aria-pressed, и «снять подсветку… нажато» звучало бы так, будто
+            // снятие уже произошло.
+            pick.setAttribute(
+                "aria-label",
+                `${pick.textContent} — подсветить кривую на графике`
+            );
+            pick.addEventListener("click", () => togglePinned(meal.t));
+            pick.addEventListener("focus", () => setFocused(meal.t));
+            pick.addEventListener("blur", () => setFocused(null));
+            when.append(pick);
+        } else {
+            when.textContent = formatDateTime(new Date(meal.t * 1000));
+        }
+
         row.append(
-            textCell(formatDateTime(new Date(meal.t * 1000))),
+            when,
             carbsCell(meal),
             textCell(formatDose(meal.dose)),
             textCell(formatDelta(meal.rise)),
@@ -1151,8 +1258,63 @@ function renderMeals(analysis) {
         body.append(row);
     }
 
+    // Снимок перечитывается раз в минуту, и таблица пересобирается целиком —
+    // вместе с кнопкой, на которой стоял фокус. Без возврата фокус раз в
+    // минуту улетал бы на body: до появления кнопок это было незаметно.
+    const focused = document.activeElement;
+    const keepFocus =
+        focused && focused.classList.contains("meals__pick")
+            ? focused.closest("tr").dataset.meal
+            : null;
+
     const caption = els.meals.querySelector("caption");
     els.meals.replaceChildren(...(caption ? [caption] : []), head, body);
+
+    if (keepFocus) {
+        const restored = body.querySelector(`tr[data-meal="${keepFocus}"] .meals__pick`);
+        // preventScroll: возврат фокуса не должен утаскивать страницу к
+        // таблице, если читатель успел уйти взглядом выше.
+        if (restored) restored.focus({ preventScroll: true });
+    }
+
+    markPicked();
+}
+
+function setHovered(t) {
+    hoveredMeal = t;
+    // Ушёл указатель — остаётся то, что держит фокус, и наоборот.
+    previewMeal = t ?? focusedMeal;
+    refreshPicked();
+}
+
+function setFocused(t) {
+    focusedMeal = t;
+    previewMeal = t ?? hoveredMeal;
+    refreshPicked();
+}
+
+function togglePinned(t) {
+    pinnedMeal = pinnedMeal === t ? null : t;
+    refreshPicked();
+}
+
+/* Отметить выбранную строку, не трогая холст: наведение при закреплённой
+   кривой меняет только таблицу, и перерисовывать оверлей незачем. */
+function markPicked() {
+    const picked = pickedMeal();
+    for (const row of els.meals.querySelectorAll("tbody tr")) {
+        const t = Number(row.dataset.meal);
+        row.classList.toggle("is-picked", t === picked);
+        row.classList.toggle("is-pinned", t === pinnedMeal);
+
+        const pick = row.querySelector(".meals__pick");
+        if (pick) pick.setAttribute("aria-pressed", String(t === pinnedMeal));
+    }
+}
+
+function refreshPicked() {
+    markPicked();
+    if (snapshot && snapshot.analysis) drawOverlay(snapshot.analysis);
 }
 
 function renderReviewStats(analysis) {
@@ -1235,6 +1397,15 @@ function renderReview() {
         `${analysis.window_min / 60} часов после каждого приёма пищи ${reviewSince}. ` +
         "Это описание исхода, а не оценка дозы: на результат влияют и " +
         "активность, и болезнь, и остаток предыдущей дозы — ничего из этого здесь нет.";
+
+    // Закреплённый приём мог уехать из снимка: окно разбора движется, и раз в
+    // минуту страница перечитывает его заново. Проверяется не наличие в
+    // таблице, а рисуемость: строка может остаться, а кривая — сократиться до
+    // точки, и подсветка повисла бы ни на чём.
+    const drawable = analysis.meals.some(
+        (meal) => meal.t === pinnedMeal && meal.curve.length > 1
+    );
+    if (pinnedMeal !== null && !drawable) pinnedMeal = null;
 
     // Раскрыть до отрисовки: у скрытой секции холст имеет нулевую ширину, и
     // рисовать в него — значит рисовать в ничто.
