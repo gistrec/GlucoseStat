@@ -5,6 +5,7 @@ network. Importing ``publish`` is safe without configuration because the
 engine is built lazily on first use.
 """
 
+import json
 from datetime import datetime, timedelta
 
 import pytest
@@ -17,7 +18,9 @@ from publish import (
     _events,
     _gmi,
     _stats,
+    _stored_last_success,
     _trend,
+    publish,
 )
 
 
@@ -229,3 +232,58 @@ class TestGmi:
 
     def test_no_readings(self):
         assert _gmi([], BASE) is None
+
+
+class TestStoredLastSuccess:
+    """The collector's memory dies with its process; the snapshot's does not."""
+
+    def test_inherits_the_mark_from_the_previous_snapshot(self, tmp_path):
+        path = tmp_path / "data.json"
+        path.write_text('{"collector": {"last_success": 1756500000}}', encoding="utf-8")
+
+        assert _stored_last_success(str(path)) == 1756500000.0
+
+    def test_missing_file_means_nothing_to_inherit(self, tmp_path):
+        assert _stored_last_success(str(tmp_path / "data.json")) is None
+
+    def test_corrupt_or_alien_json_means_nothing_to_inherit(self, tmp_path):
+        # Включая истинные, но нечисловые значения: чужой файл не должен
+        # ронять каждую публикацию, пока его не поправят руками.
+        path = tmp_path / "data.json"
+        alien = [
+            "{not json",
+            '{"collector": null}',
+            '{"collector": {"last_success": "yesterday"}}',
+            '{"collector": {"last_success": [1, 2]}}',
+        ]
+
+        for content in alien:
+            path.write_text(content, encoding="utf-8")
+            assert _stored_last_success(str(path)) is None, content
+
+    def test_null_mark_stays_null(self, tmp_path):
+        # «Сборщик ещё не получал данные» — честное состояние свежей установки,
+        # его наследование не должно превращать null в ошибку.
+        path = tmp_path / "data.json"
+        path.write_text('{"collector": {"last_success": null}}', encoding="utf-8")
+
+        assert _stored_last_success(str(path)) is None
+
+
+class TestPublishCarryForward:
+    def test_standalone_run_keeps_the_previous_mark(self, tmp_path, monkeypatch):
+        """Разовый пересбор снимка не должен вешать на живую страницу красное
+        «сборщик ещё не получал данные» под свежими цифрами."""
+
+        monkeypatch.setattr("publish.readings_since", lambda since: [])
+        monkeypatch.setattr("publish.journal_since", lambda since: [])
+        monkeypatch.setattr("publish.last_readings", list)
+
+        path = str(tmp_path / "data.json")
+        publish(path=path, last_success=1756500000.0)
+        publish(path=path)
+
+        with open(path, encoding="utf-8") as handle:
+            snapshot = json.load(handle)
+
+        assert snapshot["collector"]["last_success"] == 1756500000

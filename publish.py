@@ -242,6 +242,29 @@ def build_snapshot(
     }
 
 
+def _stored_last_success(path: str) -> float | None:
+    """Прошлое значение ``last_success`` из уже опубликованного снимка.
+
+    ``last_success`` живёт в памяти сборщика и умирает с его процессом, а
+    разовый запуск ``publish.py`` не знает его вовсе. Ни то ни другое не
+    означает «сборщик ещё не получал данные» — только «этому процессу не
+    докладывали». Честнее унаследовать отметку из прежнего снимка, чем
+    повесить на живую страницу ложное предупреждение под свежими цифрами.
+    """
+
+    try:
+        with open(path, encoding="utf-8") as handle:
+            stored = json.load(handle)
+        value = stored["collector"]["last_success"]
+        # float() — внутри try: чужое значение вроде строки обязано дать
+        # «наследовать нечего», а не ронять каждую публикацию, пока файл
+        # не поправят руками.
+        return float(value) if value else None
+    except (OSError, ValueError, KeyError, TypeError):
+        # Нет файла или он не о том — значит, наследовать нечего.
+        return None
+
+
 def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None:
     """Write the snapshot atomically so nginx never serves a half-written file.
 
@@ -249,8 +272,13 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
     published separately from ``generated_at`` because the two diverge exactly
     when it matters: while Abbott is unreachable the snapshot keeps being
     rewritten, but the data behind it stops moving, and the page has to say so
-    rather than quietly showing yesterday's glucose as current.
+    rather than quietly showing yesterday's glucose as current. When the
+    caller does not know it (a standalone run, a freshly restarted collector),
+    the mark is inherited from the snapshot being replaced.
     """
+
+    if last_success is None:
+        last_success = _stored_last_success(path)
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     window = max(span for span, _ in RANGES.values())
