@@ -35,8 +35,12 @@ Stub the two outbound hosts instead of reaching them. A `sitecustomize.py` on
 and no notification can reach the real phone.
 
 Plant `.llu-token.json` with a far-future `expires` to skip login. Always set
-`PUBLISH_PATH` to a temp file — otherwise the run overwrites the tracked
-`web/data.json`.
+`PUBLISH_PATH` to a temp file — otherwise the run overwrites `web/data.json`,
+which is gitignored, so git will neither show the damage nor undo it. On a real
+host that file is the live snapshot nginx serves.
+
+Export `PUBLISH_PATH` rather than putting it in `.env`: it is read at import
+time, so only an exported value reaches every entry point.
 
 ```bash
 PYTHONPATH=$DRIVE MYSQL_USER=glucose MYSQL_PASSWORD=glucosepw \
