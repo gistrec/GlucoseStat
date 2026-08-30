@@ -24,6 +24,12 @@ WINDOW = timedelta(hours=4)
 # выдаёт за опору показание из совсем другого места кривой.
 NEAREST_TOLERANCE = timedelta(minutes=15)
 
+# Граница перекуса, в граммах углеводов. Еда не больше этого — долька шоколада,
+# пара крекеров — почти не заметна на кривой, и обрывать из-за неё чужое окно
+# значит терять разбор целого обеда ради события, след которого тонет в шуме
+# сенсора. Всё, что крупнее, обрезает окна соседей по-настоящему.
+SNACK_CARBS = 10
+
 # Сколько показаний должно быть в окне, чтобы разбор что-то значил. Ожидается
 # около 48 (4 часа по 5 минут); на половине от этого форма кривой ещё читается,
 # ниже — уже додумывается.
@@ -69,27 +75,36 @@ def excursion(
     """Разобрать один приём пищи. ``None``, если данных под ним нет.
 
     Возвращает описание того, что произошло: опора, пик, время до пика,
-    возврат к исходному и была ли гипогликемия. Вывода о дозе здесь нет и быть
-    не может — см. модуль.
+    возврат к исходному и была ли гипогликемия. Окно, в которое попала
+    следующая еда, обрезается по её моменту и помечается ``cut``. Вывода о
+    дозе здесь нет и быть не может — см. модуль.
     """
 
     started, carbs = meal
     finished = started + WINDOW
+
+    # Следующая еда закрывает окно досрочно: точки после неё принадлежат двум
+    # событиям сразу, и оставить их — приписать этому приёму чужой подъём.
+    # Перекусы в ``other_meals`` не попадают — их отсеивает ``analyse``.
+    cutoff = min([finished, *(other for other in other_meals if started < other <= finished)])
+    cut = cutoff < finished
 
     baseline = _nearest(readings, started)
     if baseline is None:
         # Без опоры подъём не от чего считать: сенсор в этот момент молчал.
         return None
 
-    window = [item for item in readings if started <= item[0] <= finished]
+    window = [item for item in readings if started <= item[0] <= cutoff]
     if not window:
         return None
 
-    expected = WINDOW.total_seconds() / 300
-    complete = finished <= now and len(window) >= expected * MIN_COVERAGE
+    expected = (cutoff - started).total_seconds() / 300
+    complete = cutoff <= now and len(window) >= expected * MIN_COVERAGE
 
     peak_at, peak = max(window, key=lambda item: item[1])
-    ending = _nearest(readings, finished)
+    # У обрезанного окна возврата нет по построению: уровень в момент следующей
+    # еды — это её опора, а не возврат к исходному после этой.
+    ending = None if cut else _nearest(readings, finished)
 
     return {
         "t": _seconds(started),
@@ -103,9 +118,7 @@ def excursion(
         # показанием, а не отсутствием такового.
         "ret": None if ending is None else round(ending - baseline),
         "hypo": any(mgdl < hypo_mgdl for _, mgdl in window),
-        # Второй приём пищи внутри окна делает разбор бессмысленным: подъём
-        # принадлежит уже двум событиям сразу.
-        "overlap": any(started < other <= finished for other in other_meals),
+        "cut": cut,
         "complete": complete,
         "curve": [
             [int((timestamp - started).total_seconds() // 60), round(mgdl)]
@@ -117,12 +130,12 @@ def excursion(
 def summarise(excursions: list[dict], hypo_mgdl: int) -> dict | None:
     """Свести разборы в несколько чисел.
 
-    Считается только по завершённым и не перекрытым окнам: незакрытое окно ещё
-    не знает своего пика, а перекрытое приписывает одному приёму пищи подъём от
-    двух.
+    Считается только по завершённым и не обрезанным окнам: незакрытое окно ещё
+    не знает своего пика, а обрезанное не досмотрело кривую до конца — его
+    подъём мог не успеть случиться.
     """
 
-    clean = [item for item in excursions if item["complete"] and not item["overlap"]]
+    clean = [item for item in excursions if item["complete"] and not item["cut"]]
     if not clean:
         return None
 
@@ -157,12 +170,13 @@ def analyse(
     """
 
     ordered = sorted(meals)
-    moments = [moment for moment, _ in ordered]
+    # Окно режет только значимая еда: перекус оставляет соседние окна в покое —
+    # см. SNACK_CARBS. Себя приём не режет: ``started < other`` строгое.
+    significant = [moment for moment, carbs in ordered if carbs > SNACK_CARBS]
 
     excursions = []
-    for index, meal in enumerate(ordered):
-        others = moments[:index] + moments[index + 1 :]
-        item = excursion(meal, readings, now, others, hypo_mgdl)
+    for meal in ordered:
+        item = excursion(meal, readings, now, significant, hypo_mgdl)
         if item is not None:
             excursions.append(item)
 

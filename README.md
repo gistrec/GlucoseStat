@@ -68,9 +68,12 @@ overlaid on the moment of eating, normalised to that level — in absolute value
 the median comes out nearly flat, because lunch starts from one level and dinner
 from another, and the two cancel exactly the rise the chart exists to show.
 
-Windows that are still open, and windows holding a second meal, are drawn but
-excluded from the medians: an unfinished window does not yet know its peak, and
-an overlapping one credits one meal with the rise from two.
+A window that runs into the next meal is cut short at that meal: the points
+after it belong to two events at once, so only the clean prefix of the curve is
+kept. Snacks of ten grams of carbs or less cut nothing — a square of chocolate
+barely shows on the curve, and it should not cost a whole lunch its review.
+Windows still open and windows cut short are drawn but excluded from the
+medians: neither has seen its four hours out, so neither knows its peak.
 
 This describes outcomes and stops there. Whether a dose was right also depends on
 how long before the meal it went in, on activity, on illness and on insulin still

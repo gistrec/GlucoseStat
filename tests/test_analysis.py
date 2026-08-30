@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta
 
-from analysis import TARGET_RISE, WINDOW, analyse, excursion, summarise
+from analysis import SNACK_CARBS, TARGET_RISE, WINDOW, analyse, excursion, summarise
 
 
 HYPO = 70
@@ -74,21 +74,46 @@ class TestExcursion:
 
         assert result["hypo"] is False
 
-    def test_second_meal_in_the_window_marks_overlap(self):
+    def test_second_meal_cuts_the_window_short(self):
+        """Точки после следующей еды принадлежат двум событиям сразу."""
+
         readings = rising_then_back(100, 160)
-        others = [START + timedelta(hours=2)]
+        others = [START + timedelta(hours=1)]
 
         result = excursion((START, 60.0), readings, LATER, others, HYPO)
 
-        assert result["overlap"] is True
+        assert result["cut"] is True
+        assert result["curve"][-1][0] == 60
 
-    def test_a_meal_before_the_window_does_not_overlap(self):
+    def test_cut_window_has_no_return(self):
+        """Уровень в момент следующей еды — её опора, а не возврат после этой."""
+
+        readings = rising_then_back(100, 160)
+        others = [START + timedelta(hours=1)]
+
+        result = excursion((START, 60.0), readings, LATER, others, HYPO)
+
+        assert result["ret"] is None
+
+    def test_cut_window_judges_coverage_by_its_own_length(self):
+        """Часовому огрызку хватает дюжины точек — мерить его полными четырьмя
+        часами значило бы браковать каждое обрезанное окно."""
+
+        readings = rising_then_back(100, 160)
+        others = [START + timedelta(hours=1)]
+
+        result = excursion((START, 60.0), readings, LATER, others, HYPO)
+
+        assert result["complete"] is True
+
+    def test_a_meal_before_the_window_does_not_cut(self):
         readings = rising_then_back(100, 160)
         others = [START - timedelta(hours=1)]
 
         result = excursion((START, 60.0), readings, LATER, others, HYPO)
 
-        assert result["overlap"] is False
+        assert result["cut"] is False
+        assert result["curve"][-1][0] == 240
 
     def test_unfinished_window_is_incomplete(self):
         """Окно ещё не закрылось: пик может быть впереди."""
@@ -126,12 +151,12 @@ class TestExcursion:
 
 
 class TestSummarise:
-    def make(self, rise, hypo=False, complete=True, overlap=False, peak_min=90):
+    def make(self, rise, hypo=False, complete=True, cut=False, peak_min=90):
         return {
             "rise": rise,
             "hypo": hypo,
             "complete": complete,
-            "overlap": overlap,
+            "cut": cut,
             "peak_min": peak_min,
         }
 
@@ -142,11 +167,11 @@ class TestSummarise:
 
         assert summarise(items, HYPO)["rise"] == 45
 
-    def test_incomplete_and_overlapped_are_skipped(self):
+    def test_incomplete_and_cut_are_skipped(self):
         items = [
             self.make(40),
             self.make(999, complete=False),
-            self.make(999, overlap=True),
+            self.make(999, cut=True),
         ]
 
         result = summarise(items, HYPO)
@@ -185,6 +210,27 @@ class TestAnalyse:
         assert result["targets"]["hypo"] == HYPO
         assert len(result["meals"]) == 1
         assert result["summary"]["count"] == 1
+
+    def test_snack_does_not_cut_a_meal_window(self):
+        """Долька шоколада не должна стоить обеду его разбора."""
+
+        readings = rising_then_back(100, 160)
+        meals = [(START, 60.0), (START + timedelta(hours=1), float(SNACK_CARBS))]
+
+        result = analyse(meals, readings, LATER, HYPO)
+
+        lunch = result["meals"][0]
+        assert lunch["cut"] is False
+        assert lunch["curve"][-1][0] == 240
+
+    def test_a_real_second_meal_cuts_the_first(self):
+        readings = rising_then_back(100, 160)
+        meals = [(START, 60.0), (START + timedelta(hours=1), SNACK_CARBS + 1.0)]
+
+        result = analyse(meals, readings, LATER, HYPO)
+
+        assert result["meals"][0]["cut"] is True
+        assert result["meals"][0]["curve"][-1][0] == 60
 
     def test_meal_without_readings_disappears(self):
         result = analyse([(START, 60.0)], [], LATER, HYPO)

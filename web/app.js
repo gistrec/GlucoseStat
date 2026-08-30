@@ -1026,7 +1026,7 @@ function drawOverlay(analysis) {
 function outcome(meal, targets) {
     if (meal.hypo) return ["flag--hypo", "⚠ гипогликемия"];
     if (!meal.complete) return ["flag--skip", "· окно не закрылось"];
-    if (meal.overlap) return ["flag--skip", "· наложение с другой едой"];
+    if (meal.cut) return ["flag--skip", "· прервано следующей едой"];
     if (meal.rise <= targets.rise) return ["flag--ok", "✓ в ориентире"];
     return ["flag--skip", "· подъём выше ориентира"];
 }
