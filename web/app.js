@@ -24,10 +24,9 @@ const LANE_HEIGHT = 34;
 const LANE_GAP = 8;
 const COLUMN_WIDTH = 7;
 
-// Больше шести столбиков — и подписи над ними начинают наезжать друг на друга.
-// Тогда подписывается только самый крупный, остальное читается наведением и
-// таблицей разбора.
-const LABEL_LIMIT = 6;
+// Просвет между соседними подписями на дорожке. Впритык поставленные числа
+// читаются как одно: «45» и «60» в паре пикселей друг от друга — это «4560».
+const LABEL_GAP = 4;
 
 let snapshot = null;
 let activeRange = "day";
@@ -453,10 +452,11 @@ function drawLane(ctx, lane, box, x, muted, axisAlpha) {
     // соседнюю дорожку.
     const peak = Math.max(...lane.bars.map((bar) => bar.v));
     const scale = peak > 0 ? (LANE_HEIGHT - 12) / peak : 0;
-    const labelAll = lane.bars.length <= LABEL_LIMIT;
 
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
+
+    const visible = [];
 
     for (const bar of lane.bars) {
         const centre = x(bar.t);
@@ -478,16 +478,29 @@ function drawLane(ctx, lane, box, x, muted, axisAlpha) {
             ctx.fill();
         }
 
-        // Подписи — только пока их немного: у дорожки нет своей оси, и при
-        // четырёх столбиках подпись и есть шкала. Дальше числа сливаются, и
-        // их читают наведением и таблицей разбора.
-        if (labelAll || bar.v === peak) {
-            ctx.fillStyle = muted;
-            ctx.globalAlpha = axisAlpha;
-            ctx.fillText(formatAmount(bar.v), centre, top - 2);
-            ctx.globalAlpha = 1;
-        }
+        visible.push({ bar, centre, top });
     }
+
+    /* Подписи — вторым проходом, и только там, где число никуда не упирается:
+       у дорожки нет своей оси, подпись и есть шкала, но два обеда через полчаса
+       на суточном окне разделяют полтора десятка пикселей — меньше, чем занимает
+       само число. Порядок по убыванию: место достаётся крупному приёму, мелкий
+       рядом читается наведением и таблицей разбора. */
+    ctx.fillStyle = muted;
+    ctx.globalAlpha = axisAlpha;
+
+    const taken = [];
+    for (const { bar, centre, top } of [...visible].sort((a, b) => b.bar.v - a.bar.v)) {
+        const text = formatAmount(bar.v);
+        const half = ctx.measureText(text).width / 2 + LABEL_GAP;
+        const span = [centre - half, centre + half];
+
+        if (taken.some(([from, to]) => from < span[1] && span[0] < to)) continue;
+
+        taken.push(span);
+        ctx.fillText(text, centre, top - 2);
+    }
+    ctx.globalAlpha = 1;
 }
 
 function formatAmount(value) {
