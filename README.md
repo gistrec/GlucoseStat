@@ -104,6 +104,10 @@ Copy `.env.example` to `.env` and fill it in:
   start.
 * `MYSQL_SSL_CA` — only for managed databases that require TLS.
 * `FETCH_INTERVAL_MINUTES` — polling interval, defaults to `5`.
+* `LLU_REGION` — which LibreLinkUp region to ask, defaults to `de`. Rarely
+  needed: login follows a regional redirect and keeps the corrected region for
+  as long as the session lasts, so a foreign account costs one extra request
+  per sign-in rather than a setting.
 * `PUSHOVER_TOKEN`, `PUSHOVER_USER` — turn on the low-glucose alerts below.
   Unset, the collector stores readings and alerts about nothing.
 
@@ -156,10 +160,19 @@ however long the new one took to go on.
 ## Running
 
 ```bash
-python -m venv venv
+python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
 ./venv/bin/python main.py          # collector loop
 ./venv/bin/python publish.py       # one-off snapshot rebuild
+```
+
+Both read `.env` themselves. The snapshot lands in `web/data.json`; to send it
+somewhere else, export `PUBLISH_PATH`. The path resolves as the module loads,
+before any `.env` is read, so a line in that file reaches nothing at all — the
+manual rebuild included, which would still overwrite the file nginx serves:
+
+```bash
+PUBLISH_PATH=/tmp/snapshot.json ./venv/bin/python publish.py
 ```
 
 In production it runs under pm2:
@@ -218,7 +231,7 @@ expect one such spike per sensor change. The only values dropped are those
 outside the sensor's own 40–500 mg/dL scale, which are not readings at all.
 
 Abbott answers a burst of logins with HTTP 476 and a `Retry-After` of up to a
-day. The collector caps its wait at 30 minutes rather than honouring that
+day. The collector caps its wait at 10 minutes rather than honouring that
 literally: the block often lifts sooner, and a day of silence costs more than
 a few extra attempts.
 
