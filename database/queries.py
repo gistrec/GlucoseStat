@@ -8,7 +8,12 @@ from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.exc import SQLAlchemyError
 
 from .connection import session
-from .models import GlucoseReading, journal_entries
+from .models import (
+    GlucoseReading,
+    journal_entries,
+    meal_confirmations,
+    meal_estimates,
+)
 
 
 log = logging.getLogger("glucose.queries")
@@ -103,3 +108,50 @@ def journal_since(start: datetime) -> list[tuple[datetime, str, float | None, fl
         )
         for row in rows
     ]
+
+
+def meal_origins_since(start: datetime) -> dict[datetime, list[dict]]:
+    """Чем подтверждено число углеводов у каждой записи еды, по её метке.
+
+    Отдельным запросом от ``journal_since``: подтверждения и оценки — таблицы
+    бота, и их отсутствие стоит одного значка, а не всех отметок еды на
+    графике. Уровень отсюда не считается, это делает ``analysis.trust_level``.
+    """
+
+    try:
+        with session() as db:
+            rows = db.execute(
+                select(
+                    journal_entries.c.occurred_at,
+                    journal_entries.c.source,
+                    meal_confirmations.c.was_weighed,
+                    meal_estimates.c.median_carbs_g,
+                    meal_estimates.c.spread_g,
+                )
+                .select_from(
+                    journal_entries.outerjoin(
+                        meal_confirmations,
+                        meal_confirmations.c.journal_entry_id == journal_entries.c.id,
+                    ).outerjoin(
+                        meal_estimates,
+                        meal_estimates.c.id == meal_confirmations.c.estimate_id,
+                    )
+                )
+                .where(journal_entries.c.kind == "meal")
+                .where(journal_entries.c.occurred_at >= start)
+            ).all()
+    except SQLAlchemyError as error:
+        log.warning("meal origins unavailable, publishing without them: %s", error)
+        return {}
+
+    origins: dict[datetime, list[dict]] = {}
+    for row in rows:
+        origins.setdefault(row.occurred_at, []).append(
+            {
+                "source": None if row.source is None else str(row.source),
+                "was_weighed": None if row.was_weighed is None else bool(row.was_weighed),
+                "median": None if row.median_carbs_g is None else float(row.median_carbs_g),
+                "spread": None if row.spread_g is None else float(row.spread_g),
+            }
+        )
+    return origins

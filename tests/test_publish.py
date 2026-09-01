@@ -285,6 +285,7 @@ class TestPublishCarryForward:
 
         monkeypatch.setattr("publish.readings_since", lambda since: [])
         monkeypatch.setattr("publish.journal_since", lambda since: [])
+        monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
         monkeypatch.setattr("publish.last_readings", list)
 
         path = str(tmp_path / "data.json")
@@ -301,6 +302,7 @@ class TestPublishCarryForward:
 
         monkeypatch.setattr("publish.readings_since", lambda since: [])
         monkeypatch.setattr("publish.journal_since", lambda since: [])
+        monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
         monkeypatch.setattr("publish.last_readings", list)
 
         # Каталог на месте файла: переименовать в него нельзя, и publish

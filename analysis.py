@@ -59,6 +59,12 @@ TARGET_RETURN = 30
 # Пик обычно приходится на 60–90 минут. Числа нужны только подписи на странице.
 TYPICAL_PEAK_MIN = (60, 90)
 
+AGREEMENT_ABSOLUTE_LOW_G = 15.0
+AGREEMENT_OK_RATIO = 0.10
+AGREEMENT_LOW_RATIO = 0.25
+
+TRUST_ORDER = ("low", "manual", "medium", "ok", "weighed")
+
 
 def _seconds(moment: datetime) -> int:
     return int(moment.replace(tzinfo=timezone.utc).timestamp())
@@ -96,6 +102,52 @@ def _merge(
         else:
             merged.append([record])
     return merged
+
+
+def trust_level(
+    source: str | None = None,
+    was_weighed: bool | None = None,
+    median: float | None = None,
+    spread: float | None = None,
+) -> str | None:
+    """Чем подтверждено число углеводов: весами, словом человека или прогонами.
+
+    Весы перебивают всё: у взвешенной порции число измерено, и разброс прогонов
+    к нему уже не относится. ``None`` — если про запись ничего не известно:
+    страница рисуется и без таблиц бота, просто без значка.
+
+    Пороги согласия — те же, что в ``carbs/aggregate.py`` у бота: под оценкой он
+    пишет «Согласованность: высокая/средняя/низкая», и значок на странице обязан
+    говорить о том же приёме то же самое. Меняя их там, поменять и здесь.
+    """
+
+    if was_weighed:
+        return "weighed"
+    if source is not None and source != "photo_estimate":
+        return "manual"
+    if median is None or spread is None:
+        return None
+
+    if spread > AGREEMENT_ABSOLUTE_LOW_G:
+        return "low"
+    if spread == 0:
+        return "ok"
+    if median <= 0:
+        return "low"
+
+    ratio = spread / median
+    if ratio > AGREEMENT_LOW_RATIO:
+        return "low"
+    if ratio < AGREEMENT_OK_RATIO:
+        return "ok"
+    return "medium"
+
+
+def _worst_trust(levels) -> str | None:
+    """Худшее из подтверждений; неизвестные уровни не участвуют."""
+
+    known = [level for level in levels if level in TRUST_ORDER]
+    return min(known, key=TRUST_ORDER.index) if known else None
 
 
 def _doses(
@@ -139,6 +191,7 @@ def excursion(
     hypo_mgdl: int,
     dose: dict | None = None,
     parts: list[tuple[datetime, float]] | None = None,
+    trust: str | None = None,
 ) -> dict | None:
     """Разобрать один приём пищи. ``None``, если данных под ним нет.
 
@@ -148,7 +201,7 @@ def excursion(
     этому моменту вышел за ориентир. ``dose`` — болюс этой еды из ``_doses``;
     он показывается рядом, но вывода о нём здесь нет и быть не может — см.
     модуль. ``parts`` — записи, из которых сложился приём, если их было
-    несколько.
+    несколько. ``trust`` — чем подтверждено число углеводов (``trust_level``).
     """
 
     started, carbs = meal
@@ -190,6 +243,7 @@ def excursion(
         "parts": None
         if parts is None
         else [[_seconds(moment), round(grams, 1)] for moment, grams in parts],
+        "trust": trust,
         "dose": dose,
         "baseline": round(baseline),
         "peak": round(peak),
@@ -256,6 +310,7 @@ def analyse(
     hypo_mgdl: int,
     boluses: list[tuple[datetime, float]] | None = None,
     limit: int = 24,
+    origins: dict[datetime, list[dict]] | None = None,
 ) -> dict:
     """Разобрать последние приёмы пищи и свести их в итог.
 
@@ -267,6 +322,9 @@ def analyse(
     увидеть форму, не утроив вес снимка. Страница обязана показывать реальный
     охват по датам, а не обещать «две недели»: при регулярном журнале лимит
     срабатывает раньше двухнедельного окна.
+
+    ``origins`` — сырьё для ``trust_level`` по метке записи; списком на метку,
+    потому что две записи еды могут стоять на одной секунде.
     """
 
     # Перекусы (до SNACK_CARBS граммов) не участвуют вовсе: не режут чужие
@@ -280,6 +338,11 @@ def analyse(
     significant = [moment for moment, _ in reviewed]
     doses = _doses(significant, boluses or [])
 
+    trust = {
+        moment: _worst_trust(trust_level(**origin) for origin in origins_at)
+        for moment, origins_at in (origins or {}).items()
+    }
+
     excursions = []
     for meal, records in zip(reviewed, sittings):
         item = excursion(
@@ -290,6 +353,7 @@ def analyse(
             hypo_mgdl,
             dose=doses.get(meal[0]),
             parts=records if len(records) > 1 else None,
+            trust=_worst_trust(trust.get(moment) for moment, _ in records),
         )
         if item is not None:
             excursions.append(item)

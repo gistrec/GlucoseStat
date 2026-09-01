@@ -1175,9 +1175,36 @@ function textCell(text) {
    колонка выровнена по правому краю, и хвостовая пометка сдвигала бы числа
    друг относительно друга — то самое выравнивание, ради которого колонка и
    набрана моноширинными цифрами. */
+const TRUST = {
+    weighed: { mark: "⚖︎", spoken: "взвешено" },
+    manual: { mark: "✎", spoken: "со слов" },
+    ok: { mark: "●●●", spoken: "по фото, прогоны сошлись" },
+    medium: { mark: "●●○", spoken: "по фото, прогоны разошлись" },
+    low: { mark: "●○○", spoken: "по фото, прогоны сильно разошлись" },
+};
+
+function trustMark(cell, meal) {
+    const trust = TRUST[meal.trust];
+    if (!trust) return cell;
+
+    const mark = document.createElement("span");
+    mark.className = `trust trust--${meal.trust}`;
+    mark.textContent = trust.mark;
+    mark.title = trust.spoken;
+    mark.setAttribute("aria-hidden", "true");
+
+    const spoken = document.createElement("span");
+    spoken.className = "visually-hidden";
+    spoken.textContent = `, ${trust.spoken}`;
+
+    cell.prepend(mark, " ");
+    cell.append(spoken);
+    return cell;
+}
+
 function carbsCell(meal) {
     const cell = textCell(`${formatAmount(meal.carbs)} г`);
-    if (!meal.parts) return cell;
+    if (!meal.parts) return trustMark(cell, meal);
 
     const sittings = meal.parts
         .map(([seconds, carbs]) => {
@@ -1205,7 +1232,7 @@ function carbsCell(meal) {
 
     cell.prepend(mark, " ");
     cell.append(spoken);
-    return cell;
+    return trustMark(cell, meal);
 }
 
 function renderMeals(analysis) {

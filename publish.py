@@ -13,7 +13,12 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 
 from analysis import analyse
-from database.queries import journal_since, last_readings, readings_since
+from database.queries import (
+    journal_since,
+    last_readings,
+    meal_origins_since,
+    readings_since,
+)
 
 
 # Читается при загрузке модуля, до всякого .env, — потому и задавать его нужно
@@ -203,6 +208,7 @@ def build_snapshot(
     now: datetime,
     last_success: float | None = None,
     latest: dict | None = None,
+    origins: dict[datetime, list[dict]] | None = None,
 ) -> dict:
     """Assemble the snapshot the page reads. Pure: no database, no clock.
 
@@ -242,7 +248,12 @@ def build_snapshot(
         "gmi": _gmi(readings, now),
         "events": _events(journal, now - EVENT_WINDOW),
         "analysis": analyse(
-            meals, readings, now, hypo_mgdl=TARGET_LOW_MGDL, boluses=boluses
+            meals,
+            readings,
+            now,
+            hypo_mgdl=TARGET_LOW_MGDL,
+            boluses=boluses,
+            origins=origins,
         ),
     }
 
@@ -298,6 +309,7 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
         journal,
         now,
         last_success=last_success,
+        origins=meal_origins_since(now - ANALYSIS_WINDOW),
         # Не из readings: последнее измерение может быть старше окна графиков,
         # и тогда странице нужно показать «данных нет с такого-то числа».
         latest=_trend(last_readings()),

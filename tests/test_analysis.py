@@ -2,7 +2,15 @@
 
 from datetime import datetime, timedelta, timezone
 
-from analysis import SNACK_CARBS, TARGET_RISE, WINDOW, analyse, excursion, summarise
+from analysis import (
+    SNACK_CARBS,
+    TARGET_RISE,
+    WINDOW,
+    analyse,
+    excursion,
+    summarise,
+    trust_level,
+)
 
 
 HYPO = 70
@@ -437,3 +445,98 @@ class TestAnalyse:
 
         assert len(result["meals"]) == 2
         assert result["meals"][0]["t"] < result["meals"][1]["t"]
+
+
+class TestTrustLevel:
+    def test_weighed_beats_a_wide_spread(self):
+        """У взвешенной порции число измерено: спор прогонов был о фотографии,
+        а не о том, что показала чашка."""
+
+        assert trust_level("photo_estimate", True, 80.0, 42.4) == "weighed"
+
+    def test_manual_entry_has_no_runs_to_agree(self):
+        assert trust_level("manual", None, None, None) == "manual"
+
+    def test_absolute_spread_overrides_the_ratio(self):
+        """18 г на порции в 90 — формально 20 %, а на деле полторы хлебные
+        единицы неизвестно куда."""
+
+        assert trust_level("photo_estimate", False, 90.8, 18.4) == "low"
+
+    def test_levels_follow_the_ratio(self):
+        assert trust_level("photo_estimate", False, 30.5, 2.7) == "ok"
+        assert trust_level("photo_estimate", False, 41.8, 7.8) == "medium"
+        assert trust_level("photo_estimate", False, 10.0, 4.0) == "low"
+
+    def test_nothing_known_is_not_a_level(self):
+        assert trust_level("photo_estimate", False, None, None) is None
+        assert trust_level() is None
+
+
+ORIGIN_OK = {
+    "source": "photo_estimate",
+    "was_weighed": False,
+    "median": 60.0,
+    "spread": 3.0,
+}
+ORIGIN_LOW = {
+    "source": "photo_estimate",
+    "was_weighed": False,
+    "median": 60.0,
+    "spread": 40.0,
+}
+
+
+class TestTrustInAnalyse:
+    def test_the_level_reaches_the_meal(self):
+        readings = rising_then_back(100, 160)
+
+        result = analyse(
+            [(START, 60.0)], readings, LATER, HYPO, origins={START: [ORIGIN_OK]}
+        )
+
+        assert result["meals"][0]["trust"] == "ok"
+
+    def test_a_merged_meal_inherits_its_worst_part(self):
+        """Взвешенная половина не делает достоверной вторую, названную на
+        глаз: приём стоит столько, сколько его худшая запись."""
+
+        readings = rising_then_back(100, 160)
+        addition = START + timedelta(minutes=20)
+        meals = [(START, 20.0), (addition, 20.0)]
+
+        result = analyse(
+            meals,
+            readings,
+            LATER,
+            HYPO,
+            origins={
+                START: [{"source": "photo_estimate", "was_weighed": True}],
+                addition: [ORIGIN_LOW],
+            },
+        )
+
+        assert len(result["meals"]) == 1
+        assert result["meals"][0]["trust"] == "low"
+
+    def test_two_records_on_one_second_take_the_worse(self):
+        readings = rising_then_back(100, 160)
+
+        result = analyse(
+            [(START, 60.0)],
+            readings,
+            LATER,
+            HYPO,
+            origins={START: [ORIGIN_OK, ORIGIN_LOW]},
+        )
+
+        assert result["meals"][0]["trust"] == "low"
+
+    def test_without_origins_the_meal_has_no_level(self):
+        """Журнал заводит бот, и страница обязана рисоваться без его таблиц."""
+
+        readings = rising_then_back(100, 160)
+
+        result = analyse([(START, 60.0)], readings, LATER, HYPO)
+
+        assert result["meals"][0]["trust"] is None

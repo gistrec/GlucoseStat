@@ -2,6 +2,7 @@
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Column,
     DateTime,
     Float,
@@ -35,6 +36,23 @@ journal_entries = Table(
     Column("units", Numeric(5, 2)),
     Column("note", Text),
     Column("source", String(32)),
+)
+
+meal_confirmations = Table(
+    "meal_confirmations",
+    journal_metadata,
+    Column("estimate_id", BigInteger, primary_key=True),
+    Column("confirmed_carbs_g", Numeric(6, 1)),
+    Column("was_weighed", Boolean),
+    Column("journal_entry_id", BigInteger),
+)
+
+meal_estimates = Table(
+    "meal_estimates",
+    journal_metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("median_carbs_g", Numeric(6, 1)),
+    Column("spread_g", Numeric(6, 1)),
 )
 
 

@@ -48,6 +48,14 @@ MEAL_PLAN = [
     (19, 0, 70.0, 7.0),
 ]
 
+ORIGIN_PLAN = [
+    {"source": "photo_estimate", "was_weighed": False, "median": 60.0, "spread": 3.0},
+    {"source": "photo_estimate", "was_weighed": False, "median": 60.0, "spread": 9.0},
+    {"source": "photo_estimate", "was_weighed": False, "median": 60.0, "spread": 25.0},
+    {"source": "photo_estimate", "was_weighed": True, "median": 60.0, "spread": 25.0},
+    {"source": "manual", "was_weighed": None, "median": None, "spread": None},
+]
+
 DAYS = 16
 BASAL_HOUR = 22
 BASAL_UNITS = 18.0
@@ -90,6 +98,7 @@ def synthetic_snapshot(now: datetime | None = None) -> dict:
         curve[moment] = 115 + 18 * math.sin(step / 190.0) + random.gauss(0, 5)
 
     journal: list[tuple[datetime, str, float | None, float | None]] = []
+    origins: dict[datetime, list[dict]] = {}
 
     for day in range(DAYS):
         midnight = (start + timedelta(days=day)).replace(hour=0, minute=0)
@@ -107,6 +116,7 @@ def synthetic_snapshot(now: datetime | None = None) -> dict:
             peak_minutes = random.choice([75, 90, 105])
 
             journal.append((eaten, "meal", round(carbs + random.gauss(0, 6), 1), None))
+            origins[eaten] = [ORIGIN_PLAN[(day + index) % len(ORIGIN_PLAN)]]
             journal.append(
                 (
                     eaten - timedelta(minutes=15),
@@ -146,6 +156,7 @@ def synthetic_snapshot(now: datetime | None = None) -> dict:
         journal,
         now,
         last_success=now.replace(tzinfo=timezone.utc).timestamp(),
+        origins=origins,
     )
 
 

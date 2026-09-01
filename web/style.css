@@ -471,6 +471,25 @@ body {
     text-decoration: none;
 }
 
+.trust {
+    color: var(--muted);
+    cursor: help;
+    white-space: nowrap;
+    font-variant-emoji: text;
+}
+
+.trust--ok,
+.trust--medium,
+.trust--low {
+    font-size: 0.72em;
+    letter-spacing: 0.5px;
+}
+
+.trust--weighed,
+.trust--manual {
+    font-size: 1.3em;
+}
+
 /* Выбор приёма для оверлея. Наведение показывает кривую, нажатие закрепляет —
    вся строка отзывается на курсор, но нажимается кнопка с датой: у неё есть
    роль и состояние, которых у строки таблицы быть не может.
