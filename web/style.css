@@ -550,7 +550,7 @@ body {
     line-height: 1.5;
 }
 
-.review__hint--legend {
+.meals__wrap + .review__hint {
     margin-top: 14px;
 }
 
