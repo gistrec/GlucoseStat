@@ -218,6 +218,25 @@ function formatDateTime(date) {
     });
 }
 
+/* Та же метка для колонки «Когда», но датой-числом.
+
+   Ячейка тесная: семь колонок делят ширину панели, и первой достаётся
+   минимум — «1 сентября в 00:08» складывалось в ней надвое. Числовая форма
+   вдвое короче и, главное, одной ширины во всех строках (tabular-nums на
+   .meals td), так что колонка не дышит при перерисовке раз в минуту.
+
+   Только для таблицы. Во фразах — «Последнее измерение — …» — и в подписях
+   для скринридера остаётся длинная форма: там место есть, а «01.09» читается
+   вслух как «ноль один точка ноль девять». */
+function formatCellDateTime(date) {
+    return date.toLocaleString("ru-RU", {
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+}
+
 function formatDay(date) {
     return date.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
 }
@@ -1223,24 +1242,29 @@ function renderMeals(analysis) {
         }
 
         const when = document.createElement("td");
+        const at = new Date(meal.t * 1000);
         if (drawable) {
             const pick = document.createElement("button");
             pick.type = "button";
             pick.className = "meals__pick";
-            pick.textContent = formatDateTime(new Date(meal.t * 1000));
+            pick.textContent = formatCellDateTime(at);
             // Имя кнопки не меняется вместе с состоянием: состояние говорит
             // aria-pressed, и «снять подсветку… нажато» звучало бы так, будто
             // снятие уже произошло.
+            //
+            // Дата в имени длинная, а не та, что на экране: колонке нужна
+            // короткая, но вслух «01.09» читается как «ноль один точка ноль
+            // девять» — и приём перестаёт называться днём.
             pick.setAttribute(
                 "aria-label",
-                `${pick.textContent} — подсветить кривую на графике`
+                `${formatDateTime(at)} — подсветить кривую на графике`
             );
             pick.addEventListener("click", () => togglePinned(meal.t));
             pick.addEventListener("focus", () => setFocused(meal.t));
             pick.addEventListener("blur", () => setFocused(null));
             when.append(pick);
         } else {
-            when.textContent = formatDateTime(new Date(meal.t * 1000));
+            when.textContent = formatCellDateTime(at);
         }
 
         row.append(
