@@ -468,6 +468,16 @@ class TestTrustLevel:
         assert trust_level("photo_estimate", False, 41.8, 7.8) == "medium"
         assert trust_level("photo_estimate", False, 10.0, 4.0) == "low"
 
+    def test_a_hand_edited_number_is_spoken_too(self):
+        """Кнопка «Исправить» меняет число, не взвешивая: прогоны спорили о
+        своей медиане, а в журнал ушла чужая — их согласие о ней ничего не
+        говорит."""
+
+        assert trust_level("photo_estimate", False, 60.0, 3.0, confirmed=45.0) == "manual"
+
+    def test_an_untouched_median_keeps_its_agreement(self):
+        assert trust_level("photo_estimate", False, 60.0, 3.0, confirmed=60.0) == "ok"
+
     def test_nothing_known_is_not_a_level(self):
         assert trust_level("photo_estimate", False, None, None) is None
         assert trust_level() is None

@@ -63,6 +63,8 @@ AGREEMENT_ABSOLUTE_LOW_G = 15.0
 AGREEMENT_OK_RATIO = 0.10
 AGREEMENT_LOW_RATIO = 0.25
 
+CARBS_EPSILON_G = 0.05
+
 TRUST_ORDER = ("low", "manual", "medium", "ok", "weighed")
 
 
@@ -109,12 +111,15 @@ def trust_level(
     was_weighed: bool | None = None,
     median: float | None = None,
     spread: float | None = None,
+    confirmed: float | None = None,
 ) -> str | None:
     """Чем подтверждено число углеводов: весами, словом человека или прогонами.
 
     Весы перебивают всё: у взвешенной порции число измерено, и разброс прогонов
-    к нему уже не относится. ``None`` — если про запись ничего не известно:
-    страница рисуется и без таблиц бота, просто без значка.
+    к нему уже не относится. Число, исправленное человеком на глаз, — тоже со
+    слов: прогоны спорили о своей медиане, а в журнал ушла чужая. ``None`` —
+    если про запись ничего не известно: страница рисуется и без таблиц бота,
+    просто без значка.
 
     Пороги согласия — те же, что в ``carbs/aggregate.py`` у бота: под оценкой он
     пишет «Согласованность: высокая/средняя/низкая», и значок на странице обязан
@@ -127,6 +132,8 @@ def trust_level(
         return "manual"
     if median is None or spread is None:
         return None
+    if confirmed is not None and abs(confirmed - median) > CARBS_EPSILON_G:
+        return "manual"
 
     if spread > AGREEMENT_ABSOLUTE_LOW_G:
         return "low"
