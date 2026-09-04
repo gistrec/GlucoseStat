@@ -287,9 +287,13 @@ function trendArrow(rate) {
     return "↓";
 }
 
+/* Ниже порога — --hypo, а не --low: число в шапке и кривая под ним говорят об
+   одном и том же сахаре, и назвать его двумя цветами на одном экране значит
+   заставить читателя гадать, какой из них про что. Оранжевый остался цветом
+   предупреждений о молчании — сенсора в шапке и сборщика в подвале. */
 function zoneColor(mgdl) {
     const { low, high } = snapshot.target;
-    if (mgdl < low) return "var(--low)";
+    if (mgdl < low) return "var(--hypo)";
     if (mgdl > high) return "var(--high)";
     return "var(--in-range)";
 }
