@@ -471,6 +471,9 @@ body {
     text-decoration: none;
 }
 
+/* Пара знаков у числа углеводов: чем оно получено и насколько ему верить.
+   Кегль у частей разный — ⚖︎ и ✎ рисуются мельче точек в одном размере, — но
+   обе доли приглушены: колонка про число, а не про его происхождение. */
 .trust {
     color: var(--muted);
     cursor: help;
@@ -478,16 +481,16 @@ body {
     font-variant-emoji: text;
 }
 
-.trust--ok,
-.trust--medium,
-.trust--low {
-    font-size: 0.72em;
-    letter-spacing: 0.5px;
+.trust__source {
+    font-size: 1.3em;
 }
 
-.trust--weighed,
-.trust--manual {
-    font-size: 1.3em;
+/* Точки мельче источника и с просветом: набранные кеглем числа, они читаются
+   сплошной кляксой и перетягивают взгляд с самого числа. */
+.trust__dots {
+    margin-left: 3px;
+    font-size: 0.72em;
+    letter-spacing: 0.5px;
 }
 
 /* Выбор приёма для оверлея. Наведение показывает кривую, нажатие закрепляет —
