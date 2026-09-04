@@ -18,6 +18,17 @@ const COLLECTOR_SILENT_AFTER_MS = 15 * 60 * 1000;
 
 const RANGE_LABELS = { day: "24 часа", week: "7 дней", month: "30 дней" };
 
+/* Часовой пояс всех подписей времени — тот же, в котором отвечает бот
+   (DISPLAY_TZ=Europe/Belgrade).
+
+   В data.json время лежит в unix-секундах, и без явной зоны страница читала бы
+   его по часам устройства: один и тот же приём пищи назывался бы 01:43 с
+   ноутбука и 02:43 с телефона, живущего по другой стране. Зона названа вслух в
+   подсказке — иначе выбор остаётся невидимым ровно тогда, когда человек
+   сверяет запись с собственными часами. */
+const TIMEZONE = "Europe/Belgrade";
+const TIMEZONE_LABEL = "Белград";
+
 // Высота холста без дорожек событий — та же, что была до их появления.
 const PLOT_HEIGHT = 340;
 const LANE_HEIGHT = 34;
@@ -211,6 +222,7 @@ function formatAgo(ms) {
 
 function formatDateTime(date) {
     return date.toLocaleString("ru-RU", {
+        timeZone: TIMEZONE,
         day: "numeric",
         month: "long",
         hour: "2-digit",
@@ -230,6 +242,7 @@ function formatDateTime(date) {
    вслух как «ноль один точка ноль девять». */
 function formatCellDateTime(date) {
     return date.toLocaleString("ru-RU", {
+        timeZone: TIMEZONE,
         day: "2-digit",
         month: "2-digit",
         hour: "2-digit",
@@ -238,7 +251,20 @@ function formatCellDateTime(date) {
 }
 
 function formatDay(date) {
-    return date.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+    return date.toLocaleDateString("ru-RU", {
+        timeZone: TIMEZONE,
+        day: "numeric",
+        month: "long",
+    });
+}
+
+/* День месяца в зоне отображения. getDate() читает часы устройства, и в ночь на
+   второе число предлог выбирался бы по чужой дате — «с 2 сентября» вместо «со
+   2 сентября». */
+function dayOfMonth(date) {
+    return Number(
+        date.toLocaleDateString("ru-RU", { timeZone: TIMEZONE, day: "numeric" })
+    );
 }
 
 /* «Со 2 августа», «с 24 августа»: дата старейшего разобранного приёма вместо
@@ -247,7 +273,7 @@ function formatDay(date) {
    пробелы держат фразу одним куском — см. formatDose. */
 function sinceLabel(date) {
     const label = formatDay(date).replace(" ", " ");
-    return `${date.getDate() === 2 ? "со" : "с"} ${label}`;
+    return `${dayOfMonth(date) === 2 ? "со" : "с"} ${label}`;
 }
 
 /* Стрелка тренда по скорости в мг/дл за минуту — те же пороги, по которым
@@ -623,14 +649,24 @@ function drawChart() {
     for (let i = 0; i <= ticks; i += 1) {
         const t = startTime + (spanSeconds / ticks) * i;
         const date = new Date(t * 1000);
-        const day = date.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+        const day = date.toLocaleDateString("ru-RU", {
+            timeZone: TIMEZONE,
+            day: "numeric",
+            month: "short",
+        });
 
         // Суточное окно пересекает полночь, и без даты непонятно, «02:35» —
         // это сегодня или вчера. Дата подписывается там, где день меняется,
         // а не у каждой метки: повторять её пять раз незачем.
         const labels =
             activeRange === "day"
-                ? [date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })]
+                ? [
+                      date.toLocaleTimeString("ru-RU", {
+                          timeZone: TIMEZONE,
+                          hour: "2-digit",
+                          minute: "2-digit",
+                      }),
+                  ]
                 : [day];
 
         if (activeRange === "day" && day !== previousDay) {
@@ -852,10 +888,13 @@ function showTip(clientX) {
 
     const time = document.createElement("p");
     time.className = "tip__time";
-    time.textContent = new Date(hoverTime * 1000).toLocaleTimeString("ru-RU", {
+    // Зона названа здесь, а не у оси: подсказку читают, когда сверяют запись со
+    // своими часами, и «02:43» без города в поездке значит два разных момента.
+    time.textContent = `${new Date(hoverTime * 1000).toLocaleTimeString("ru-RU", {
+        timeZone: TIMEZONE,
         hour: "2-digit",
         minute: "2-digit",
-    });
+    })}, ${TIMEZONE_LABEL}`;
 
     els.tip.replaceChildren(time, ...rows);
     els.tip.hidden = false;
@@ -1209,6 +1248,7 @@ function carbsCell(meal) {
     const sittings = meal.parts
         .map(([seconds, carbs]) => {
             const at = new Date(seconds * 1000).toLocaleTimeString("ru-RU", {
+                timeZone: TIMEZONE,
                 hour: "2-digit",
                 minute: "2-digit",
             });
