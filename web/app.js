@@ -1623,17 +1623,13 @@ window.addEventListener("resize", () => {
     }
 });
 
-/* pointer, а не mouse: тем же обработчиком обслуживается касание, и на телефоне
-   подсказка появляется по тапу вместо того, чтобы быть недоступной вовсе. */
-els.canvas.addEventListener("pointermove", (event) => {
+function hoverAt(event) {
     if (!geometry) return;
 
     const rect = els.canvas.getBoundingClientRect();
     const px = event.clientX - rect.left;
     if (px < geometry.left || px > geometry.right) {
-        hoverTime = null;
-        drawChart();
-        hideTip();
+        clearHover();
         return;
     }
 
@@ -1641,13 +1637,28 @@ els.canvas.addEventListener("pointermove", (event) => {
     hoverTime = Math.round(geometry.startTime + share * geometry.spanSeconds);
     drawChart();
     showTip(event.clientX);
-});
+}
 
-els.canvas.addEventListener("pointerleave", () => {
+function clearHover() {
+    if (hoverTime === null) return;
     hoverTime = null;
     hideTip();
     if (snapshot && snapshot.latest) drawChart();
-});
+}
+
+/* pointer, а не mouse: тем же обработчиком обслуживается касание, и на телефоне
+   подсказка появляется по тапу вместо того, чтобы быть недоступной вовсе.
+   Отдельно pointerdown, потому что тап без движения не рождает pointermove:
+   мышь наводят, а пальцем именно тыкают. */
+els.canvas.addEventListener("pointerdown", hoverAt);
+els.canvas.addEventListener("pointermove", hoverAt);
+
+/* Три события на снятие. pointerleave отвечает за мышь, pointerup — за
+   отпущенный палец, pointercancel — за случай, когда жест забрал себе браузер:
+   без него подсказка осталась бы висеть над уехавшей страницей. */
+els.canvas.addEventListener("pointerleave", clearHover);
+els.canvas.addEventListener("pointerup", clearHover);
+els.canvas.addEventListener("pointercancel", clearHover);
 
 els.theme.addEventListener("click", () => {
     const next = THEMES[(THEMES.findIndex((item) => item.id === theme) + 1) % THEMES.length];
