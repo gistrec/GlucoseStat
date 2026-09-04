@@ -685,30 +685,54 @@ function drawChart() {
     // Линия. Разрыв длиннее трёх шагов означает, что сенсор молчал —
     // соединять такие точки нельзя, иначе пропуск выглядит как ровный тренд.
     const gapSeconds = series.step * 60 * 3;
+
+    const traceSeries = () => {
+        ctx.beginPath();
+        let drawing = false;
+        for (let i = 0; i < points.length; i += 1) {
+            const [t, mgdl] = points[i];
+            const px = x(t);
+            const py = y(toMmol(mgdl));
+
+            if (!drawing || t - points[i - 1][0] > gapSeconds) {
+                ctx.moveTo(px, py);
+                drawing = true;
+            } else {
+                ctx.lineTo(px, py);
+            }
+        }
+        ctx.stroke();
+    };
+
     ctx.strokeStyle = accent;
     ctx.lineWidth = 1.75;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
-    ctx.beginPath();
+    traceSeries();
 
-    let drawing = false;
-    for (let i = 0; i < points.length; i += 1) {
-        const [t, mgdl] = points[i];
-        const px = x(t);
-        const py = y(toMmol(mgdl));
+    /* Гипогликемия — тот же путь, обведённый второй раз в границах полосы ниже
+       нижнего порога. Красить по точкам нельзя: цвет менялся бы на замере, а не
+       на пересечении 3,9, и при шаге в пять минут до пяти минут кривой уходило
+       бы не в тот цвет — в обе стороны. Отсечение режет ровно по линии порога,
+       так что граница цвета и есть порог.
 
-        if (!drawing || t - points[i - 1][0] > gapSeconds) {
-            ctx.moveTo(px, py);
-            drawing = true;
-        } else {
-            ctx.lineTo(px, py);
-        }
+       Порог берётся из target.low, а не из своей константы: подложка нормы
+       нарисована по нему же, и разъехаться им нельзя — красное за пределами
+       зелёной полосы читалось бы как ошибка графика. */
+    const hypoTop = y(toMmol(snapshot.target.low));
+    const plotBottom = padding.top + plotHeight;
+    if (hypoTop < plotBottom) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(padding.left, hypoTop, plotWidth, plotBottom - hypoTop);
+        ctx.clip();
+        ctx.strokeStyle = readColor("--hypo", "#ff5b5b");
+        traceSeries();
+        ctx.restore();
     }
-    ctx.stroke();
 
     // Точка без соседей не даёт отрезка и не нарисовалась бы вовсе. Так
     // выглядит начало каждого нового сенсора — первые замеры одиночные.
-    ctx.fillStyle = accent;
     for (let i = 0; i < points.length; i += 1) {
         const previous = points[i - 1];
         const next = points[i + 1];
@@ -717,6 +741,13 @@ function drawChart() {
             (!next || next[0] - points[i][0] > gapSeconds);
 
         if (isolated) {
+            // Отсечение одиночную точку не спасает: она лежит целиком по одну
+            // сторону порога, и половина кружка, срезанная по линии, читалась бы
+            // как ещё одно значение. Цвет выбирается по самому замеру.
+            ctx.fillStyle =
+                points[i][1] < snapshot.target.low
+                    ? readColor("--hypo", "#ff5b5b")
+                    : accent;
             ctx.beginPath();
             ctx.arc(x(points[i][0]), y(toMmol(points[i][1])), 2.5, 0, Math.PI * 2);
             ctx.fill();
@@ -779,7 +810,12 @@ function drawCrosshair(ctx, muted) {
     // собственную линию.
     ctx.beginPath();
     ctx.arc(geometry.x(point[0]), geometry.y(toMmol(point[1])), 4, 0, Math.PI * 2);
-    ctx.fillStyle = readColor("--accent", "#7eb8f7");
+    // Тот же цвет, что у линии под точкой: синий кружок посреди красного
+    // участка читался бы как «а вот это измерение в норме».
+    ctx.fillStyle =
+        point[1] < snapshot.target.low
+            ? readColor("--hypo", "#ff5b5b")
+            : readColor("--accent", "#7eb8f7");
     ctx.fill();
     ctx.lineWidth = 2;
     ctx.strokeStyle = readColor("--panel", "#0d0d14");
