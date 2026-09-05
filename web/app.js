@@ -46,6 +46,28 @@ function displayTimezone() {
     return (snapshot && snapshot.timezone) || TIMEZONE;
 }
 
+/* Минуты местных суток — для профиля обычного дня. Форматтер один на модуль:
+   Intl.DateTimeFormat дорог в создании, а minutesOfDay зовётся на каждый слот
+   каждой перерисовки. hourCycle: "h23" обязателен: при hour: "2-digit" без
+   него ICU в части локалей отдаёт «24:00», и полуночный слот уезжает за
+   пределы массива. */
+const TZ_MINUTES = new Intl.DateTimeFormat("ru-RU", {
+    timeZone: TIMEZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+});
+
+function minutesOfDay(seconds) {
+    let hours = 0;
+    let minutes = 0;
+    for (const part of TZ_MINUTES.formatToParts(new Date(seconds * 1000))) {
+        if (part.type === "hour") hours = Number(part.value);
+        if (part.type === "minute") minutes = Number(part.value);
+    }
+    return hours * 60 + minutes;
+}
+
 // Высота холста без дорожек событий — та же, что была до их появления.
 const PLOT_HEIGHT = 340;
 const LANE_HEIGHT = 34;
@@ -143,6 +165,15 @@ const SERIES = {
         label: "Длинный инсулин",
         unit: "ед длинного",
         hollow: true,
+    },
+    // Коридор «обычного дня» под сегодняшней кривой. Подпись собирается на
+    // месте — в неё входит число дней, которое знает только снимок.
+    profile: {
+        token: "--agp",
+        fallback: "#8a90a6",
+        label: "Обычный день",
+        unit: "ммоль/л",
+        band: true,
     },
 };
 
@@ -608,6 +639,107 @@ function formatAmount(value) {
     return value.toLocaleString("ru-RU", { maximumFractionDigits: 1 });
 }
 
+/* Привратник профиля — по образцу eventLanes(): null всюду, где рисовать
+   нечего или опасно. Коридор, разложенный по одной зоне под кривой,
+   подписанной по другой, врёт на час-два молча — это хуже его отсутствия,
+   поэтому чужая зона и несходящаяся длина слотов гасят его целиком. */
+let profileTzWarned = false;
+
+function dayProfile() {
+    if (activeRange !== "day") return null;
+
+    const profile = snapshot.profile;
+    if (!profile) return null;
+
+    if (profile.tz !== TIMEZONE) {
+        // Однократно: предупреждение о конфигурации, а не спам на каждую
+        // перерисовку раз в минуту.
+        if (!profileTzWarned) {
+            profileTzWarned = true;
+            console.warn(
+                `Профиль дня нарезан в зоне ${profile.tz}, страница подписывает время в ${TIMEZONE} — коридор не рисуется.`
+            );
+        }
+        return null;
+    }
+
+    if (!Array.isArray(profile.slots) || profile.slots.length !== 1440 / profile.slot_min) {
+        return null;
+    }
+
+    return profile;
+}
+
+/* Раскладка профиля на непрерывные пробеги вдоль оси времени. Слот без данных
+   даёт разрыв, а не интерполяцию: это ровно тот час, про который ничего не
+   известно. Пробег из одного слота не рисуется — семипиксельный островок
+   читается как артефакт отрисовки, а не как данные. */
+function profileRuns(profile, startTime, endTime) {
+    const step = profile.slot_min * 60;
+    // Начало — на местной границе слота. Номер слота пересчитывается через
+    // minutesOfDay на каждом шаге: в сутки перехода на летнее время слоты
+    // съезжают вместе с местными часами, а не копят сдвиг до конца окна.
+    let t = startTime - ((minutesOfDay(startTime) % profile.slot_min) * 60 + (startTime % 60));
+
+    const runs = [];
+    let run = null;
+    for (; t < endTime; t += step) {
+        const slot = profile.slots[Math.floor(minutesOfDay(t) / profile.slot_min)];
+        if (!slot) {
+            run = null;
+            continue;
+        }
+
+        if (!run) {
+            run = [];
+            runs.push(run);
+        }
+        // Точка пробега — середина слота, прижатая к окну на его краях.
+        run.push({
+            t: Math.min(Math.max(t + step / 2, startTime), endTime),
+            p25: slot[0],
+            p50: slot[1],
+            p75: slot[2],
+        });
+    }
+
+    return runs.filter((run) => run.length > 1);
+}
+
+/* Коридор 25–75 % с медианой — «обычный день» под сегодняшней кривой. */
+function drawDayProfile(ctx, runs, x, y) {
+    const color = readColor("--agp", "#8a90a6");
+    const alpha = readNumber("--agp-alpha", 0.2);
+
+    for (const run of runs) {
+        ctx.beginPath();
+        run.forEach((slot, index) => {
+            if (index === 0) ctx.moveTo(x(slot.t), y(toMmol(slot.p75)));
+            else ctx.lineTo(x(slot.t), y(toMmol(slot.p75)));
+        });
+        for (let i = run.length - 1; i >= 0; i -= 1) {
+            ctx.lineTo(x(run[i].t), y(toMmol(run[i].p25)));
+        }
+        ctx.closePath();
+        ctx.fillStyle = color;
+        ctx.globalAlpha = alpha;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        // Медиана — тонкой сплошной: она и есть «обычно», коридор — разброс.
+        ctx.beginPath();
+        run.forEach((slot, index) => {
+            if (index === 0) ctx.moveTo(x(slot.t), y(toMmol(slot.p50)));
+            else ctx.lineTo(x(slot.t), y(toMmol(slot.p50)));
+        });
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.25;
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        ctx.stroke();
+    }
+}
+
 /* Порядок слоёв — контракт, по которому в каркас вставляются отрисовщики:
    профиль обычного дня → полоса нормы → сетка → подписи осей → кривая с
    отсечениями по зонам (или дневные коробки) → одиночные точки → дорожки
@@ -653,12 +785,42 @@ function drawChart() {
         return;
     }
 
+    // bottom с запасом на вторую строку подписи — дату на смене дня.
+    const padding = { top: 12, right: 12, bottom: 38, left: 38 };
+    const plotWidth = width - padding.left - padding.right;
+    const lanesHeight = lanes.length * (LANE_HEIGHT + LANE_GAP);
+    const plotHeight = height - padding.top - padding.bottom - lanesHeight;
+
+    const now = snapshot.generated_at;
+    const spanSeconds = { day: 86400, week: 7 * 86400, month: 30 * 86400 }[activeRange];
+    const startTime = now - spanSeconds;
+
+    // Профиль обычного дня — до масштаба: края его коридора участвуют в
+    // niceScale наравне с кривой, иначе коридор упирался бы в рамку.
+    const profile = daily ? null : dayProfile();
+    const runs = profile ? profileRuns(profile, startTime, now) : [];
+
+    const scale = niceScale(
+        daily
+            ? days.filter((day) => day.count).flatMap((day) => [toMmol(day.p25), toMmol(day.p75)])
+            : [
+                  ...points.map((p) => toMmol(p[1])),
+                  ...runs.flatMap((run) => run.flatMap((slot) => [toMmol(slot.p25), toMmol(slot.p75)])),
+              ]
+    );
+
     // Состав легенды собирает рисующая ветка — из нарисованного, а не из
     // snapshot.events: иначе месячное окно обещало бы «Углеводы» на графике
-    // без единого столбика.
+    // без единого столбика, а пустой профиль — коридор, которого нет.
     const legendItems = [];
-    if (!daily && lanes.length) {
+    if (!daily && (lanes.length || runs.length)) {
         legendItems.push({ ...SERIES.glucose, line: true });
+        if (runs.length) {
+            legendItems.push({
+                ...SERIES.profile,
+                label: `Обычный день (${profile.days} дней): медиана и 25–75 %`,
+            });
+        }
         for (const kind of [SERIES.meal, SERIES.insulin, SERIES.basal]) {
             if (lanes.some((lane) => lane.bars.some((bar) => bar.series === kind))) {
                 legendItems.push(kind);
@@ -666,21 +828,6 @@ function drawChart() {
         }
     }
     renderLegend(legendItems);
-
-    // bottom с запасом на вторую строку подписи — дату на смене дня.
-    const padding = { top: 12, right: 12, bottom: 38, left: 38 };
-    const plotWidth = width - padding.left - padding.right;
-    const lanesHeight = lanes.length * (LANE_HEIGHT + LANE_GAP);
-    const plotHeight = height - padding.top - padding.bottom - lanesHeight;
-
-    const scale = niceScale(
-        daily
-            ? days.filter((day) => day.count).flatMap((day) => [toMmol(day.p25), toMmol(day.p75)])
-            : points.map((p) => toMmol(p[1]))
-    );
-    const now = snapshot.generated_at;
-    const spanSeconds = { day: 86400, week: 7 * 86400, month: 30 * 86400 }[activeRange];
-    const startTime = now - spanSeconds;
 
     const x = (t) => padding.left + ((t - startTime) / spanSeconds) * plotWidth;
     const y = (mmol) =>
@@ -691,6 +838,10 @@ function drawChart() {
     const muted = readColor("--muted", "#8a90a6");
     const inRange = readColor("--in-range", "#7efcb0");
     const axisAlpha = readNumber("--axis-alpha", 0.85);
+
+    // Профиль — самым нижним слоем (см. контракт порядка): «обычно» лежит
+    // под всем, что случилось сегодня, включая подложку нормы.
+    if (runs.length) drawDayProfile(ctx, runs, x, y);
 
     // Целевой диапазон — подложка, а не линии: так видно «сколько времени
     // график провёл внутри», не считая пересечения глазами.
@@ -1020,7 +1171,7 @@ function legendItem(series) {
         ? "legend__key legend__key--hollow"
         : `legend__key${series.line ? " legend__key--line" : ""}${
               series.thick ? " legend__key--thick" : ""
-          }`;
+          }${series.band ? " legend__key--band" : ""}`;
     // Контурная метка красится через currentColor — так одна и та же переменная
     // задаёт и заливку, и рамку.
     key.style.color = `var(${series.token})`;
@@ -1089,10 +1240,24 @@ function showTip(clientX) {
     const point = nearestPoint(hoverTime);
     const rows = [];
 
+    // Порядок строк зафиксирован: глюкоза → профиль → события.
     if (point) {
         rows.push(
             tipRow(SERIES.glucose, `${formatMmol(point[1])} ${SERIES.glucose.unit}`)
         );
+    }
+
+    const profile = dayProfile();
+    if (profile) {
+        const slot = profile.slots[Math.floor(minutesOfDay(hoverTime) / profile.slot_min)];
+        if (slot) {
+            rows.push(
+                tipRow(
+                    SERIES.profile,
+                    `обычно ${formatMmol(slot[1])} · ${formatMmol(slot[0])}–${formatMmol(slot[2])} ${SERIES.profile.unit}`
+                )
+            );
+        }
     }
 
     // Событие в пределах четверти часа от курсора: столбик и точка кривой

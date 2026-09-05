@@ -12,6 +12,7 @@ import os
 import tempfile
 from datetime import date, datetime, time, timedelta, timezone
 
+from agp import day_profile
 from analysis import analyse
 from daytime import DISPLAY_TZ, _percentile, _zone
 from database.queries import (
@@ -339,6 +340,9 @@ def build_snapshot(
         "stats": stats,
         # Своё окно, не выбранное на странице — см. GMI_WINDOW.
         "gmi": _gmi(readings, now),
+        # Профиль обычного дня — тоже по своему окну (AGP_WINDOW): «обычно»
+        # не зависит от того, какая панель открыта.
+        "profile": day_profile(readings, now),
         "events": _events(journal, now - EVENT_WINDOW),
         "analysis": analyse(
             meals,

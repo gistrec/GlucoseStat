@@ -217,6 +217,14 @@ class TestDaily:
         assert snapshot["series"]["month"]["kind"] == "daily"
         assert "points" not in snapshot["series"]["month"]
 
+    def test_snapshot_carries_the_day_profile_key(self):
+        # Проводка профиля — одна строка в build_snapshot, но без неё он не
+        # существует ни для кого. Двух замеров на профиль мало — честный null.
+        snapshot = build_snapshot(readings(120, 130), [], BASE + timedelta(hours=1))
+
+        assert "profile" in snapshot
+        assert snapshot["profile"] is None
+
 
 class TestTrend:
     def test_no_readings_gives_nothing(self):
