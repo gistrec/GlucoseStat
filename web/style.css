@@ -595,6 +595,29 @@ body {
     margin-top: 14px;
 }
 
+/* Кнопка «показать ещё» — во всю ширину таблицы: она продолжает список, а не
+   стоит рядом с ним, и палец на телефоне попадает в неё не целясь. Оформлена
+   как переключатель периода — те же рамка и приглушённый текст, потому что
+   делает то же самое: меняет, сколько данных на экране. */
+.meals__more {
+    width: 100%;
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: var(--panel);
+    border: 1px solid var(--panel-chrome);
+    border-radius: var(--radius);
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.meals__more:hover {
+    color: var(--fg);
+    border-color: var(--accent);
+}
+
 /* Отметка исхода. Цвет здесь означает состояние, а не принадлежность, поэтому
    он идёт вместе со значком и словом — цветом одним ничего не сказано. */
 .flag {

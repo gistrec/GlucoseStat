@@ -18,6 +18,14 @@ const COLLECTOR_SILENT_AFTER_MS = 15 * 60 * 1000;
 
 const RANGE_LABELS = { day: "24 часа", week: "7 дней", month: "30 дней" };
 
+/* Сколько приёмов показывать сразу и сколько добавлять кнопкой. Разбор читают
+   с последнего, и десяти строк хватает на пару дней.
+
+   Кнопка удлиняет не только таблицу: вместе со строками на оверлей приходят их
+   кривые. Иначе за две недели он превращается в заливку, из которой медиана —
+   единственное, ради чего он рисуется, — уже не читается. */
+const MEALS_PAGE = 10;
+
 /* Часовой пояс всех подписей времени — тот же, в котором отвечает бот
    (DISPLAY_TZ=Europe/Belgrade).
 
@@ -48,6 +56,11 @@ let activeRange = "day";
 let geometry = null;
 let hoverTime = null;
 
+/* Сколько приёмов раскрыто сейчас. Живёт между перерисовками: снимок
+   перечитывается раз в минуту, и сброс к десяти сворачивал бы список под
+   руками у того, кто только что его раскрыл. */
+let mealsShown = MEALS_PAGE;
+
 const els = {
     now: document.getElementById("now"),
     nowValue: document.getElementById("now-value"),
@@ -64,6 +77,7 @@ const els = {
     review: document.getElementById("review"),
     reviewNote: document.getElementById("review-note"),
     reviewStats: document.getElementById("review-stats"),
+    mealsMore: document.getElementById("meals-more"),
     overlay: document.getElementById("overlay"),
     overlayLegend: document.getElementById("overlay-legend"),
     meals: document.getElementById("meals"),
@@ -1588,7 +1602,15 @@ function renderReview() {
         return;
     }
 
-    const reviewSince = sinceLabel(new Date(analysis.meals[0].t * 1000));
+    /* Оверлей и таблица показывают один и тот же набор — иначе на графике
+       лежали бы кривые приёмов, которых в списке под ним нет, и подпись «после
+       N приёмов» считала бы одно, а глаз видел другое. Сводка выше остаётся по
+       всему окну: она про две недели, а не про то, что сейчас раскрыто, и её
+       карточка так и подписана. */
+    const shown = analysis.meals.slice(-Math.min(mealsShown, analysis.meals.length));
+    const visible = { ...analysis, meals: shown };
+
+    const reviewSince = sinceLabel(new Date(shown[0].t * 1000));
     els.reviewNote.textContent =
         `На сколько глюкоза отклонялась от уровня в момент еды в течение ` +
         `${analysis.window_min / 60} часов после каждого приёма пищи ${reviewSince}. ` +
@@ -1599,7 +1621,10 @@ function renderReview() {
     // минуту страница перечитывает его заново. Проверяется не наличие в
     // таблице, а рисуемость: строка может остаться, а кривая — сократиться до
     // точки, и подсветка повисла бы ни на чём.
-    const drawable = analysis.meals.some(
+    // Свёрнутый список тоже снимает подсветку: приём, ушедший под кнопку, на
+    // оверлее больше не рисуется, и закрепление висело бы ни на чём — ровно как
+    // у приёма, уехавшего из снимка.
+    const drawable = shown.some(
         (meal) => meal.t === pinnedMeal && meal.curve.length > 1
     );
     if (pinnedMeal !== null && !drawable) pinnedMeal = null;
@@ -1609,8 +1634,14 @@ function renderReview() {
     els.review.hidden = false;
 
     renderReviewStats(analysis);
-    drawOverlay(analysis);
-    renderMeals(analysis);
+    drawOverlay(visible);
+    renderMeals(visible);
+
+    const hidden = analysis.meals.length - shown.length;
+    els.mealsMore.hidden = hidden === 0;
+    if (hidden) {
+        els.mealsMore.textContent = `Показать ещё ${Math.min(MEALS_PAGE, hidden)}`;
+    }
 }
 
 /* ── Загрузка и события ────────────────────────────────────────────── */
@@ -1722,6 +1753,27 @@ function clearHover() {
     hideTip();
     if (snapshot && snapshot.latest) drawChart();
 }
+
+/* Раскрытие списка. Пока кнопка на месте, фокус остаётся на ней — жать её
+   подряд удобнее, чем каждый раз возвращаться табом. На последнем нажатии она
+   исчезает, и фокус улетел бы на body посреди таблицы; тогда он передаётся
+   первой из добавленных строк.
+
+   Но только при нажатии с клавиатуры (detail === 0 у Enter и пробела, у мыши
+   там счётчик кликов): фокус на строке подсвечивает её кривую, и после щелчка
+   мышью на графике сама собой выделялась бы кривая приёма, которого никто не
+   выбирал. */
+els.mealsMore.addEventListener("click", (event) => {
+    const before = els.meals.querySelectorAll("tbody tr").length;
+    mealsShown += MEALS_PAGE;
+    renderReview();
+
+    if (!els.mealsMore.hidden || event.detail !== 0) return;
+
+    const added = [...els.meals.querySelectorAll("tbody tr")].slice(before);
+    const pick = added.map((row) => row.querySelector(".meals__pick")).find(Boolean);
+    if (pick) pick.focus({ preventScroll: true });
+});
 
 /* pointer, а не mouse: тем же обработчиком обслуживается касание, и на телефоне
    подсказка появляется по тапу вместо того, чтобы быть недоступной вовсе.
