@@ -200,6 +200,17 @@ class TestDaily:
         assert day["count"] == 1
         assert day["partial"] is True
 
+    def test_a_reading_stamped_exactly_at_a_midnight_now_is_left_out(self):
+        # «Сейчас» ровно в местную полночь: замер с меткой в неё принадлежит
+        # дню нулевой длины, которого в массиве нет. Он отбрасывается явно,
+        # а не теряется в дне, до которого не доходит цикл.
+        data = self.full_day(BASE) + [(BASE + timedelta(days=1), 120.0)]
+
+        days = _daily(data, BASE + timedelta(days=1), timedelta(days=1))
+
+        assert len(days) == 1
+        assert days[0]["count"] == 288
+
     def test_a_day_entry_carries_stats_and_percentiles(self):
         day = _daily(self.full_day(BASE), BASE + timedelta(days=1), timedelta(days=1))[0]
 

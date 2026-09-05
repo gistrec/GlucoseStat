@@ -749,7 +749,8 @@ function profileRuns(profile, startTime, endTime) {
     const runs = [];
     let run = null;
     for (; t < endTime; t += step) {
-        const slot = profile.slots[Math.floor(minutesOfDay(t) / profile.slot_min)];
+        const idx = Math.floor(minutesOfDay(t) / profile.slot_min);
+        const slot = profile.slots[idx];
         if (!slot) {
             run = null;
             continue;
@@ -760,8 +761,11 @@ function profileRuns(profile, startTime, endTime) {
             runs.push(run);
         }
         // Точка пробега — середина слота, прижатая к окну на его краях.
+        // Номер слота едет вместе с точкой: по нему подсказка сверяется с
+        // тем, что действительно нарисовано.
         run.push({
             t: Math.min(Math.max(t + step / 2, startTime), endTime),
+            idx,
             p25: slot[0],
             p50: slot[1],
             p75: slot[2],
@@ -949,11 +953,16 @@ function drawChart() {
     const ticks = plotWidth < 340 ? 2 : activeRange === "day" ? 4 : 5;
     let previousDay = null;
 
+    // Дневной вид подписывает ось зоной снимка: его коробки нарезаны на
+    // сервере, и дата под коробкой обязана совпадать с датой в её подсказке,
+    // а не с константой страницы.
+    const axisZone = daily ? displayTimezone() : TIMEZONE;
+
     for (let i = 0; i <= ticks; i += 1) {
         const t = startTime + (spanSeconds / ticks) * i;
         const date = new Date(t * 1000);
         const day = date.toLocaleDateString("ru-RU", {
-            timeZone: TIMEZONE,
+            timeZone: axisZone,
             day: "numeric",
             month: "short",
         });
@@ -985,8 +994,14 @@ function drawChart() {
     }
     ctx.globalAlpha = 1;
 
+    // Ширина коробки дня считается один раз и попадает в geometry: отрисовка
+    // и подсветка наведения обязаны сходиться на одном прямоугольнике.
+    const boxWidth = daily
+        ? Math.min(BOX_MAX_WIDTH, Math.max(BOX_MIN_WIDTH, (x(86400) - x(0)) * BOX_SHARE))
+        : null;
+
     if (daily) {
-        drawDailyBoxes(ctx, days, x, y);
+        drawDailyBoxes(ctx, days, x, y, padding.left, width - padding.right, boxWidth);
     } else {
         drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeight);
     }
@@ -1010,6 +1025,10 @@ function drawChart() {
         kind: daily ? "daily" : "points",
         points,
         days,
+        boxWidth,
+        // Слоты профиля, дожившие до холста: подсказка не вправе говорить
+        // «обычно» там, где пробег выброшен как одинокий островок.
+        profileSlots: new Set(runs.flat().map((slot) => slot.idx)),
         // Ось времени остаётся линейной, поэтому hoverAt не меняется; день
         // ищется по границам его наблюдаемого куска.
         dayAt(t) {
@@ -1122,15 +1141,21 @@ function drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeigh
     }
 }
 
+/* Горизонталь коробки дня: середина наблюдаемого куска, прижатая к рамке.
+   Обрезанный окном крайний день наблюдается считанные пиксели, и без прижатия
+   половина коробки вылезала бы в жёлоб оси слева или за «сейчас» справа. */
+function dailyBoxSpan(day, x, plotLeft, plotRight, width) {
+    const centre = (x(day.start) + x(day.end)) / 2;
+    const left = Math.min(Math.max(centre - width / 2, plotLeft), plotRight - width);
+    return { left, right: left + width };
+}
+
 /* Подневная форма месяца: коробка p25–p75 с засечкой медианы на каждый день.
    Коробка, а не столбик min–max, нарочно: час прогрева сенсора по 500 мг/дл
-   уходит в p90+ и не двигает ни p75, ни медиану. */
-function drawDailyBoxes(ctx, days, x, y) {
-    // Ширина одна на все дни — от номинальных суток, а не от фактических:
-    // 25-часовой день перехода не должен выглядеть толще соседей.
-    const dayWidth = x(86400) - x(0);
-    const width = Math.min(BOX_MAX_WIDTH, Math.max(BOX_MIN_WIDTH, dayWidth * BOX_SHARE));
-
+   уходит в p90+ и не двигает ни p75, ни медиану. Ширина коробки одна на все
+   дни — от номинальных суток, а не от фактических: 25-часовой день перехода
+   не должен выглядеть толще соседей. */
+function drawDailyBoxes(ctx, days, x, y, plotLeft, plotRight, width) {
     const yLow = y(toMmol(snapshot.target.low));
     const yHigh = y(toMmol(snapshot.target.high));
 
@@ -1139,8 +1164,7 @@ function drawDailyBoxes(ctx, days, x, y) {
 
         // Середина наблюдаемого куска: сегодняшняя коробка стоит в центре
         // прожитой части дня, то есть левее правого края холста.
-        const centre = (x(day.start) + x(day.end)) / 2;
-        const left = centre - width / 2;
+        const { left } = dailyBoxSpan(day, x, plotLeft, plotRight, width);
         const top = y(toMmol(day.p75));
         const bottom = y(toMmol(day.p25));
 
@@ -1185,14 +1209,17 @@ function drawCrosshair(ctx, muted) {
         const day = geometry.dayAt(hoverTime);
         if (!day || !day.count) return;
 
+        // Подсветка накрывает и наблюдаемый кусок, и коробку: у обрезанного
+        // окном дня кусок — считанные пиксели, а прижатая к рамке коробка
+        // стоит рядом с ним, и подсвечивать одно без другого значит
+        // подсвечивать не то, на что смотрят.
+        const box = dailyBoxSpan(day, geometry.x, geometry.left, geometry.right, geometry.boxWidth);
+        const from = Math.min(geometry.x(day.start), box.left);
+        const to = Math.max(geometry.x(day.end), box.right);
+
         ctx.fillStyle = muted;
         ctx.globalAlpha = 0.08;
-        ctx.fillRect(
-            geometry.x(day.start),
-            geometry.plotTop,
-            geometry.x(day.end) - geometry.x(day.start),
-            geometry.plotBottom - geometry.plotTop
-        );
+        ctx.fillRect(from, geometry.plotTop, to - from, geometry.plotBottom - geometry.plotTop);
         ctx.globalAlpha = 1;
         return;
     }
@@ -1314,8 +1341,11 @@ function showTip(clientX) {
 
     const profile = dayProfile();
     if (profile) {
-        const slot = profile.slots[Math.floor(minutesOfDay(hoverTime) / profile.slot_min)];
-        if (slot) {
+        const idx = Math.floor(minutesOfDay(hoverTime) / profile.slot_min);
+        const slot = profile.slots[idx];
+        // Сверка с нарисованным: пробег из одного слота на холст не попал,
+        // и подсказка не вправе говорить «обычно» там, где коридора нет.
+        if (slot && geometry.profileSlots.has(idx)) {
             rows.push(
                 tipRow(
                     SERIES.profile,
@@ -1361,12 +1391,16 @@ function showDayTip(clientX) {
     const time = document.createElement("p");
     time.className = "tip__time";
     // Дата — по зоне снимка, и зона названа вслух: «5 сентября» без города в
-    // поездке значит два разных дня.
+    // поездке значит два разных дня. Короткое имя города — только пока зоны
+    // сходятся: подписывать московскую нарезку «Белградом» хуже, чем показать
+    // сырое имя зоны.
+    const zone = displayTimezone();
+    const zoneLabel = zone === TIMEZONE ? TIMEZONE_LABEL : zone;
     time.textContent = `${new Date(day.start * 1000).toLocaleDateString("ru-RU", {
-        timeZone: displayTimezone(),
+        timeZone: zone,
         day: "numeric",
         month: "long",
-    })}, ${TIMEZONE_LABEL}`;
+    })}, ${zoneLabel}`;
 
     // Метка медианы — тем же цветом, что её засечка на холсте.
     const median = tipRow(SERIES.glucose, `${formatMmol(day.p50)} ${SERIES.glucose.unit}`);
@@ -2109,7 +2143,20 @@ function renderCollectorState() {
     els.footUpdated.className = "";
 }
 
+/* Однократно: расхождение зон — ошибка конфигурации, о которой надо сказать
+   вслух, а не спамить на каждую перерисовку раз в минуту. Дневной вид при
+   этом продолжает рисовать — данные нарезаны честно, просто в другой зоне,
+   и подсказка называет её по имени. */
+let timezoneWarned = false;
+
 function render() {
+    if (!timezoneWarned && snapshot.timezone && snapshot.timezone !== TIMEZONE) {
+        timezoneWarned = true;
+        console.warn(
+            `Снимок нарезан в зоне ${snapshot.timezone}, страница подписывает время в ${TIMEZONE} — поменяйте DISPLAY_TZ и TIMEZONE вместе.`
+        );
+    }
+
     // Баннер живёт до первой удачной отрисовки: страница перечитывает снимок
     // каждую минуту, и один моргнувший fetch не должен навсегда повесить
     // «не удалось загрузить» над живыми данными. renderNow() вернёт баннер,

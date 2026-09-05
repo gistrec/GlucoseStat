@@ -172,6 +172,12 @@ def _daily(
 
     by_day: dict[date, list[tuple[datetime, float]]] = {}
     for item in readings:
+        # Правая граница окна — явная: когда «сейчас» совпадает с местной
+        # полуночью, замер с меткой ровно в неё принадлежит дню нулевой
+        # длины, которого в массиве нет, — и обязан быть отброшен здесь, а
+        # не потеряться молча в дне, до которого не дойдёт цикл ниже.
+        if item[0].replace(tzinfo=timezone.utc) >= window_end:
+            continue
         local = item[0].replace(tzinfo=timezone.utc).astimezone(zone)
         by_day.setdefault(local.date(), []).append(item)
 
