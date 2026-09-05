@@ -6,6 +6,7 @@ from analysis import (
     SNACK_CARBS,
     TARGET_RISE,
     WINDOW,
+    Trust,
     analyse,
     excursion,
     summarise,
@@ -452,35 +453,73 @@ class TestTrustLevel:
         """У взвешенной порции число измерено: спор прогонов был о фотографии,
         а не о том, что показала чашка."""
 
-        assert trust_level("photo_estimate", True, 80.0, 42.4) == "weighed"
+        assert trust_level("photo_estimate", True, 80.0, 42.4) == Trust("weighed", 3)
 
     def test_manual_entry_has_no_runs_to_agree(self):
-        assert trust_level("manual", None, None, None) == "manual"
+        assert trust_level("manual", None, None, None) == Trust("spoken", 2)
 
     def test_absolute_spread_overrides_the_ratio(self):
         """18 г на порции в 90 — формально 20 %, а на деле полторы хлебные
         единицы неизвестно куда."""
 
-        assert trust_level("photo_estimate", False, 90.8, 18.4) == "low"
+        assert trust_level("photo_estimate", False, 90.8, 18.4) == Trust("photo", 1)
 
     def test_levels_follow_the_ratio(self):
-        assert trust_level("photo_estimate", False, 30.5, 2.7) == "ok"
-        assert trust_level("photo_estimate", False, 41.8, 7.8) == "medium"
-        assert trust_level("photo_estimate", False, 10.0, 4.0) == "low"
+        assert trust_level("photo_estimate", False, 30.5, 2.7) == Trust("photo", 3)
+        assert trust_level("photo_estimate", False, 41.8, 7.8) == Trust("photo", 2)
+        assert trust_level("photo_estimate", False, 10.0, 4.0) == Trust("photo", 1)
 
     def test_a_hand_edited_number_is_spoken_too(self):
         """Кнопка «Исправить» меняет число, не взвешивая: прогоны спорили о
         своей медиане, а в журнал ушла чужая — их согласие о ней ничего не
         говорит."""
 
-        assert trust_level("photo_estimate", False, 60.0, 3.0, confirmed=45.0) == "manual"
+        assert trust_level(
+            "photo_estimate", False, 60.0, 3.0, confirmed=45.0
+        ) == Trust("spoken", 2)
 
     def test_an_untouched_median_keeps_its_agreement(self):
-        assert trust_level("photo_estimate", False, 60.0, 3.0, confirmed=60.0) == "ok"
+        assert trust_level(
+            "photo_estimate", False, 60.0, 3.0, confirmed=60.0
+        ) == Trust("photo", 3)
 
     def test_nothing_known_is_not_a_level(self):
-        assert trust_level("photo_estimate", False, None, None) is None
-        assert trust_level() is None
+        assert trust_level("photo_estimate", False, None, None) == Trust()
+        assert trust_level() == Trust()
+
+
+class TestConfidence:
+    """Уверенность — ответ человека, и он старше всякого вывода: только он
+    знает, доел ли порцию и читал ли состав на упаковке."""
+
+    def test_it_overrides_the_scales(self):
+        """Взвешено, но съедено наполовину: весы говорят о том, что положили в
+        чашку, а не о том, что осталось на тарелке."""
+
+        assert trust_level(
+            "photo_estimate", True, 80.0, 2.0, confidence=1
+        ) == Trust("weighed", 1)
+
+    def test_it_overrides_the_agreement(self):
+        """Прогоны сошлись между собой — это согласие моделей, а не сходство с
+        тем, что стоит на столе."""
+
+        assert trust_level(
+            "photo_estimate", False, 60.0, 3.0, confidence=2
+        ) == Trust("photo", 2)
+
+    def test_a_spoken_number_can_be_certain(self):
+        """Состав написан на упаковке: способ тот же, вера другая — ради этого
+        точки и отделены от значка."""
+
+        assert trust_level("manual", confidence=3) == Trust("spoken", 3)
+
+    def test_an_answer_off_the_scale_is_ignored(self):
+        """Уровни задаёт бот; чужое число в колонке значит «не спрашивали», а
+        не «верить нельзя»."""
+
+        assert trust_level("manual", confidence=7) == Trust("spoken", 2)
+        assert trust_level("manual", confidence=0) == Trust("spoken", 2)
 
 
 ORIGIN_OK = {
@@ -505,7 +544,20 @@ class TestTrustInAnalyse:
             [(START, 60.0)], readings, LATER, HYPO, origins={START: [ORIGIN_OK]}
         )
 
-        assert result["meals"][0]["trust"] == "ok"
+        assert result["meals"][0]["trust"] == {"origin": "photo", "dots": 3}
+
+    def test_the_answer_travels_with_it(self):
+        readings = rising_then_back(100, 160)
+
+        result = analyse(
+            [(START, 60.0)],
+            readings,
+            LATER,
+            HYPO,
+            origins={START: [{**ORIGIN_OK, "confidence": 1}]},
+        )
+
+        assert result["meals"][0]["trust"] == {"origin": "photo", "dots": 1}
 
     def test_a_merged_meal_inherits_its_worst_part(self):
         """Взвешенная половина не делает достоверной вторую, названную на
@@ -527,7 +579,9 @@ class TestTrustInAnalyse:
         )
 
         assert len(result["meals"]) == 1
-        assert result["meals"][0]["trust"] == "low"
+        # И способ достаётся худшей записи: «взвешено» о приёме, взвешенном
+        # наполовину, обещало бы точность, которой нет.
+        assert result["meals"][0]["trust"] == {"origin": "photo", "dots": 1}
 
     def test_two_records_on_one_second_take_the_worse(self):
         readings = rising_then_back(100, 160)
@@ -540,7 +594,7 @@ class TestTrustInAnalyse:
             origins={START: [ORIGIN_OK, ORIGIN_LOW]},
         )
 
-        assert result["meals"][0]["trust"] == "low"
+        assert result["meals"][0]["trust"] == {"origin": "photo", "dots": 1}
 
     def test_without_origins_the_meal_has_no_level(self):
         """Журнал заводит бот, и страница обязана рисоваться без его таблиц."""

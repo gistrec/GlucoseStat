@@ -48,12 +48,29 @@ MEAL_PLAN = [
     (19, 0, 70.0, 7.0),
 ]
 
+#: Все сочетания способа и уверенности, какие страница умеет рисовать. Две
+#: последние строки — ответы человека боту: они перебивают и весы, и согласие
+#: прогонов, и без них на превью не увидеть, что точки стоят отдельно от значка.
 ORIGIN_PLAN = [
     {"source": "photo_estimate", "was_weighed": False, "median": 60.0, "spread": 3.0},
     {"source": "photo_estimate", "was_weighed": False, "median": 60.0, "spread": 9.0},
     {"source": "photo_estimate", "was_weighed": False, "median": 60.0, "spread": 25.0},
     {"source": "photo_estimate", "was_weighed": True, "median": 60.0, "spread": 25.0},
     {"source": "manual", "was_weighed": None, "median": None, "spread": None},
+    {
+        "source": "photo_estimate",
+        "was_weighed": True,
+        "median": 60.0,
+        "spread": 3.0,
+        "confidence": 1,
+    },
+    {
+        "source": "manual",
+        "was_weighed": None,
+        "median": None,
+        "spread": None,
+        "confidence": 3,
+    },
 ]
 
 DAYS = 16

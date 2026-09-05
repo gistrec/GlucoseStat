@@ -12,6 +12,7 @@ insulin still active from an earlier dose — none of which is in this data.
 
 import statistics
 from datetime import datetime, timedelta, timezone
+from typing import NamedTuple
 
 
 # Окно разбора. Короткий инсулин отрабатывает 3–5 часов, за четыре часа
@@ -65,7 +66,14 @@ AGREEMENT_LOW_RATIO = 0.25
 
 CARBS_EPSILON_G = 0.05
 
-TRUST_ORDER = ("low", "manual", "medium", "ok", "weighed")
+#: Сколько точек рисуется на странице. Три — потому что столько уровней
+#: уверенности предлагает бот: «знаю состав», «прикинул», «наугад».
+TRUST_DOTS = 3
+
+#: Уверенность по умолчанию, когда человека не спросили: у весов число
+#: измерено, у слова — названо навскидку. Оценка по фото сюда не попадает — там
+#: уверенность считается по разбросу прогонов, см. ``_photo_dots``.
+DEFAULT_DOTS = {"weighed": TRUST_DOTS, "spoken": TRUST_DOTS - 1}
 
 
 def _seconds(moment: datetime) -> int:
@@ -106,55 +114,115 @@ def _merge(
     return merged
 
 
+class Trust(NamedTuple):
+    """Две независимые вещи об одном числе углеводов.
+
+    ``origin`` — чем оно получено: ``weighed`` весами, ``spoken`` со слов
+    человека, ``photo`` прогонами модели по снимку. ``dots`` — сколько в нём
+    веры, от 1 до ``TRUST_DOTS``.
+
+    Раздельно, потому что это разные вопросы, и раньше их слитность врала в обе
+    стороны: взвешенной порции нельзя было сказать «доел половину, считал на
+    глаз», а названной со слов — «состав написан на упаковке». Любое из полей
+    бывает пустым: у записи без таблиц бота неизвестен способ, у старой записи —
+    уверенность.
+    """
+
+    origin: str | None = None
+    dots: int | None = None
+
+
+def _photo_dots(median: float | None, spread: float | None) -> int | None:
+    """Уверенность оценки по фото — из того, насколько сошлись прогоны.
+
+    Пороги согласия — те же, что в ``carbs/aggregate.py`` у бота: под оценкой он
+    пишет «Согласованность: высокая/средняя/низкая», и точки на странице обязаны
+    говорить о том же приёме то же самое. Меняя их там, поменять и здесь.
+    """
+
+    if median is None or spread is None:
+        return None
+    if spread > AGREEMENT_ABSOLUTE_LOW_G:
+        return 1
+    if spread == 0:
+        return TRUST_DOTS
+    if median <= 0:
+        return 1
+
+    ratio = spread / median
+    if ratio > AGREEMENT_LOW_RATIO:
+        return 1
+    if ratio < AGREEMENT_OK_RATIO:
+        return TRUST_DOTS
+    return TRUST_DOTS - 1
+
+
+def _origin(
+    source: str | None,
+    was_weighed: bool | None,
+    median: float | None,
+    confirmed: float | None,
+) -> str | None:
+    """Чем получено число. ``None`` — если про запись ничего не известно:
+    страница рисуется и без таблиц бота, просто без значка."""
+
+    # Весы перебивают всё: у взвешенной порции число измерено, и чем его
+    # предлагала модель, к нему уже не относится.
+    if was_weighed:
+        return "weighed"
+    if source is not None and source != "photo_estimate":
+        return "spoken"
+    if median is None:
+        return None
+    # Число, исправленное человеком на глаз, — тоже со слов: прогоны спорили о
+    # своей медиане, а в журнал ушла чужая.
+    if confirmed is not None and abs(confirmed - median) > CARBS_EPSILON_G:
+        return "spoken"
+    return "photo"
+
+
 def trust_level(
     source: str | None = None,
     was_weighed: bool | None = None,
     median: float | None = None,
     spread: float | None = None,
     confirmed: float | None = None,
-) -> str | None:
-    """Чем подтверждено число углеводов: весами, словом человека или прогонами.
+    confidence: int | None = None,
+) -> Trust:
+    """Способ и уверенность для одной записи еды.
 
-    Весы перебивают всё: у взвешенной порции число измерено, и разброс прогонов
-    к нему уже не относится. Число, исправленное человеком на глаз, — тоже со
-    слов: прогоны спорили о своей медиане, а в журнал ушла чужая. ``None`` —
-    если про запись ничего не известно: страница рисуется и без таблиц бота,
-    просто без значка.
-
-    Пороги согласия — те же, что в ``carbs/aggregate.py`` у бота: под оценкой он
-    пишет «Согласованность: высокая/средняя/низкая», и значок на странице обязан
-    говорить о том же приёме то же самое. Меняя их там, поменять и здесь.
+    ``confidence`` — ответ человека боту, и он старше всякого вывода: только он
+    знает, доел ли порцию и читал ли состав на упаковке. Без ответа уверенность
+    выводится по-старому — у весов полная, у слова средняя, у фото по разбросу
+    прогонов, — чтобы записи, сделанные до появления вопроса, выглядели как
+    выглядели.
     """
 
-    if was_weighed:
-        return "weighed"
-    if source is not None and source != "photo_estimate":
-        return "manual"
-    if median is None or spread is None:
-        return None
-    if confirmed is not None and abs(confirmed - median) > CARBS_EPSILON_G:
-        return "manual"
+    origin = _origin(source, was_weighed, median, confirmed)
 
-    if spread > AGREEMENT_ABSOLUTE_LOW_G:
-        return "low"
-    if spread == 0:
-        return "ok"
-    if median <= 0:
-        return "low"
+    if confidence in range(1, TRUST_DOTS + 1):
+        return Trust(origin, confidence)
 
-    ratio = spread / median
-    if ratio > AGREEMENT_LOW_RATIO:
-        return "low"
-    if ratio < AGREEMENT_OK_RATIO:
-        return "ok"
-    return "medium"
+    if origin is None:
+        return Trust()
+    return Trust(origin, DEFAULT_DOTS.get(origin) or _photo_dots(median, spread))
 
 
-def _worst_trust(levels) -> str | None:
-    """Худшее из подтверждений; неизвестные уровни не участвуют."""
+def _worst_trust(levels) -> Trust:
+    """Худшее из подтверждений: приём, сложенный из записей, честен по слабейшей.
 
-    known = [level for level in levels if level in TRUST_ORDER]
-    return min(known, key=TRUST_ORDER.index) if known else None
+    Способ берётся у той же записи, что дала худшую уверенность: сказать
+    «взвешено» о приёме, где взвешена половина, а вторая половина названа
+    наугад, — значит обещать точность, которой нет.
+    """
+
+    known = [level for level in levels if level is not None and level.dots is not None]
+    if not known:
+        # Способ без уверенности всё же стоит показать: значок есть, точек нет.
+        origins = [level for level in levels if level is not None and level.origin]
+        return origins[0] if origins else Trust()
+
+    return min(known, key=lambda level: level.dots)
 
 
 def _doses(
@@ -198,7 +266,7 @@ def excursion(
     hypo_mgdl: int,
     dose: dict | None = None,
     parts: list[tuple[datetime, float]] | None = None,
-    trust: str | None = None,
+    trust: Trust | None = None,
 ) -> dict | None:
     """Разобрать один приём пищи. ``None``, если данных под ним нет.
 
@@ -208,7 +276,7 @@ def excursion(
     этому моменту вышел за ориентир. ``dose`` — болюс этой еды из ``_doses``;
     он показывается рядом, но вывода о нём здесь нет и быть не может — см.
     модуль. ``parts`` — записи, из которых сложился приём, если их было
-    несколько. ``trust`` — чем подтверждено число углеводов (``trust_level``).
+    несколько. ``trust`` — способ и уверенность числа углеводов (``Trust``).
     """
 
     started, carbs = meal
@@ -250,7 +318,9 @@ def excursion(
         "parts": None
         if parts is None
         else [[_seconds(moment), round(grams, 1)] for moment, grams in parts],
-        "trust": trust,
+        # Пустой Trust уезжает как None: способ неизвестен и уверенность тоже,
+        # а объект с двумя пустыми полями страница нарисовала бы как значок.
+        "trust": None if trust is None or trust == Trust() else trust._asdict(),
         "dose": dose,
         "baseline": round(baseline),
         "peak": round(peak),

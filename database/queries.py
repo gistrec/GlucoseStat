@@ -124,6 +124,7 @@ def meal_origins_since(start: datetime) -> dict[datetime, list[dict]]:
                 select(
                     journal_entries.c.occurred_at,
                     journal_entries.c.source,
+                    journal_entries.c.confidence,
                     meal_confirmations.c.was_weighed,
                     meal_confirmations.c.confirmed_carbs_g,
                     meal_estimates.c.median_carbs_g,
@@ -150,6 +151,7 @@ def meal_origins_since(start: datetime) -> dict[datetime, list[dict]]:
         origins.setdefault(row.occurred_at, []).append(
             {
                 "source": None if row.source is None else str(row.source),
+                "confidence": None if row.confidence is None else int(row.confidence),
                 "was_weighed": None if row.was_weighed is None else bool(row.was_weighed),
                 "median": None if row.median_carbs_g is None else float(row.median_carbs_g),
                 "spread": None if row.spread_g is None else float(row.spread_g),

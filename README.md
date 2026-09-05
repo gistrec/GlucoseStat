@@ -97,6 +97,16 @@ exception — the hypoglycaemia count covers every window shown, because the usu
 answer to a low is food, food cuts the window, and a count over clean windows
 only would drop exactly the lows that happened.
 
+Each carb figure carries two marks, and they answer different questions. The
+first is how the number was obtained: ⚖︎ weighed, ✎ spoken, ▣ estimated from a
+photo. The second is how much faith it deserves — ●●● certain, ●●○ roughly,
+●○○ a guess — and it comes from the person, who answers the bot's buttons after
+every meal. Neither follows from the other: a weighed portion gets half eaten,
+and a spoken "30 g" may be read off a wrapper. Where nobody answered, the
+confidence falls back to the old rule — full for scales, middling for a spoken
+number, and for a photo as far as the model runs agreed with each other. A meal
+merged from several records takes the marks of its weakest one.
+
 This describes outcomes and stops there. Whether a dose was right also depends
 on activity, on illness and on insulin still active from an earlier injection —
 none of which is in this data, and the page says so.

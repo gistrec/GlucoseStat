@@ -6,6 +6,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     Float,
+    Integer,
     MetaData,
     Numeric,
     String,
@@ -36,6 +37,10 @@ journal_entries = Table(
     Column("units", Numeric(5, 2)),
     Column("note", Text),
     Column("source", String(32)),
+    # Ответ человека боту: насколько он верит числу углеводов, от 1 до 3. Пусто
+    # у записей, сделанных до появления вопроса, — тогда уверенность выводится
+    # из способа и разброса прогонов, как выводилась раньше.
+    Column("confidence", Integer),
 )
 
 meal_confirmations = Table(

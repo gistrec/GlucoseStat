@@ -1257,50 +1257,68 @@ function textCell(text) {
 /* Уверенность в числе — два разных факта, и показывать нужно оба. Чем число
    получено, шкала не заменяет: «взвешено» и «по фото, прогоны сошлись» одинаково
    надёжны сейчас, но исправлять по ним разное — оценку стоит перевесить, весы
-   уже всё сказали. А одним источником не обойтись: у фото разброс прогонов
-   меняется от приёма к приёму, и «оценено по фото» без него ничего не обещает.
-   Отсюда пара знаков — источник и три деления, — а не один общий значок.
+   уже всё сказали. А одним источником не обойтись: взвешенную порцию доедают
+   наполовину, и «взвешено» без шкалы обещало бы точность, которой нет. Отсюда
+   пара знаков — источник и три деления, — а не один общий значок.
 
-   Уровни и пороги живут в analysis.trust_level, здесь только показ; порядок
-   TRUST_ORDER при этом сжимается: весы и сошедшиеся прогоны делят верхнее
-   деление, слово человека и разошедшиеся — среднее. Различает их источник. */
-const TRUST = {
-    weighed: { source: "⚖︎", dots: 3, spoken: "взвешено" },
-    manual: { source: "✎", dots: 2, spoken: "со слов" },
-    ok: { source: "▣", dots: 3, spoken: "по фото, прогоны сошлись" },
-    medium: { source: "▣", dots: 2, spoken: "по фото, прогоны разошлись" },
-    low: { source: "▣", dots: 1, spoken: "по фото, прогоны сильно разошлись" },
+   Точки приходят из данных отдельным полем и не выводятся из источника:
+   уверенность у каждой записи своя, её называет человек в боте. Где он не
+   ответил, число деления считает analysis.trust_level — здесь только показ. */
+const TRUST_ORIGIN = {
+    weighed: { mark: "⚖︎", spoken: "взвешено" },
+    spoken: { mark: "✎", spoken: "со слов" },
+    photo: { mark: "▣", spoken: "по фото" },
+};
+
+/* Как читаются сами деления. Словами, а не «2 из 3»: под наведением и вслух
+   должно звучать то же, что человек нажимал в боте. */
+const TRUST_CONFIDENCE = {
+    3: "точно",
+    2: "примерно",
+    1: "наугад",
 };
 
 const TRUST_DOTS = 3;
 
 function trustMark(cell, meal) {
-    const trust = TRUST[meal.trust];
+    const trust = meal.trust;
     if (!trust) return cell;
 
+    const origin = TRUST_ORIGIN[trust.origin];
+    const confidence = TRUST_CONFIDENCE[trust.dots];
+    if (!origin && !confidence) return cell;
+
+    // Обе половины произносятся одной фразой: «со слов, наугад». Пустая
+    // половина из неё выпадает — способ без ответа человека и наоборот.
+    const spoken = [origin?.spoken, confidence].filter(Boolean).join(", ");
+
     const mark = document.createElement("span");
-    mark.className = `trust trust--${meal.trust}`;
-    mark.title = trust.spoken;
+    mark.className = `trust trust--${trust.origin || "unknown"}`;
+    mark.title = spoken;
     mark.setAttribute("aria-hidden", "true");
 
     // Две части, а не одна строка: источник и шкала набраны разным кеглем —
     // ⚖︎ и ✎ рисуются заметно мельче точек при одном размере.
-    const source = document.createElement("span");
-    source.className = "trust__source";
-    source.textContent = trust.source;
+    if (origin) {
+        const source = document.createElement("span");
+        source.className = "trust__source";
+        source.textContent = origin.mark;
+        mark.append(source);
+    }
 
-    const dots = document.createElement("span");
-    dots.className = "trust__dots";
-    dots.textContent = "●".repeat(trust.dots) + "○".repeat(TRUST_DOTS - trust.dots);
+    if (confidence) {
+        const dots = document.createElement("span");
+        dots.className = "trust__dots";
+        dots.textContent = "●".repeat(trust.dots) + "○".repeat(TRUST_DOTS - trust.dots);
+        mark.append(dots);
+    }
 
-    mark.append(source, dots);
-
-    const spoken = document.createElement("span");
-    spoken.className = "visually-hidden";
-    spoken.textContent = `, ${trust.spoken}`;
+    const said = document.createElement("span");
+    said.className = "visually-hidden";
+    said.textContent = `, ${spoken}`;
 
     cell.prepend(mark, " ");
-    cell.append(spoken);
+    cell.append(said);
     return cell;
 }
 
