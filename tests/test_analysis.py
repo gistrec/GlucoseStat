@@ -73,6 +73,38 @@ class TestExcursion:
 
         assert result["hypo"] is True
 
+    def test_a_low_that_only_precedes_the_peak_is_what_the_meal_answered(self):
+        """Сели есть на 3,4 и поднялись до 9,8: гипогликемия здесь причина еды,
+        а не её исход, и в «С гипогликемией» этот приём попадать не должен."""
+
+        readings = curve([61, 60, 66, 75, 90, 120] + [176] * 43)
+
+        result = excursion((START, 60.0), readings, LATER, [], HYPO)
+
+        assert result["from_hypo"] is True
+        assert result["hypo"] is False
+
+    def test_a_low_after_the_peak_is_the_outcome(self):
+        """Поднялись и провалились ниже порога — вот это уже последствие."""
+
+        readings = curve([100, 140, 170, 150, 120, 90, 66] + [80] * 42)
+
+        result = excursion((START, 60.0), readings, LATER, [], HYPO)
+
+        assert result["hypo"] is True
+        assert result["from_hypo"] is False
+
+    def test_a_low_on_both_sides_of_the_peak_counts_as_the_outcome(self):
+        """Вошли на гипогликемии, поднялись и снова упали: причина причиной, но
+        исход тут — второе падение, и молчать о нём нельзя."""
+
+        readings = curve([65, 80, 120, 170, 120, 80, 64] + [70] * 42)
+
+        result = excursion((START, 60.0), readings, LATER, [], HYPO)
+
+        assert result["hypo"] is True
+        assert result["from_hypo"] is True
+
     def test_a_low_before_the_meal_is_not_counted(self):
         """Окно начинается с приёма пищи: гипогликемия получасом раньше — это
         событие предыдущего окна, а не следствие этой еды."""
@@ -182,10 +214,11 @@ class TestExcursion:
 
 
 class TestSummarise:
-    def make(self, rise, hypo=False, complete=True, cut=False, peak_min=90):
+    def make(self, rise, hypo=False, complete=True, cut=False, peak_min=90, from_hypo=False):
         return {
             "rise": rise,
             "hypo": hypo,
+            "from_hypo": from_hypo,
             "complete": complete,
             "cut": cut,
             "peak_min": peak_min,
@@ -224,6 +257,21 @@ class TestSummarise:
 
         assert result["good"] == 1
         assert result["hypo"] == 1
+
+    def test_a_meal_that_answered_a_low_is_counted_apart(self):
+        """Съеденное на гипогликемии не портит «уложились» и не идёт в счёт
+        гипогликемий как исходов, но и не пропадает: у него своё число."""
+
+        items = [
+            self.make(TARGET_RISE - 10),
+            self.make(TARGET_RISE + 90, from_hypo=True),
+        ]
+
+        result = summarise(items, HYPO)
+
+        assert result["hypo"] == 0
+        assert result["from_hypo"] == 1
+        assert result["good"] == 1
 
     def test_hypo_on_a_cut_window_still_counts(self):
         """Реакция на гипо — еда, а еда режет окно; счёт по одним чистым окнам
