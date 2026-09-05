@@ -291,6 +291,15 @@ function trendArrow(rate) {
    одном и том же сахаре, и назвать его двумя цветами на одном экране значит
    заставить читателя гадать, какой из них про что. Оранжевый остался цветом
    предупреждений о молчании — сенсора в шапке и сборщика в подвале. */
+/* Цвет отдельной отметки на кривой — кружка, а не отрезка. Отрезки красятся
+   отсечением по линии порога, но точка лежит целиком по одну его сторону, и
+   срезанный пополам кружок читался бы как ещё одно значение рядом. */
+function readingColor(mgdl) {
+    if (mgdl < snapshot.target.low) return readColor("--hypo", "#ff5b5b");
+    if (mgdl > snapshot.target.high) return readColor("--hyper", "#ffd166");
+    return readColor("--accent", "#7eb8f7");
+}
+
 function zoneColor(mgdl) {
     const { low, high } = snapshot.target;
     if (mgdl < low) return "var(--hypo)";
@@ -735,6 +744,25 @@ function drawChart() {
         ctx.restore();
     }
 
+    /* Выше цели — та же обводка в полосе над зелёной подложкой. Порог общий с
+       ней и с долей времени в диапазоне: третьего числа, по которому мог бы
+       меняться цвет, на странице нет, и заводить его здесь значило бы рисовать
+       границу, которую больше нигде не видно.
+
+       Времени выше цели набирается половина суток, так что это не тревога, а
+       состояние — цвет спокойнее красного внизу, которого бывает по несколько
+       минут за неделю. */
+    const hyperBottom = y(toMmol(snapshot.target.high));
+    if (hyperBottom > padding.top) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(padding.left, padding.top, plotWidth, hyperBottom - padding.top);
+        ctx.clip();
+        ctx.strokeStyle = readColor("--hyper", "#ffd166");
+        traceSeries();
+        ctx.restore();
+    }
+
     // Точка без соседей не даёт отрезка и не нарисовалась бы вовсе. Так
     // выглядит начало каждого нового сенсора — первые замеры одиночные.
     for (let i = 0; i < points.length; i += 1) {
@@ -745,13 +773,7 @@ function drawChart() {
             (!next || next[0] - points[i][0] > gapSeconds);
 
         if (isolated) {
-            // Отсечение одиночную точку не спасает: она лежит целиком по одну
-            // сторону порога, и половина кружка, срезанная по линии, читалась бы
-            // как ещё одно значение. Цвет выбирается по самому замеру.
-            ctx.fillStyle =
-                points[i][1] < snapshot.target.low
-                    ? readColor("--hypo", "#ff5b5b")
-                    : accent;
+            ctx.fillStyle = readingColor(points[i][1]);
             ctx.beginPath();
             ctx.arc(x(points[i][0]), y(toMmol(points[i][1])), 2.5, 0, Math.PI * 2);
             ctx.fill();
@@ -816,10 +838,7 @@ function drawCrosshair(ctx, muted) {
     ctx.arc(geometry.x(point[0]), geometry.y(toMmol(point[1])), 4, 0, Math.PI * 2);
     // Тот же цвет, что у линии под точкой: синий кружок посреди красного
     // участка читался бы как «а вот это измерение в норме».
-    ctx.fillStyle =
-        point[1] < snapshot.target.low
-            ? readColor("--hypo", "#ff5b5b")
-            : readColor("--accent", "#7eb8f7");
+    ctx.fillStyle = readingColor(point[1]);
     ctx.fill();
     ctx.lineWidth = 2;
     ctx.strokeStyle = readColor("--panel", "#0d0d14");
