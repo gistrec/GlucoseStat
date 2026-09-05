@@ -14,21 +14,24 @@ import os
 import pathlib
 import subprocess
 import sys
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from conftest import BASE
 from publish import (
+    DAY_MIN_COVERAGE,
     TARGET_HIGH_MGDL,
     TARGET_LOW_MGDL,
     CGM_READINGS_PER_DAY,
+    _daily,
     _downsample,
     _events,
     _gmi,
     _stats,
     _stored_last_success,
     _trend,
+    build_snapshot,
     publish,
 )
 
@@ -37,6 +40,10 @@ def readings(*values, step_minutes=5, start=BASE):
     """Build readings spaced evenly apart."""
 
     return [(start + timedelta(minutes=step_minutes * i), v) for i, v in enumerate(values)]
+
+
+def unix(moment):
+    return int(moment.replace(tzinfo=timezone.utc).timestamp())
 
 
 class TestDownsample:
@@ -105,6 +112,110 @@ class TestStats:
         jumpy = _stats(readings(60, 120, 180))["cv"]
 
         assert jumpy > steady
+
+
+class TestDaily:
+    """Подневная сводка месяца: сутки нарезаются по местной полуночи.
+
+    ``BASE`` из conftest — ровно местная полночь Белграда, поэтому окна,
+    кратные суткам от него, ложатся на календарные дни без обрезков.
+    """
+
+    def full_day(self, start, hours=24):
+        """Замер каждые 5 минут — номинальная плотность сенсора."""
+
+        return [
+            (start + timedelta(minutes=5 * i), 120.0) for i in range(int(hours * 12))
+        ]
+
+    def test_the_array_is_dense_an_empty_day_stays_in_it(self):
+        # Три дня, средний — без единого показания: сенсор был снят.
+        data = self.full_day(BASE) + self.full_day(BASE + timedelta(days=2))
+
+        days = _daily(data, BASE + timedelta(days=3), timedelta(days=3))
+
+        assert len(days) == 3
+        assert days[0]["partial"] is False
+        # Пустой день — только границы и нулевой счёт, без выдуманных сводок.
+        assert days[1] == {
+            "start": unix(BASE + timedelta(days=1)),
+            "end": unix(BASE + timedelta(days=2)),
+            "count": 0,
+        }
+
+    def test_window_edges_clip_the_first_and_last_day(self):
+        now = BASE + timedelta(hours=12)
+        span = timedelta(days=2)
+        data = [(now - span + timedelta(minutes=5 * i), 120.0) for i in range(2 * 288)]
+
+        days = _daily(data, now, span)
+
+        assert len(days) == 3
+        # start/end — наблюдаемый кусок суток, а не календарные границы.
+        assert days[0]["start"] == unix(now - span)
+        assert days[0]["partial"] is True
+        assert days[1]["partial"] is False
+        assert days[-1]["end"] == unix(now)
+        assert days[-1]["partial"] is True
+
+    def test_thin_coverage_marks_a_full_day_partial(self):
+        # Календарные сутки целиком в окне, но замеров — треть ожидания.
+        data = [(BASE + timedelta(minutes=5 * i), 120.0) for i in range(100)]
+
+        day = _daily(data, BASE + timedelta(days=1), timedelta(days=1))[0]
+
+        assert day["coverage"] < 100 * DAY_MIN_COVERAGE
+        assert day["partial"] is True
+
+    def test_a_25_hour_day_is_not_partial(self):
+        # Белград, 25 октября 2026 — 25-часовые сутки перехода на зимнее
+        # время. now — местная полночь 26-го (23:00 UTC: зона уже UTC+1),
+        # окно в 49 часов начинается ровно в местную полночь 24-го.
+        now = datetime(2026, 10, 25, 23, 0, 0)
+        span = timedelta(hours=49)
+        data = [(now - span + timedelta(minutes=5 * i), 120.0) for i in range(49 * 12)]
+
+        days = _daily(data, now, span)
+
+        assert len(days) == 2
+        long_day = days[1]
+        assert long_day["end"] - long_day["start"] == 25 * 3600
+        # Ожидание растянуто по фактической длине суток: полный длинный день
+        # не наказывается пометкой partial за то, что он длинный.
+        assert long_day["count"] == 300
+        assert long_day["coverage"] == 100
+        assert long_day["partial"] is False
+
+    def test_a_single_reading_day_collapses_its_percentiles(self):
+        # Смена сенсора: один замер за сутки. День виден, но не притворяется
+        # разбросом — p25 = p50 = p75.
+        data = [(BASE + timedelta(hours=12), 137.0)]
+
+        day = _daily(data, BASE + timedelta(days=1), timedelta(days=1))[0]
+
+        assert day["p25"] == day["p50"] == day["p75"] == 137
+        assert day["count"] == 1
+        assert day["partial"] is True
+
+    def test_a_day_entry_carries_stats_and_percentiles(self):
+        day = _daily(self.full_day(BASE), BASE + timedelta(days=1), timedelta(days=1))[0]
+
+        for key in (
+            "start", "end", "count", "avg", "min", "max",
+            "tir", "below", "above", "cv",
+            "p25", "p50", "p75", "coverage", "partial",
+        ):
+            assert key in day, key
+
+    def test_snapshot_names_the_series_kinds(self):
+        # Старая страница на новом снимке и новая на старом различаются по
+        # kind — он обязан быть у всех серий.
+        snapshot = build_snapshot(readings(120, 130), [], BASE + timedelta(hours=1))
+
+        assert snapshot["series"]["day"]["kind"] == "points"
+        assert snapshot["series"]["week"]["kind"] == "points"
+        assert snapshot["series"]["month"]["kind"] == "daily"
+        assert "points" not in snapshot["series"]["month"]
 
 
 class TestTrend:

@@ -10,10 +10,10 @@ sensor serial, and none of that belongs on a public URL.
 import json
 import os
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 from analysis import analyse
-from daytime import DISPLAY_TZ
+from daytime import DISPLAY_TZ, _percentile, _zone
 from database.queries import (
     journal_since,
     last_readings,
@@ -39,10 +39,12 @@ TARGET_HIGH_MGDL = 180
 # Окно и шаг прореживания на период. Сырьё идёт с шагом 5 минут, но 30 дней
 # в таком виде — это 8600 точек: график столько не покажет, а вес страницы
 # вырастет на порядок. Статистика при этом всегда считается по сырым данным.
+# У месяца шага нет: он не прореживается, а сводится по дням — даже прореженная
+# ломаная на месячном окне читается как пила, а не как течение сахара.
 RANGES = {
     "day": (timedelta(days=1), 5),
     "week": (timedelta(days=7), 15),
-    "month": (timedelta(days=30), 60),
+    "month": (timedelta(days=30), None),
 }
 
 # Окно для оценки тренда. Libre рисует стрелку по последним ~15 минутам;
@@ -57,6 +59,10 @@ TREND_WINDOW = timedelta(minutes=15)
 # осторожная оценка, а выдумка.
 GMI_WINDOW = timedelta(days=14)
 GMI_MIN_COVERAGE = 0.7
+
+# Ниже этой доли ожидаемых замеров день в подневной сводке помечается неполным:
+# медиана по горстке точек выглядит как медиана по суткам, а означает другое.
+DAY_MIN_COVERAGE = 0.5
 
 # Номинальный шаг CGM: 288 измерений в сутки. Libre 3 отдаёт чаще, так что
 # порог покрытия получается консервативным — и хорошо.
@@ -91,6 +97,18 @@ def _downsample(
     ]
 
 
+def _expected_readings(duration: timedelta) -> float:
+    """Сколько замеров номинально должно прийти за ``duration``.
+
+    Одна арифметика покрытия на весь модуль: «покрытие» обязано означать
+    буквально одно и то же в GMI, подневной сводке и сравнении периодов, а
+    три рукописных варианта (``* days``, ``/ 86400``, деление timedelta)
+    разошлись бы при первом же неполном дне.
+    """
+
+    return CGM_READINGS_PER_DAY * (duration / timedelta(days=1))
+
+
 def _stats(readings: list[tuple[datetime, float]]) -> dict | None:
     """Summarise a window: average, time in range, variability, GMI."""
 
@@ -121,6 +139,71 @@ def _stats(readings: list[tuple[datetime, float]]) -> dict | None:
     }
 
 
+def _daily(
+    readings: list[tuple[datetime, float]], now: datetime, span: timedelta
+) -> list[dict]:
+    """Summarise every local day the window touches, empty days included.
+
+    Массив плотный: сутки без единого показания попадают в него с ``count: 0``.
+    Иначе страница не отличила бы «сенсор был снят» от «таких суток не было»,
+    и пропавший день молча сдвинул бы соседей друг к другу.
+
+    ``start``/``end`` — unix-секунды наблюдаемого куска суток, обрезанного
+    окном и «сейчас», а не календарные границы: сегодняшняя коробка стоит в
+    середине прожитой части дня, а не обещает вечер, которого ещё не было.
+    """
+
+    zone = _zone()
+    window_start = (now - span).replace(tzinfo=timezone.utc)
+    window_end = now.replace(tzinfo=timezone.utc)
+
+    by_day: dict[date, list[tuple[datetime, float]]] = {}
+    for item in readings:
+        local = item[0].replace(tzinfo=timezone.utc).astimezone(zone)
+        by_day.setdefault(local.date(), []).append(item)
+
+    days = []
+    day = window_start.astimezone(zone).date()
+    while True:
+        # Полночь берётся из зоны, а не прибавлением 24 часов: сутки перехода
+        # на летнее и зимнее время длятся 23 и 25 часов.
+        midnight = datetime.combine(day, time(), tzinfo=zone).astimezone(timezone.utc)
+        if midnight >= window_end:
+            break
+        next_midnight = datetime.combine(
+            day + timedelta(days=1), time(), tzinfo=zone
+        ).astimezone(timezone.utc)
+
+        start = max(midnight, window_start)
+        end = min(next_midnight, window_end)
+        clipped = start > midnight or end < next_midnight
+
+        day_readings = by_day.get(day, [])
+        if not day_readings:
+            days.append({"start": int(start.timestamp()), "end": int(end.timestamp()), "count": 0})
+        else:
+            values = [mgdl for _, mgdl in day_readings]
+            # Ожидание — по фактической длине наблюдаемого куска: полный
+            # 25-часовой день перехода не помечается неполным.
+            coverage = len(values) / _expected_readings(end - start)
+            days.append(
+                {
+                    "start": int(start.timestamp()),
+                    "end": int(end.timestamp()),
+                    **_stats(day_readings),
+                    "p25": round(_percentile(values, 25)),
+                    "p50": round(_percentile(values, 50)),
+                    "p75": round(_percentile(values, 75)),
+                    "coverage": round(100 * coverage),
+                    "partial": clipped or coverage < DAY_MIN_COVERAGE,
+                }
+            )
+
+        day += timedelta(days=1)
+
+    return days
+
+
 def _gmi(readings: list[tuple[datetime, float]], now: datetime) -> dict | None:
     """Glucose Management Indicator over its own fortnight, or nothing.
 
@@ -133,8 +216,7 @@ def _gmi(readings: list[tuple[datetime, float]], now: datetime) -> dict | None:
     if not window:
         return None
 
-    expected = CGM_READINGS_PER_DAY * GMI_WINDOW.days
-    coverage = len(window) / expected
+    coverage = len(window) / _expected_readings(GMI_WINDOW)
     if coverage < GMI_MIN_COVERAGE:
         return None
 
@@ -221,7 +303,14 @@ def build_snapshot(
     series, stats = {}, {}
     for name, (span, step_minutes) in RANGES.items():
         subset = [item for item in readings if item[0] >= now - span]
-        series[name] = {"step": step_minutes, "points": _downsample(subset, step_minutes)}
+        if step_minutes is None:
+            series[name] = {"kind": "daily", "days": _daily(subset, now, span)}
+        else:
+            series[name] = {
+                "kind": "points",
+                "step": step_minutes,
+                "points": _downsample(subset, step_minutes),
+            }
         stats[name] = _stats(subset)
 
     meals = [

@@ -56,6 +56,15 @@ const COLUMN_WIDTH = 7;
 // читаются как одно: «45» и «60» в паре пикселей друг от друга — это «4560».
 const LABEL_GAP = 4;
 
+/* Дневные коробки месячного вида. Ширина одна на все дни: коробка — карточка
+   суток, а не их длительность, и 25-часовые сутки перехода на зимнее время не
+   должны выглядеть толще соседей. Заливка полупрозрачная, чтобы засечка
+   медианы читалась и поверх коробки собственного цвета. */
+const BOX_SHARE = 0.6;
+const BOX_MIN_WIDTH = 3;
+const BOX_MAX_WIDTH = 22;
+const BOX_ALPHA = 0.45;
+
 let snapshot = null;
 let activeRange = "day";
 
@@ -433,24 +442,35 @@ function renderStats() {
 /* ── График ────────────────────────────────────────────────────────── */
 
 /* Что «видно» на графике, словами: сам холст для скринридера пуст, а
-   пересказывать сотни точек бессмысленно — нужен итог. */
-function chartDescription(points) {
+   пересказывать сотни точек бессмысленно — нужен итог. Числа окна — из
+   stats, то есть по сырым замерам, а не по нарисованной сводке. */
+function chartDescription(daily, hasData) {
     const period = RANGE_LABELS[activeRange];
-    if (!points.length) return `График глюкозы за ${period}: данных нет`;
+    if (!hasData) return `График глюкозы за ${period}: данных нет`;
 
     const stats = snapshot.stats[activeRange];
-    if (!stats) return `График глюкозы за ${period}: ${points.length} точек`;
+    if (!stats) return `График глюкозы за ${period}`;
 
-    return (
-        `График глюкозы за ${period}: ${stats.count} измерений, ` +
+    const summary =
+        `${stats.count} измерений, ` +
         `среднее ${formatMmol(stats.avg)} ммоль/л, ` +
         `от ${formatMmol(stats.min)} до ${formatMmol(stats.max)}, ` +
-        `в целевом диапазоне ${stats.tir.toLocaleString("ru-RU")} процентов времени`
-    );
+        `в целевом диапазоне ${stats.tir.toLocaleString("ru-RU")} процентов времени`;
+
+    if (daily) {
+        return (
+            `График глюкозы за ${period} по дням: коробка каждого дня — ` +
+            `разброс от 25-го до 75-го перцентиля, засечка — медиана. ${summary}`
+        );
+    }
+
+    return `График глюкозы за ${period}: ${summary}`;
 }
 
-function niceScale(points) {
-    const values = points.map((p) => toMmol(p[1]));
+/* Принимает готовые значения в ммоль/л, а не точки: у ломаной это сами замеры,
+   у дневного вида — края коробок, у профиля дня — края коридора. Общая форма
+   и есть причина: рядов с разной геометрией стало больше одного. */
+function niceScale(values) {
     // Нижняя и верхняя границы целевого диапазона всегда в кадре: без этого
     // ровный график «висел бы» без опоры, и зона не читалась бы.
     const min = Math.min(3, ...values);
@@ -588,14 +608,25 @@ function formatAmount(value) {
     return value.toLocaleString("ru-RU", { maximumFractionDigits: 1 });
 }
 
+/* Порядок слоёв — контракт, по которому в каркас вставляются отрисовщики:
+   профиль обычного дня → полоса нормы → сетка → подписи осей → кривая с
+   отсечениями по зонам (или дневные коробки) → одиночные точки → дорожки
+   событий → перекрестие. Кто нарисован раньше, тот лежит ниже. */
 function drawChart() {
     const series = snapshot.series[activeRange];
-    const points = series.points;
-    const lanes = eventLanes();
+    // Снимок прежнего сборщика приходит без kind: тогда рисуется прежняя
+    // ломаная, ни одной ошибки в консоли.
+    const daily = series.kind === "daily";
+    const points = daily ? [] : series.points;
+    const days = daily ? series.days : [];
+    const lanes = daily ? [] : eventLanes();
 
-    els.chartEmpty.hidden = points.length > 0;
-    els.canvas.setAttribute("aria-label", chartDescription(points));
-    renderLegend(lanes);
+    // Один предикат «есть ли что рисовать» на оба ранних выхода: у дневного
+    // вида points не существует вовсе, и points.length здесь бы падал.
+    const hasData = daily ? days.some((day) => day.count > 0) : points.length > 0;
+
+    els.chartEmpty.hidden = hasData;
+    els.canvas.setAttribute("aria-label", chartDescription(daily, hasData));
 
     const canvas = els.canvas;
     // Холст растёт вместе с дорожками. Подписи оси обязаны остаться внутри:
@@ -613,11 +644,28 @@ function drawChart() {
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, width, height);
 
-    if (!points.length) {
+    if (!hasData) {
+        // Легенда — до выхода: над надписью «данных нет» она не вправе
+        // обещать ни одного ряда.
+        renderLegend([]);
         geometry = null;
         hideTip();
         return;
     }
+
+    // Состав легенды собирает рисующая ветка — из нарисованного, а не из
+    // snapshot.events: иначе месячное окно обещало бы «Углеводы» на графике
+    // без единого столбика.
+    const legendItems = [];
+    if (!daily && lanes.length) {
+        legendItems.push({ ...SERIES.glucose, line: true });
+        for (const kind of [SERIES.meal, SERIES.insulin, SERIES.basal]) {
+            if (lanes.some((lane) => lane.bars.some((bar) => bar.series === kind))) {
+                legendItems.push(kind);
+            }
+        }
+    }
+    renderLegend(legendItems);
 
     // bottom с запасом на вторую строку подписи — дату на смене дня.
     const padding = { top: 12, right: 12, bottom: 38, left: 38 };
@@ -625,7 +673,11 @@ function drawChart() {
     const lanesHeight = lanes.length * (LANE_HEIGHT + LANE_GAP);
     const plotHeight = height - padding.top - padding.bottom - lanesHeight;
 
-    const scale = niceScale(points);
+    const scale = niceScale(
+        daily
+            ? days.filter((day) => day.count).flatMap((day) => [toMmol(day.p25), toMmol(day.p75)])
+            : points.map((p) => toMmol(p[1]))
+    );
     const now = snapshot.generated_at;
     const spanSeconds = { day: 86400, week: 7 * 86400, month: 30 * 86400 }[activeRange];
     const startTime = now - spanSeconds;
@@ -637,7 +689,6 @@ function drawChart() {
     const styles = getComputedStyle(document.documentElement);
 
     const muted = readColor("--muted", "#8a90a6");
-    const accent = readColor("--accent", "#7eb8f7");
     const inRange = readColor("--in-range", "#7efcb0");
     const axisAlpha = readNumber("--axis-alpha", 0.85);
 
@@ -718,8 +769,59 @@ function drawChart() {
     }
     ctx.globalAlpha = 1;
 
-    // Линия. Разрыв длиннее трёх шагов означает, что сенсор молчал —
-    // соединять такие точки нельзя, иначе пропуск выглядит как ровный тренд.
+    if (daily) {
+        drawDailyBoxes(ctx, days, x, y);
+    } else {
+        drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeight);
+    }
+
+    // Дорожки событий — под графиком, над подписями оси.
+    const laneBoxes = lanes.map((lane, index) => ({
+        lane,
+        left: padding.left,
+        right: width - padding.right,
+        top: padding.top + plotHeight + LANE_GAP + index * (LANE_HEIGHT + LANE_GAP),
+    }));
+
+    for (const box of laneBoxes) {
+        drawLane(ctx, box.lane, box, x, muted, axisAlpha);
+    }
+
+    // Геометрия нужна обработчику наведения: пересчитывать её на каждое
+    // движение мыши — значит дублировать всю раскладку и однажды разойтись
+    // с тем, что нарисовано.
+    geometry = {
+        kind: daily ? "daily" : "points",
+        points,
+        days,
+        // Ось времени остаётся линейной, поэтому hoverAt не меняется; день
+        // ищется по границам его наблюдаемого куска.
+        dayAt(t) {
+            const found = days.find((day) => t >= day.start && t < day.end);
+            const last = days[days.length - 1];
+            return found || (last && t === last.end ? last : null);
+        },
+        laneBoxes,
+        x,
+        y,
+        startTime,
+        spanSeconds,
+        plotTop: padding.top,
+        plotBottom: padding.top + plotHeight,
+        left: padding.left,
+        right: width - padding.right,
+        bottom: height - padding.bottom,
+    };
+
+    drawCrosshair(ctx, muted);
+}
+
+/* Тело кривой day- и week-окон: ломаная с отсечениями по зонам.
+   gapSeconds живёт здесь, а не в каркасе: у дневного вида series.step не
+   существует, NaN в сравнениях давал бы false и молча гасил все разрывы. */
+function drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeight) {
+    // Разрыв длиннее трёх шагов означает, что сенсор молчал — соединять такие
+    // точки нельзя, иначе пропуск выглядит как ровный тренд.
     const gapSeconds = series.step * 60 * 3;
 
     const traceSeries = () => {
@@ -740,7 +842,7 @@ function drawChart() {
         ctx.stroke();
     };
 
-    ctx.strokeStyle = accent;
+    ctx.strokeStyle = readColor("--accent", "#7eb8f7");
     ctx.lineWidth = 1.75;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
@@ -802,43 +904,82 @@ function drawChart() {
             ctx.fill();
         }
     }
+}
 
-    // Дорожки событий — под графиком, над подписями оси.
-    const laneBoxes = lanes.map((lane, index) => ({
-        lane,
-        left: padding.left,
-        right: width - padding.right,
-        top: padding.top + plotHeight + LANE_GAP + index * (LANE_HEIGHT + LANE_GAP),
-    }));
+/* Подневная форма месяца: коробка p25–p75 с засечкой медианы на каждый день.
+   Коробка, а не столбик min–max, нарочно: час прогрева сенсора по 500 мг/дл
+   уходит в p90+ и не двигает ни p75, ни медиану. */
+function drawDailyBoxes(ctx, days, x, y) {
+    // Ширина одна на все дни — от номинальных суток, а не от фактических:
+    // 25-часовой день перехода не должен выглядеть толще соседей.
+    const dayWidth = x(86400) - x(0);
+    const width = Math.min(BOX_MAX_WIDTH, Math.max(BOX_MIN_WIDTH, dayWidth * BOX_SHARE));
 
-    for (const box of laneBoxes) {
-        drawLane(ctx, box.lane, box, x, muted, axisAlpha);
+    const yLow = y(toMmol(snapshot.target.low));
+    const yHigh = y(toMmol(snapshot.target.high));
+
+    for (const day of days) {
+        if (!day.count) continue;
+
+        // Середина наблюдаемого куска: сегодняшняя коробка стоит в центре
+        // прожитой части дня, то есть левее правого края холста.
+        const centre = (x(day.start) + x(day.end)) / 2;
+        const left = centre - width / 2;
+        const top = y(toMmol(day.p75));
+        const bottom = y(toMmol(day.p25));
+
+        // День с одним замером: p25 = p50 = p75, высота коробки ноль. Засечка
+        // рисуется всегда, коробка — только когда её видно: день остаётся на
+        // графике, но не притворяется разбросом.
+        if (bottom - top >= 1) {
+            /* Раскраска — пересечением с теми же полосами, которыми красится
+               ломаная: граница цвета по-прежнему и есть порог. Пустые и
+               отрицательные пересечения не рисуются — день целиком ниже
+               нижнего порога выходит одноцветным, без полос-фантомов. */
+            const parts = [
+                [top, Math.min(bottom, yHigh), readColor("--hyper", "#ffd166")],
+                [Math.max(top, yHigh), Math.min(bottom, yLow), readColor("--accent", "#7eb8f7")],
+                [Math.max(top, yLow), bottom, readColor("--hypo", "#ff5b5b")],
+            ];
+
+            ctx.globalAlpha = BOX_ALPHA;
+            for (const [from, to, color] of parts) {
+                if (to - from <= 0) continue;
+                ctx.fillStyle = color;
+                ctx.fillRect(left, from, width, to - from);
+            }
+            ctx.globalAlpha = 1;
+        }
+
+        // Засечка целиком цветом своей зоны — как одиночная точка на кривой:
+        // резать её по порогу не во что, она лежит по одну его сторону.
+        ctx.fillStyle = readingColor(day.p50);
+        ctx.fillRect(left, y(toMmol(day.p50)) - 0.75, width, 1.5);
     }
-
-    // Геометрия нужна обработчику наведения: пересчитывать её на каждое
-    // движение мыши — значит дублировать всю раскладку и однажды разойтись
-    // с тем, что нарисовано.
-    geometry = {
-        points,
-        laneBoxes,
-        x,
-        y,
-        startTime,
-        spanSeconds,
-        plotTop: padding.top,
-        plotBottom: padding.top + plotHeight,
-        left: padding.left,
-        right: width - padding.right,
-        bottom: height - padding.bottom,
-    };
-
-    drawCrosshair(ctx, muted);
 }
 
 /* Вертикаль через график и обе дорожки: она связывает столбик еды с точкой на
-   кривой, ради чего всё это и рисуется рядом. */
+   кривой, ради чего всё это и рисуется рядом. У дневного вида вместо вертикали
+   и кольца — подсветка слота суток: точки, вокруг которой рисовать кольцо,
+   там нет. */
 function drawCrosshair(ctx, muted) {
     if (hoverTime === null || !geometry) return;
+
+    if (geometry.kind === "daily") {
+        const day = geometry.dayAt(hoverTime);
+        if (!day || !day.count) return;
+
+        ctx.fillStyle = muted;
+        ctx.globalAlpha = 0.08;
+        ctx.fillRect(
+            geometry.x(day.start),
+            geometry.plotTop,
+            geometry.x(day.end) - geometry.x(day.start),
+            geometry.plotBottom - geometry.plotTop
+        );
+        ctx.globalAlpha = 1;
+        return;
+    }
 
     const px = Math.round(geometry.x(hoverTime)) + 0.5;
     if (px < geometry.left || px > geometry.right) return;
@@ -894,21 +1035,18 @@ function legendItem(series) {
 
 /* Легенда есть всегда, когда рядов больше одного: опознавать их по цвету на
    глаз — единственный канал, который отказывает и при дальтонизме, и на
-   распечатке. Один ряд легенды не требует — его называет заголовок. */
-function renderLegend(lanes) {
-    if (!lanes.length) {
+   распечатке. Один ряд легенды не требует — его называет заголовок.
+
+   Состав приходит от рисующей ветки готовым списком: легенда не заглядывает
+   в снимок сама, чтобы не обещать ряды, которых на холсте нет. */
+function renderLegend(items) {
+    if (items.length < 2) {
         els.legend.hidden = true;
         els.legend.replaceChildren();
         return;
     }
 
-    const events = snapshot.events || {};
-    const shown = [{ ...SERIES.glucose, line: true }];
-    if ((events.meals || []).length) shown.push(SERIES.meal);
-    if ((events.bolus || []).length) shown.push(SERIES.insulin);
-    if ((events.basal || []).length) shown.push(SERIES.basal);
-
-    els.legend.replaceChildren(...shown.map(legendItem));
+    els.legend.replaceChildren(...items.map(legendItem));
     els.legend.hidden = false;
 }
 
@@ -946,6 +1084,7 @@ function tipRow(series, text) {
 
 function showTip(clientX) {
     if (hoverTime === null || !geometry) return hideTip();
+    if (geometry.kind === "daily") return showDayTip(clientX);
 
     const point = nearestPoint(hoverTime);
     const rows = [];
@@ -979,10 +1118,53 @@ function showTip(clientX) {
     })}, ${TIMEZONE_LABEL}`;
 
     els.tip.replaceChildren(time, ...rows);
+    placeTip(clientX);
+}
+
+/* Подсказка дневного вида: не мгновение, а сутки. Медиана с меткой цвета
+   зоны, разброс середины, доля времени в диапазоне — те же числа, какими
+   день покрашен на холсте, только словами. */
+function showDayTip(clientX) {
+    const day = geometry.dayAt(hoverTime);
+    if (!day || !day.count) return hideTip();
+
+    const time = document.createElement("p");
+    time.className = "tip__time";
+    // Дата — по зоне снимка, и зона названа вслух: «5 сентября» без города в
+    // поездке значит два разных дня.
+    time.textContent = `${new Date(day.start * 1000).toLocaleDateString("ru-RU", {
+        timeZone: displayTimezone(),
+        day: "numeric",
+        month: "long",
+    })}, ${TIMEZONE_LABEL}`;
+
+    // Метка медианы — тем же цветом, что её засечка на холсте.
+    const median = tipRow(SERIES.glucose, `${formatMmol(day.p50)} ${SERIES.glucose.unit}`);
+    const key = median.querySelector(".tip__key");
+    key.style.background = readingColor(day.p50);
+    key.style.color = readingColor(day.p50);
+
+    const spread = document.createElement("p");
+    spread.className = "tip__row";
+    spread.textContent = `25–75 %: ${formatMmol(day.p25)} – ${formatMmol(day.p75)}`;
+
+    const tir = document.createElement("p");
+    tir.className = "tip__row";
+    tir.textContent = `в диапазоне ${percent(day.tir)}`;
+
+    const note = document.createElement("p");
+    note.className = "tip__note";
+    note.textContent = `ниже ${percent(day.below)} · выше ${percent(day.above)}`;
+
+    els.tip.replaceChildren(time, median, spread, tir, note);
+    placeTip(clientX);
+}
+
+/* Позиция считается от карточки, а не от холста: у карточки есть внутренний
+   отступ, и без поправки подсказка уезжает на его ширину. */
+function placeTip(clientX) {
     els.tip.hidden = false;
 
-    // Позиция считается от карточки, а не от холста: у карточки есть внутренний
-    // отступ, и без поправки подсказка уезжает на его ширину.
     const chart = els.chart.getBoundingClientRect();
     const canvas = els.canvas.getBoundingClientRect();
     const width = els.tip.offsetWidth;
