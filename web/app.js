@@ -1750,10 +1750,7 @@ function textCell(text) {
 
 /* Приём, записанный в несколько заходов, разбирается как одна еда, а на
    дорожке главного графика его записи стоят порознь. Знак суммы объясняет
-   расхождение и под наведением перечисляет заходы. Живёт он в колонке
-   «Запись» вместе со знаками доверия — в ячейке углеводов любая пометка
-   сдвигала бы числа друг относительно друга, ломая то самое выравнивание,
-   ради которого колонка набрана моноширинными цифрами. */
+   расхождение и под наведением перечисляет заходы. */
 /* Уверенность в числе — два разных факта, и показывать нужно оба. Чем число
    получено, шкала не заменяет: «взвешено» и «по фото, прогоны сошлись» одинаково
    надёжны сейчас, но исправлять по ним разное — оценку стоит перевесить, весы
@@ -1780,85 +1777,85 @@ const TRUST_CONFIDENCE = {
 
 const TRUST_DOTS = 3;
 
-/* Колонка «Запись»: чем число углеводов получено, насколько ему верить и не
-   сложено ли оно из нескольких заходов. Знаки стояли в ячейке углеводов перед
-   числом — и делали колонку чисел рваной по ширине; своя колонка возвращает
-   числам ровный край, ради которого они набраны моноширинными. */
+/* Колонка «Запись»: чем число углеводов получено и насколько ему верить.
+   Пара знаков стояла в ячейке углеводов перед числом — и делала колонку
+   чисел рваной по ширине; своя колонка возвращает числам ровный край.
+   Σ составного приёма при этом остаётся у самого числа: он говорит о числе,
+   а не о происхождении записи. */
 function recordCell(meal) {
     const cell = document.createElement("td");
-
-    const marks = [];
-    const spoken = [];
 
     const trust = meal.trust;
     const origin = trust ? TRUST_ORIGIN[trust.origin] : null;
     const confidence = trust ? TRUST_CONFIDENCE[trust.dots] : null;
+    if (!origin && !confidence) return cell;
 
-    if (origin || confidence) {
-        // Обе половины произносятся одной фразой: «со слов, наугад». Пустая
-        // половина из неё выпадает — способ без ответа человека и наоборот.
-        const phrase = [origin?.spoken, confidence].filter(Boolean).join(", ");
+    // Обе половины произносятся одной фразой: «со слов, наугад». Пустая
+    // половина из неё выпадает — способ без ответа человека и наоборот.
+    const phrase = [origin?.spoken, confidence].filter(Boolean).join(", ");
 
-        const mark = document.createElement("span");
-        mark.className = `trust trust--${trust.origin || "unknown"}`;
-        mark.title = phrase;
-        mark.setAttribute("aria-hidden", "true");
+    const mark = document.createElement("span");
+    mark.className = `trust trust--${trust.origin || "unknown"}`;
+    mark.title = phrase;
+    mark.setAttribute("aria-hidden", "true");
 
-        // Две части, а не одна строка: источник и шкала набраны разным
-        // кеглем — ⚖︎ и ✎ рисуются заметно мельче точек при одном размере.
-        if (origin) {
-            const source = document.createElement("span");
-            source.className = "trust__source";
-            source.textContent = origin.mark;
-            mark.append(source);
-        }
-
-        if (confidence) {
-            const dots = document.createElement("span");
-            dots.className = "trust__dots";
-            dots.textContent = "●".repeat(trust.dots) + "○".repeat(TRUST_DOTS - trust.dots);
-            mark.append(dots);
-        }
-
-        marks.push(mark);
-        spoken.push(phrase);
+    // Две части, а не одна строка: источник и шкала набраны разным кеглем —
+    // ⚖︎ и ✎ рисуются заметно мельче точек при одном размере.
+    if (origin) {
+        const source = document.createElement("span");
+        source.className = "trust__source";
+        source.textContent = origin.mark;
+        mark.append(source);
     }
 
-    if (meal.parts) {
-        const sittings = meal.parts
-            .map(([seconds, carbs]) => {
-                const at = new Date(seconds * 1000).toLocaleTimeString("ru-RU", {
-                    timeZone: TIMEZONE,
-                    hour: "2-digit",
-                    minute: "2-digit",
-                });
-                return `${at} — ${formatAmount(carbs)} г`;
-            })
-            .join(", ");
-
-        // Знак — только для глаз: Σ ничего не сокращает, так что <abbr>
-        // здесь ни при чём, а озвучивать «греческая заглавная сигма» незачем.
-        const mark = document.createElement("span");
-        mark.className = "parts";
-        mark.textContent = "Σ";
-        mark.title = sittings;
-        mark.setAttribute("aria-hidden", "true");
-
-        marks.push(mark);
-        // Состав словами: title не показывается на телефоне и не читается
-        // вслух, а без него знак остаётся необъяснённым.
-        spoken.push(`сложено из записей: ${sittings}`);
+    if (confidence) {
+        const dots = document.createElement("span");
+        dots.className = "trust__dots";
+        dots.textContent = "●".repeat(trust.dots) + "○".repeat(TRUST_DOTS - trust.dots);
+        mark.append(dots);
     }
 
-    marks.forEach((mark, index) => cell.append(index ? " " : "", mark));
+    const said = document.createElement("span");
+    said.className = "visually-hidden";
+    said.textContent = phrase;
 
-    if (spoken.length) {
-        const said = document.createElement("span");
-        said.className = "visually-hidden";
-        said.textContent = spoken.join("; ");
-        cell.append(said);
-    }
+    cell.append(mark, said);
+    return cell;
+}
 
+function carbsCell(meal) {
+    const cell = textCell(`${formatAmount(meal.carbs)} г`);
+    if (!meal.parts) return cell;
+
+    const sittings = meal.parts
+        .map(([seconds, carbs]) => {
+            const at = new Date(seconds * 1000).toLocaleTimeString("ru-RU", {
+                timeZone: TIMEZONE,
+                hour: "2-digit",
+                minute: "2-digit",
+            });
+            return `${at} — ${formatAmount(carbs)} г`;
+        })
+        .join(", ");
+
+    // Знак — только для глаз: Σ ничего не сокращает, так что <abbr> здесь ни
+    // при чём, а озвучивать «греческая заглавная сигма» перед числом незачем.
+    // Стоит он перед числом: колонка выровнена по правому краю, и хвостовая
+    // пометка сдвигала бы числа друг относительно друга.
+    const mark = document.createElement("span");
+    mark.className = "parts";
+    mark.textContent = "Σ";
+    mark.title = sittings;
+    mark.setAttribute("aria-hidden", "true");
+
+    // Состав словами: title не показывается на телефоне и не читается вслух,
+    // а без него знак остаётся необъяснённым.
+    const spoken = document.createElement("span");
+    spoken.className = "visually-hidden";
+    spoken.textContent = `, сложено из записей: ${sittings}`;
+
+    cell.prepend(mark, " ");
+    cell.append(spoken);
     return cell;
 }
 
@@ -1924,7 +1921,7 @@ function renderMeals(analysis) {
         row.append(
             when,
             recordCell(meal),
-            textCell(`${formatAmount(meal.carbs)} г`),
+            carbsCell(meal),
             textCell(formatDose(meal.dose)),
             textCell(formatDelta(meal.rise)),
             textCell(`${meal.peak_min} мин`),
