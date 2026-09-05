@@ -20,10 +20,13 @@ import pytest
 
 from conftest import BASE
 from publish import (
+    COMPARE_MIN_AVG_MGDL,
+    COMPARE_MIN_TIR_PP,
     DAY_MIN_COVERAGE,
     TARGET_HIGH_MGDL,
     TARGET_LOW_MGDL,
     CGM_READINGS_PER_DAY,
+    _compare,
     _daily,
     _downsample,
     _events,
@@ -224,6 +227,132 @@ class TestDaily:
 
         assert "profile" in snapshot
         assert snapshot["profile"] is None
+
+
+class TestCompare:
+    """Окно против предыдущего такого же: дельты, оценка, значимость."""
+
+    WEEK = timedelta(days=7)
+
+    def dense_week(self, value, end=BASE):
+        """Неделя с полной плотностью замеров — покрытие заведомо выше порога."""
+
+        return [
+            (end - self.WEEK + timedelta(minutes=5 * i), value)
+            for i in range(7 * 288)
+        ]
+
+    def test_no_previous_period_names_the_reason(self):
+        compare = _compare(_stats(readings(120)), None, self.WEEK)
+
+        assert compare == {"days": 7, "count": 0, "reason": "no_data"}
+
+    def test_a_thin_previous_period_is_not_compared(self):
+        # «Предыдущего периода нет» и «в нём мало измерений» — разные фразы,
+        # и выбирает между ними сборщик, который знает счёт.
+        compare = _compare(_stats(readings(120)), _stats(readings(120, 130)), self.WEEK)
+
+        assert compare["reason"] == "thin"
+        assert compare["count"] == 2
+        assert "avg" not in compare and "tir" not in compare
+
+    def test_a_fallen_average_above_the_target_is_better(self):
+        current = _stats(self.dense_week(150.0))
+        previous = _stats(self.dense_week(160.0))
+
+        compare = _compare(current, previous, self.WEEK)
+
+        assert compare["reason"] is None
+        assert compare["avg"]["was"] == 160.0
+        assert compare["avg"]["delta"] == -10.0
+        assert compare["avg"]["better"] is True
+        assert compare["avg"]["significant"] is True
+
+    def test_an_average_fallen_below_the_target_gets_no_verdict(self):
+        # «Меньше — лучше» верно ровно до порога гипогликемии.
+        current = _stats(self.dense_week(65.0))
+        previous = _stats(self.dense_week(90.0))
+
+        assert _compare(current, previous, self.WEEK)["avg"]["better"] is None
+
+    def test_a_risen_average_gets_no_verdict_either(self):
+        # Подъём из гипогликемии — движение к цели, а не провал: оценка
+        # ставится только там, где она честная.
+        current = _stats(self.dense_week(160.0))
+        previous = _stats(self.dense_week(150.0))
+
+        assert _compare(current, previous, self.WEEK)["avg"]["better"] is None
+
+    def test_noise_is_published_but_not_significant(self):
+        current = _stats(self.dense_week(150.0))
+        previous = _stats(self.dense_week(150.0 + COMPARE_MIN_AVG_MGDL - 1))
+
+        compare = _compare(current, previous, self.WEEK)
+
+        assert compare["avg"]["significant"] is False
+        assert compare["tir"]["significant"] is False
+
+    def test_time_in_range_judges_both_directions(self):
+        # 150 — в диапазоне, 200 — выше него: сдвиг доли виден в обе стороны.
+        good = _stats(self.dense_week(150.0))
+        bad = _stats(
+            [
+                (moment, 200.0 if i % 2 else 150.0)
+                for i, (moment, _) in enumerate(self.dense_week(150.0))
+            ]
+        )
+
+        assert _compare(good, bad, self.WEEK)["tir"]["better"] is True
+        assert _compare(bad, good, self.WEEK)["tir"]["better"] is False
+        assert (
+            abs(_compare(good, bad, self.WEEK)["tir"]["delta"]) >= COMPARE_MIN_TIR_PP
+        )
+
+    def test_variability_is_not_compared(self):
+        # См. комментарий в _compare: при падающем среднем cv растёт чисто
+        # арифметически, и стрелка на нём врала бы.
+        current = _stats(self.dense_week(150.0))
+
+        compare = _compare(current, current, self.WEEK)
+
+        assert "cv" not in compare
+
+    def test_snapshot_compares_week_and_month_but_not_day(self):
+        data = [
+            (BASE - timedelta(days=15) + timedelta(minutes=5 * i), 120.0)
+            for i in range(15 * 288)
+        ]
+
+        snapshot = build_snapshot(data, [], BASE)
+
+        assert "prev" not in snapshot["stats"]["day"]
+        assert snapshot["stats"]["week"]["prev"]["reason"] is None
+        # Данных 15 дней: месяц есть, а предыдущего месяца ещё нет.
+        assert snapshot["stats"]["month"]["prev"]["reason"] == "no_data"
+
+
+class TestPublishWindow:
+    def test_publish_reads_a_doubled_window(self, tmp_path, monkeypatch):
+        """Единственная правка проводки во всех трёх задачах: publish обязан
+        читать два максимальных окна, иначе месячное сравнение навсегда
+        превращается в «сравнивать не с чем» — без единого внешнего признака.
+        """
+
+        captured = {}
+
+        def spy(since):
+            captured["since"] = since
+            return []
+
+        monkeypatch.setattr("publish.readings_since", spy)
+        monkeypatch.setattr("publish.journal_since", lambda since: [])
+        monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
+        monkeypatch.setattr("publish.last_readings", list)
+
+        publish(path=str(tmp_path / "data.json"), last_success=1.0)
+
+        window = datetime.now(timezone.utc).replace(tzinfo=None) - captured["since"]
+        assert abs(window - timedelta(days=60)) < timedelta(minutes=5)
 
 
 class TestTrend:

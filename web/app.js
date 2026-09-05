@@ -18,6 +18,15 @@ const COLLECTOR_SILENT_AFTER_MS = 15 * 60 * 1000;
 
 const RANGE_LABELS = { day: "24 часа", week: "7 дней", month: "30 дней" };
 
+/* Подпись строки сравнения: какой период взят за точку отсчёта. Сутки снимок
+   не сравнивает вовсе — день против вчерашнего на CGM в основном шум, — но
+   подпись выписана: выбор за сборщиком, а не за страницей. */
+const PREV_LABELS = {
+    day: "сутками раньше",
+    week: "неделей раньше",
+    month: "месяцем раньше",
+};
+
 /* Сколько приёмов показывать сразу и сколько добавлять кнопкой. Разбор читают
    с последнего, и десяти строк хватает на пару дней.
 
@@ -405,7 +414,7 @@ function renderNow() {
 
 /* ── Статистика ────────────────────────────────────────────────────── */
 
-function statCard(label, value, hint) {
+function statCard(label, value, hint, compare) {
     const card = document.createElement("div");
     card.className = "stat";
 
@@ -425,7 +434,54 @@ function statCard(label, value, hint) {
         hintEl.textContent = hint;
         card.append(hintEl);
     }
+
+    // Строка сравнения с предыдущим периодом — не у каждой карточки, поэтому
+    // четвёртый аргумент необязателен, а на объект statCard не переводится.
+    if (compare) {
+        const compareEl = document.createElement("p");
+        compareEl.className = compare.strong
+            ? "stat__delta stat__delta--strong"
+            : "stat__delta";
+        compareEl.textContent = compare.text;
+        card.append(compareEl);
+    }
     return card;
+}
+
+/* Строка «против предыдущего периода» для карточки. Причину отсутствия
+   сравнения называет сборщик, а не пустота на странице: «предыдущего периода
+   нет» и «в нём слишком мало измерений» — разные фразы, и выбирает между ними
+   тот, кто знает счёт. Направление несёт стрелка, оценку — слово, значимость —
+   сила цвета: новых токенов нет, зелёный и красный на этой странице заняты
+   зонами гликемии, и «лучше» рядом с ними читалось бы как «в диапазоне». */
+function compareRow(prev, key, formatDelta, formatWas) {
+    if (!prev) return null;
+
+    if (prev.reason) {
+        // Одной фразы достаточно — на первой карточке, а не на каждой.
+        if (key !== "tir") return null;
+        return {
+            text:
+                prev.reason === "no_data"
+                    ? "предыдущего периода нет"
+                    : "в предыдущем периоде слишком мало измерений",
+            strong: false,
+        };
+    }
+
+    const metric = prev[key];
+    if (!metric) return null;
+
+    const arrow = metric.delta > 0 ? "↑" : metric.delta < 0 ? "↓" : "→";
+    const verdict =
+        metric.better === true ? " лучше" : metric.better === false ? " хуже" : "";
+
+    return {
+        text: `${arrow} ${formatDelta(Math.abs(metric.delta))}${verdict} · ${
+            PREV_LABELS[activeRange]
+        } ${formatWas(metric.was)}`,
+        strong: metric.significant,
+    };
 }
 
 function renderStats() {
@@ -437,16 +493,25 @@ function renderStats() {
         return;
     }
 
+    const prev = stats.prev;
     const cards = [
         statCard("В целевом диапазоне", percent(stats.tir),
-            `ниже ${percent(stats.below)} · выше ${percent(stats.above)}`),
-        statCard("Среднее", formatMmol(stats.avg), "ммоль/л"),
+            `ниже ${percent(stats.below)} · выше ${percent(stats.above)}`,
+            compareRow(prev, "tir",
+                (delta) => `${formatAmount(delta)} %`,
+                (was) => percent(was))),
+        statCard("Среднее", formatMmol(stats.avg), "ммоль/л",
+            compareRow(prev, "avg",
+                (delta) => `${formatMmol(delta)} ммоль/л`,
+                (was) => formatMmol(was))),
         statCard("Разброс", `${formatMmol(stats.min)} – ${formatMmol(stats.max)}`, "ммоль/л, минимум и максимум"),
     ];
 
     // cv приходит null, если среднее нулевое. Случай почти невозможный
     // (сенсор не отдаёт значений ниже 40 мг/дл), но обращение к методу у null
     // уронило бы отрисовку целиком — вместе с графиком и текущим значением.
+    // Строки сравнения у вариабельности нет нарочно — см. _compare в
+    // publish.py: при падающем среднем cv растёт чисто арифметически.
     if (stats.cv !== null && stats.cv !== undefined) {
         cards.push(statCard("Вариабельность", percent(stats.cv),
             stats.cv <= 36 ? `стабильно, норма ≤ ${percent(36)}` : `выше нормы ≤ ${percent(36)}`));

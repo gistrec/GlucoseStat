@@ -65,6 +65,18 @@ GMI_MIN_COVERAGE = 0.7
 # медиана по горстке точек выглядит как медиана по суткам, а означает другое.
 DAY_MIN_COVERAGE = 0.5
 
+# Сравнение с предыдущим периодом. Порог покрытия свой, а не GMI_MIN_COVERAGE:
+# числа совпадают, но связывать два независимых решения одним нельзя — GMI
+# калиброван на своём пороге, а здесь порог отвечает лишь на вопрос «есть ли
+# с чем сравнивать».
+COMPARE_MIN_COVERAGE = 0.7
+
+# Пороги значимости. Среднее: 5 мг/дл ≈ 0,3 ммоль/л — меньше MARD сенсора,
+# то есть заведомый шум. Доля в диапазоне: пять процентных пунктов — примерно
+# час в сутки.
+COMPARE_MIN_AVG_MGDL = 5
+COMPARE_MIN_TIR_PP = 5
+
 # Номинальный шаг CGM: 288 измерений в сутки. Libre 3 отдаёт чаще, так что
 # порог покрытия получается консервативным — и хорошо.
 CGM_READINGS_PER_DAY = 288
@@ -231,6 +243,56 @@ def _gmi(readings: list[tuple[datetime, float]], now: datetime) -> dict | None:
     }
 
 
+def _compare(stats: dict, previous: dict | None, span: timedelta) -> dict:
+    """Окно против предыдущего такого же: дельты, оценка, значимость.
+
+    Когда сравнивать не с чем, публикуется причина, а не пустота: «предыдущего
+    периода нет» и «в нём слишком мало измерений» — разные фразы, и выбирать
+    между ними должен тот, кто знает счёт, то есть сборщик.
+
+    ``cv`` не сравнивается нарочно: вариабельность — это 100·σ/среднее, и при
+    падающем среднем с тем же разбросом она растёт чисто арифметически —
+    улучшающийся дневник получал бы «хуже». Стрелку, которую пришлось бы
+    оговаривать в подписи карточки, честнее не рисовать вовсе.
+    """
+
+    days = span // timedelta(days=1)
+    if previous is None:
+        return {"days": days, "count": 0, "reason": "no_data"}
+
+    if previous["count"] < COMPARE_MIN_COVERAGE * _expected_readings(span):
+        return {"days": days, "count": previous["count"], "reason": "thin"}
+
+    avg_delta = round(stats["avg"] - previous["avg"], 1)
+    tir_delta = round(stats["tir"] - previous["tir"], 1)
+
+    return {
+        "days": days,
+        "count": previous["count"],
+        "reason": None,
+        "avg": {
+            "was": previous["avg"],
+            "delta": avg_delta,
+            # «Меньше среднее — лучше» верно ровно до порога гипогликемии:
+            # среднее, упавшее ниже него, — не успех, а выросшее не обязано
+            # быть провалом (подъём из гипогликемии — движение к цели).
+            # Оценка ставится только там, где она честная; остальное — null.
+            # Порог — тот же TARGET_LOW_MGDL, которым красится кривая.
+            "better": (
+                True if avg_delta < 0 and stats["avg"] >= TARGET_LOW_MGDL else None
+            ),
+            "significant": abs(avg_delta) >= COMPARE_MIN_AVG_MGDL,
+        },
+        "tir": {
+            "was": previous["tir"],
+            "delta": tir_delta,
+            # Доле времени в диапазоне оба направления понятны без оговорок.
+            "better": tir_delta > 0 if tir_delta != 0 else None,
+            "significant": abs(tir_delta) >= COMPARE_MIN_TIR_PP,
+        },
+    }
+
+
 def _trend(readings: list[tuple[datetime, float]]) -> dict | None:
     """Latest reading plus its rate of change in mg/dL per minute."""
 
@@ -312,7 +374,25 @@ def build_snapshot(
                 "step": step_minutes,
                 "points": _downsample(subset, step_minutes),
             }
-        stats[name] = _stats(subset)
+
+        window_stats = _stats(subset)
+        # Сутки не сравниваются: день против вчерашнего на CGM — в основном
+        # шум, стрелка переворачивалась бы почти каждый день, а суточная
+        # панель открыта по умолчанию. Тот же довод у карточки GMI. Явная
+        # проверка на None обязательна: {**None} бросает TypeError, а месяц
+        # без данных — штатный случай.
+        if window_stats is None or name == "day":
+            stats[name] = window_stats
+        else:
+            # Граница справа строгая: текущий срез берёт >= now - span, и
+            # замер ровно на стыке не должен попасть в оба окна.
+            prev_subset = [
+                item for item in readings if now - 2 * span <= item[0] < now - span
+            ]
+            stats[name] = {
+                **window_stats,
+                "prev": _compare(window_stats, _stats(prev_subset), span),
+            }
 
     meals = [
         (occurred_at, carbs)
@@ -394,7 +474,12 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
         last_success = _stored_last_success(path)
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    window = max(span for span, _ in RANGES.values())
+    # Удвоенное окно — ради сравнения с предыдущим периодом. Откат этой
+    # строки превратил бы месячное сравнение в вечное «сравнивать не с чем»
+    # без единого внешнего признака, поэтому на неё есть тест. 60 дней —
+    # это ~17 тысяч строк: для MySQL ничто, а на вес data.json не влияет,
+    # серии режутся по своим окнам.
+    window = 2 * max(span for span, _ in RANGES.values())
     readings = readings_since(now - window)
 
     # Журнал ведёт бот, и его может не быть вовсе — тогда список пуст, панели
