@@ -796,6 +796,8 @@ function drawDayProfile(ctx, runs, x, y) {
         ctx.globalAlpha = 1;
 
         // Медиана — тонкой сплошной: она и есть «обычно», коридор — разброс.
+        // Приглушена: это контекст под сегодняшней кривой, и в полную силу
+        // цвета она спорила бы с ней за внимание.
         ctx.beginPath();
         run.forEach((slot, index) => {
             if (index === 0) ctx.moveTo(x(slot.t), y(toMmol(slot.p50)));
@@ -805,7 +807,9 @@ function drawDayProfile(ctx, runs, x, y) {
         ctx.lineWidth = 1.25;
         ctx.lineJoin = "round";
         ctx.lineCap = "round";
+        ctx.globalAlpha = 0.55;
         ctx.stroke();
+        ctx.globalAlpha = 1;
     }
 }
 
@@ -885,10 +889,16 @@ function drawChart() {
     if (!daily && (lanes.length || runs.length)) {
         legendItems.push({ ...SERIES.glucose, line: true });
         if (runs.length) {
+            // Две короткие метки вместо одной длинной фразы: линия называет
+            // медиану, квадрат — коридор. Число дней стоит один раз — коридор
+            // считан по тем же дням, и второе упоминание ничего не добавляет.
             legendItems.push({
-                ...SERIES.profile,
-                label: `Обычный день (${profile.days} дней): медиана и 25–75 %`,
+                token: SERIES.profile.token,
+                fallback: SERIES.profile.fallback,
+                label: `Медиана за ${profile.days} дней`,
+                line: true,
             });
+            legendItems.push({ ...SERIES.profile, label: "Разброс 25–75 %" });
         }
         for (const kind of [SERIES.meal, SERIES.insulin, SERIES.basal]) {
             if (lanes.some((lane) => lane.bars.some((bar) => bar.series === kind))) {
