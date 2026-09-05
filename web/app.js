@@ -1336,16 +1336,11 @@ function showTip(clientX) {
 
     // Порядок строк зафиксирован: глюкоза → профиль → события.
     if (point) {
-        // «Сейчас» — только у свежей точки под правым краем: у замера
-        // шестичасовой давности это слово врало бы против времени строкой
-        // выше, поэтому старые точки называются «Замер». Порог свежести
-        // тот же, что у значения в шапке.
-        const label =
-            snapshot.generated_at - point[0] <= STALE_AFTER_MS / 1000
-                ? "Сейчас"
-                : "Замер";
+        // «Замер» у любой точки, свежей и старой: одно слово на всю ось.
+        // «Сейчас» у свежей было отвергнуто — две метки для одного ряда
+        // читаются как два ряда.
         rows.push(
-            tipRow(SERIES.glucose, `${label} ${formatMmol(point[1])} ${SERIES.glucose.unit}`)
+            tipRow(SERIES.glucose, `Замер ${formatMmol(point[1])} ${SERIES.glucose.unit}`)
         );
     }
 
@@ -1755,10 +1750,10 @@ function textCell(text) {
 
 /* Приём, записанный в несколько заходов, разбирается как одна еда, а на
    дорожке главного графика его записи стоят порознь. Знак суммы объясняет
-   расхождение и под наведением перечисляет заходы. Стоит он перед числом:
-   колонка выровнена по правому краю, и хвостовая пометка сдвигала бы числа
-   друг относительно друга — то самое выравнивание, ради которого колонка и
-   набрана моноширинными цифрами. */
+   расхождение и под наведением перечисляет заходы. Живёт он в колонке
+   «Запись» вместе со знаками доверия — в ячейке углеводов любая пометка
+   сдвигала бы числа друг относительно друга, ломая то самое выравнивание,
+   ради которого колонка набрана моноширинными цифрами. */
 /* Уверенность в числе — два разных факта, и показывать нужно оба. Чем число
    получено, шкала не заменяет: «взвешено» и «по фото, прогоны сошлись» одинаково
    надёжны сейчас, но исправлять по ним разное — оценку стоит перевесить, весы
@@ -1785,86 +1780,92 @@ const TRUST_CONFIDENCE = {
 
 const TRUST_DOTS = 3;
 
-function trustMark(cell, meal) {
+/* Колонка «Запись»: чем число углеводов получено, насколько ему верить и не
+   сложено ли оно из нескольких заходов. Знаки стояли в ячейке углеводов перед
+   числом — и делали колонку чисел рваной по ширине; своя колонка возвращает
+   числам ровный край, ради которого они набраны моноширинными. */
+function recordCell(meal) {
+    const cell = document.createElement("td");
+
+    const marks = [];
+    const spoken = [];
+
     const trust = meal.trust;
-    if (!trust) return cell;
+    const origin = trust ? TRUST_ORIGIN[trust.origin] : null;
+    const confidence = trust ? TRUST_CONFIDENCE[trust.dots] : null;
 
-    const origin = TRUST_ORIGIN[trust.origin];
-    const confidence = TRUST_CONFIDENCE[trust.dots];
-    if (!origin && !confidence) return cell;
+    if (origin || confidence) {
+        // Обе половины произносятся одной фразой: «со слов, наугад». Пустая
+        // половина из неё выпадает — способ без ответа человека и наоборот.
+        const phrase = [origin?.spoken, confidence].filter(Boolean).join(", ");
 
-    // Обе половины произносятся одной фразой: «со слов, наугад». Пустая
-    // половина из неё выпадает — способ без ответа человека и наоборот.
-    const spoken = [origin?.spoken, confidence].filter(Boolean).join(", ");
+        const mark = document.createElement("span");
+        mark.className = `trust trust--${trust.origin || "unknown"}`;
+        mark.title = phrase;
+        mark.setAttribute("aria-hidden", "true");
 
-    const mark = document.createElement("span");
-    mark.className = `trust trust--${trust.origin || "unknown"}`;
-    mark.title = spoken;
-    mark.setAttribute("aria-hidden", "true");
+        // Две части, а не одна строка: источник и шкала набраны разным
+        // кеглем — ⚖︎ и ✎ рисуются заметно мельче точек при одном размере.
+        if (origin) {
+            const source = document.createElement("span");
+            source.className = "trust__source";
+            source.textContent = origin.mark;
+            mark.append(source);
+        }
 
-    // Две части, а не одна строка: источник и шкала набраны разным кеглем —
-    // ⚖︎ и ✎ рисуются заметно мельче точек при одном размере.
-    if (origin) {
-        const source = document.createElement("span");
-        source.className = "trust__source";
-        source.textContent = origin.mark;
-        mark.append(source);
+        if (confidence) {
+            const dots = document.createElement("span");
+            dots.className = "trust__dots";
+            dots.textContent = "●".repeat(trust.dots) + "○".repeat(TRUST_DOTS - trust.dots);
+            mark.append(dots);
+        }
+
+        marks.push(mark);
+        spoken.push(phrase);
     }
 
-    if (confidence) {
-        const dots = document.createElement("span");
-        dots.className = "trust__dots";
-        dots.textContent = "●".repeat(trust.dots) + "○".repeat(TRUST_DOTS - trust.dots);
-        mark.append(dots);
+    if (meal.parts) {
+        const sittings = meal.parts
+            .map(([seconds, carbs]) => {
+                const at = new Date(seconds * 1000).toLocaleTimeString("ru-RU", {
+                    timeZone: TIMEZONE,
+                    hour: "2-digit",
+                    minute: "2-digit",
+                });
+                return `${at} — ${formatAmount(carbs)} г`;
+            })
+            .join(", ");
+
+        // Знак — только для глаз: Σ ничего не сокращает, так что <abbr>
+        // здесь ни при чём, а озвучивать «греческая заглавная сигма» незачем.
+        const mark = document.createElement("span");
+        mark.className = "parts";
+        mark.textContent = "Σ";
+        mark.title = sittings;
+        mark.setAttribute("aria-hidden", "true");
+
+        marks.push(mark);
+        // Состав словами: title не показывается на телефоне и не читается
+        // вслух, а без него знак остаётся необъяснённым.
+        spoken.push(`сложено из записей: ${sittings}`);
     }
 
-    const said = document.createElement("span");
-    said.className = "visually-hidden";
-    said.textContent = `, ${spoken}`;
+    marks.forEach((mark, index) => cell.append(index ? " " : "", mark));
 
-    cell.prepend(mark, " ");
-    cell.append(said);
+    if (spoken.length) {
+        const said = document.createElement("span");
+        said.className = "visually-hidden";
+        said.textContent = spoken.join("; ");
+        cell.append(said);
+    }
+
     return cell;
-}
-
-function carbsCell(meal) {
-    const cell = textCell(`${formatAmount(meal.carbs)} г`);
-    if (!meal.parts) return trustMark(cell, meal);
-
-    const sittings = meal.parts
-        .map(([seconds, carbs]) => {
-            const at = new Date(seconds * 1000).toLocaleTimeString("ru-RU", {
-                timeZone: TIMEZONE,
-                hour: "2-digit",
-                minute: "2-digit",
-            });
-            return `${at} — ${formatAmount(carbs)} г`;
-        })
-        .join(", ");
-
-    // Знак — только для глаз: Σ ничего не сокращает, так что <abbr> здесь ни
-    // при чём, а озвучивать «греческая заглавная сигма» перед числом незачем.
-    const mark = document.createElement("span");
-    mark.className = "parts";
-    mark.textContent = "Σ";
-    mark.title = sittings;
-    mark.setAttribute("aria-hidden", "true");
-
-    // Состав словами: title не показывается на телефоне и не читается вслух,
-    // а без него знак остаётся необъяснённым.
-    const spoken = document.createElement("span");
-    spoken.className = "visually-hidden";
-    spoken.textContent = `, сложено из записей: ${sittings}`;
-
-    cell.prepend(mark, " ");
-    cell.append(spoken);
-    return trustMark(cell, meal);
 }
 
 function renderMeals(analysis) {
     const head = document.createElement("thead");
     const headRow = document.createElement("tr");
-    for (const title of ["Когда", "Углеводы", "Инсулин", "Подъём", "Пик через", "Возврат", "Исход"]) {
+    for (const title of ["Когда", "Запись", "Углеводы", "Инсулин", "Подъём", "Пик через", "Возврат", "Исход"]) {
         const cell = document.createElement("th");
         cell.scope = "col";
         cell.textContent = title;
@@ -1922,7 +1923,8 @@ function renderMeals(analysis) {
 
         row.append(
             when,
-            carbsCell(meal),
+            recordCell(meal),
+            textCell(`${formatAmount(meal.carbs)} г`),
             textCell(formatDose(meal.dose)),
             textCell(formatDelta(meal.rise)),
             textCell(`${meal.peak_min} мин`),
