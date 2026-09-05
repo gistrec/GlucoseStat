@@ -30,7 +30,9 @@ import tempfile
 import threading
 import webbrowser
 from datetime import datetime, timedelta, timezone
+from datetime import time as dt_time
 
+from daytime import _zone
 from publish import PUBLISH_PATH, build_snapshot
 
 
@@ -73,9 +75,17 @@ ORIGIN_PLAN = [
     },
 ]
 
-DAYS = 16
+DAYS = 32
 BASAL_HOUR = 22
 BASAL_UNITS = 18.0
+
+# Две картины из жизни сенсора, которые ровная синтетика не покажет: местные
+# сутки без единого показания (сенсор снят) и час прогрева, когда свежий сенсор
+# отдаёт 500 мг/дл (см. README). Месячный вид обязан пережить обе: пустой день
+# в плотном массиве и коробку, которую прогрев не растянул.
+EMPTY_DAY_AGO = 9
+WARMUP_DAY_AGO = 8
+WARMUP_HOUR = 6
 
 # Куда искать безголовый браузер. Первым — кэш Playwright: если им когда-либо
 # пользовались, бинарник уже лежит и качать нечего.
@@ -164,6 +174,28 @@ def synthetic_snapshot(now: datetime | None = None) -> dict:
     readings = [
         (moment, max(45.0, min(360.0, value))) for moment, value in sorted(curve.items())
     ]
+
+    # Границы — по местной полуночи, а не по UTC: сутки страница нарезает в
+    # зоне отображения, и «пустой день» по UTC разлёгся бы двумя дырками по
+    # краям двух соседних местных дней.
+    def local_midnight(days_ago: int) -> datetime:
+        local = now.replace(tzinfo=timezone.utc).astimezone(_zone())
+        day = (local - timedelta(days=days_ago)).date()
+        midnight = datetime.combine(day, dt_time(), tzinfo=_zone())
+        return midnight.astimezone(timezone.utc).replace(tzinfo=None)
+
+    gone_from, gone_to = local_midnight(EMPTY_DAY_AGO), local_midnight(EMPTY_DAY_AGO - 1)
+    readings = [item for item in readings if not (gone_from <= item[0] < gone_to)]
+
+    # Прогрев поверх обрезки шкалы: 500 — честное значение прогрева, а не
+    # выброс, который синтетике положено прижать к 360.
+    warm_from = local_midnight(WARMUP_DAY_AGO) + timedelta(hours=WARMUP_HOUR)
+    warm_to = warm_from + timedelta(hours=1)
+    readings = [
+        (moment, 500.0 if warm_from <= moment < warm_to else value)
+        for moment, value in readings
+    ]
+
     journal.sort()
 
     # Снимок собирает publish, а не этот файл. Своя сборка молча расходилась бы

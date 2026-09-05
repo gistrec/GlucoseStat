@@ -12,8 +12,9 @@ module.exports = {
       // Keep retrying indefinitely instead of giving up after the default 16.
       max_restarts: Number.MAX_SAFE_INTEGER,
       env: {
-        // Метки времени в БД — UTC; страница переводит их в часовой пояс
-        // браузера. Процессу локальная зона не нужна ни для чего.
+        // Метки времени в БД — UTC; страница показывает их в одной прибитой
+        // зоне (TIMEZONE в web/app.js, у сборщика — DISPLAY_TZ). Процессу
+        // локальная зона не нужна ни для чего.
         TZ: "UTC",
       },
     },

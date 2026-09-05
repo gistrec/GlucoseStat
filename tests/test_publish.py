@@ -14,10 +14,11 @@ import os
 import pathlib
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 
+from conftest import BASE
 from publish import (
     TARGET_HIGH_MGDL,
     TARGET_LOW_MGDL,
@@ -30,9 +31,6 @@ from publish import (
     _trend,
     publish,
 )
-
-
-BASE = datetime(2026, 8, 22, 12, 0, 0)
 
 
 def readings(*values, step_minutes=5, start=BASE):

@@ -10,10 +10,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from conftest import BASE
 from main import BACKOFF_MIN, run_once, stamp_freshness
-
-
-BASE = datetime(2026, 8, 22, 12, 0, 0)
 
 
 def unix(moment: datetime) -> float:

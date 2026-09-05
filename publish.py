@@ -13,6 +13,7 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 
 from analysis import analyse
+from daytime import DISPLAY_TZ
 from database.queries import (
     journal_since,
     last_readings,
@@ -241,6 +242,9 @@ def build_snapshot(
             "last_success": int(last_success) if last_success else None,
         },
         "target": {"low": TARGET_LOW_MGDL, "high": TARGET_HIGH_MGDL},
+        # Зона, в которой сборщик нарезает сутки. Страница держит ту же зону
+        # своей константой и по этому ключу может её сверить, а не верить.
+        "timezone": DISPLAY_TZ,
         "latest": latest if latest is not None else _trend(readings),
         "series": series,
         "stats": stats,
