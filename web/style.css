@@ -390,6 +390,12 @@ body {
     position: absolute;
     z-index: 2;
     min-width: 128px;
+    /* max-content, а не auto: у правого края холста абсолютной подсказке
+       остаётся пара десятков пикселей до края карточки, и строка «Обычно
+       6,6 · 5,8–6,8 ммоль/л» ломалась посреди единицы — «ммоль/ л». Ширину
+       задаёт содержимое, а внутрь холста подсказку возвращает placeTip. */
+    width: max-content;
+    max-width: 260px;
     padding: 8px 10px;
     background: var(--panel);
     border: 1px solid var(--panel-chrome);

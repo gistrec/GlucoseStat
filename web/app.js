@@ -1336,8 +1336,15 @@ function showTip(clientX) {
 
     // Порядок строк зафиксирован: глюкоза → профиль → события.
     if (point) {
+        // «Сейчас» — только у свежей точки под правым краем: у замера
+        // шестичасовой давности это слово врало бы против времени строкой
+        // выше. Порог свежести тот же, что у значения в шапке.
+        const label =
+            snapshot.generated_at - point[0] <= STALE_AFTER_MS / 1000
+                ? "Сейчас"
+                : "Глюкоза";
         rows.push(
-            tipRow(SERIES.glucose, `${formatMmol(point[1])} ${SERIES.glucose.unit}`)
+            tipRow(SERIES.glucose, `${label} ${formatMmol(point[1])} ${SERIES.glucose.unit}`)
         );
     }
 
@@ -1351,7 +1358,7 @@ function showTip(clientX) {
             rows.push(
                 tipRow(
                     SERIES.profile,
-                    `обычно ${formatMmol(slot[1])} · ${formatMmol(slot[0])}–${formatMmol(slot[2])} ${SERIES.profile.unit}`
+                    `Обычно ${formatMmol(slot[1])} · ${formatMmol(slot[0])}–${formatMmol(slot[2])} ${SERIES.profile.unit}`
                 )
             );
         }
@@ -1405,7 +1412,10 @@ function showDayTip(clientX) {
     })}, ${zoneLabel}`;
 
     // Метка медианы — тем же цветом, что её засечка на холсте.
-    const median = tipRow(SERIES.glucose, `${formatMmol(day.p50)} ${SERIES.glucose.unit}`);
+    const median = tipRow(
+        SERIES.glucose,
+        `Медиана ${formatMmol(day.p50)} ${SERIES.glucose.unit}`
+    );
     const key = median.querySelector(".tip__key");
     key.style.background = readingColor(day.p50);
     key.style.color = readingColor(day.p50);
@@ -1416,11 +1426,11 @@ function showDayTip(clientX) {
 
     const tir = document.createElement("p");
     tir.className = "tip__row";
-    tir.textContent = `в диапазоне ${percent(day.tir)}`;
+    tir.textContent = `В диапазоне ${percent(day.tir)}`;
 
     const note = document.createElement("p");
     note.className = "tip__note";
-    note.textContent = `ниже ${percent(day.below)} · выше ${percent(day.above)}`;
+    note.textContent = `Ниже ${percent(day.below)} · выше ${percent(day.above)}`;
 
     els.tip.replaceChildren(time, median, spread, tir, note);
     placeTip(clientX);
