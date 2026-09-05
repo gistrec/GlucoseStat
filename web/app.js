@@ -175,12 +175,13 @@ const SERIES = {
         unit: "ед длинного",
         hollow: true,
     },
-    // Коридор «обычного дня» под сегодняшней кривой. Подпись собирается на
-    // месте — в неё входит число дней, которое знает только снимок.
+    // Коридор «обычного дня» под сегодняшней кривой. Полоса и медиана — один
+    // ряд с одним именем: тем же словом, каким их называет подсказка. Число
+    // дней и квартили объясняет наведение, легенде хватает имени.
     profile: {
         token: "--agp",
         fallback: "#8a90a6",
-        label: "Обычный день",
+        label: "Обычно",
         unit: "ммоль/л",
         band: true,
     },
@@ -889,16 +890,7 @@ function drawChart() {
     if (!daily && (lanes.length || runs.length)) {
         legendItems.push({ ...SERIES.glucose, line: true });
         if (runs.length) {
-            // Две короткие метки вместо одной длинной фразы: линия называет
-            // медиану, квадрат — коридор. Число дней стоит один раз — коридор
-            // считан по тем же дням, и второе упоминание ничего не добавляет.
-            legendItems.push({
-                token: SERIES.profile.token,
-                fallback: SERIES.profile.fallback,
-                label: `Медиана за ${profile.days} дней`,
-                line: true,
-            });
-            legendItems.push({ ...SERIES.profile, label: "Разброс 25–75 %" });
+            legendItems.push(SERIES.profile);
         }
         for (const kind of [SERIES.meal, SERIES.insulin, SERIES.basal]) {
             if (lanes.some((lane) => lane.bars.some((bar) => bar.series === kind))) {
