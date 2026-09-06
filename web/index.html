@@ -109,6 +109,19 @@
                  когда их не осталось, кнопки нет вовсе. -->
             <button class="meals__more" id="meals-more" type="button" hidden></button>
 
+            <!-- Блока нет, пока в каком-нибудь времени суток не наберётся
+                 достаточно приёмов с болюсом: медиана по двум обедам — это
+                 среднее двух обедов, выданное за общую картину. -->
+            <div class="ratio" id="ratio" hidden>
+                <h3 class="review__title">Углеводный коэффициент</h3>
+                <p class="review__note" id="ratio-note"></p>
+                <div class="meals__wrap">
+                    <table class="meals" id="ratio-table">
+                        <caption class="visually-hidden">Сколько граммов углеводов пришлось на единицу короткого инсулина, по времени суток</caption>
+                    </table>
+                </div>
+            </div>
+
             <p class="review__hint">
                 В колонке «Запись» два знака. Первый — чем число углеводов
                 получено: ⚖︎ — порция взвешена, ✎ — названа со слов,

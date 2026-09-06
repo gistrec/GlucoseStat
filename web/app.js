@@ -127,6 +127,9 @@ const els = {
     reviewNote: document.getElementById("review-note"),
     reviewStats: document.getElementById("review-stats"),
     mealsMore: document.getElementById("meals-more"),
+    ratio: document.getElementById("ratio"),
+    ratioNote: document.getElementById("ratio-note"),
+    ratioTable: document.getElementById("ratio-table"),
     overlay: document.getElementById("overlay"),
     overlayLegend: document.getElementById("overlay-legend"),
     meals: document.getElementById("meals"),
@@ -2078,6 +2081,96 @@ function renderReviewStats(analysis) {
     els.reviewStats.hidden = false;
 }
 
+/* ── Углеводный коэффициент ────────────────────────────────────────── */
+
+/* Границы — местные часы еды, а не тройка «завтрак/обед/ужин» по названию:
+   имя приёму даёт человек, а чувствительность к инсулину ходит за солнцем.
+   Ночь отдельно и последней: приёмы в ней редки, и чаще всего это не ужин,
+   а купирование гипогликемии. */
+const DAYPARTS = [
+    { label: "Утро", from: 6 * 60, to: 12 * 60 },
+    { label: "День", from: 12 * 60, to: 18 * 60 },
+    { label: "Вечер", from: 18 * 60, to: 24 * 60 },
+    { label: "Ночь", from: 0, to: 6 * 60 },
+];
+
+// Тот же порог, что MEDIAN_MIN_CURVES у оверлея, и по той же причине: медиана
+// по двум обедам — это среднее двух обедов, выданное за общую картину.
+const RATIO_MIN_MEALS = 3;
+
+function medianOf(values) {
+    const sorted = [...values].sort((a, b) => a - b);
+    const middle = sorted.length >> 1;
+    return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+/* Сколько граммов углеводов пришлось на единицу короткого — по записям, а не
+   по правилам. Считается по тем же приёмам, что и сводка: окно разбора
+   целиком, а не раскрытая часть таблицы. Подъём рядом — чтобы коэффициент
+   читался с исходом: одинаковые «10 г/ед» с подъёмом в ориентире и с подъёмом
+   вдвое выше — разные истории. Вывод из них — не дело страницы. */
+function renderRatio(analysis) {
+    const dosed = analysis.meals.filter(
+        (meal) => meal.dose && meal.dose.units > 0 && meal.carbs > 0
+    );
+
+    const rows = [];
+    for (const part of DAYPARTS) {
+        const meals = dosed.filter((meal) => {
+            const minutes = minutesOfDay(meal.t);
+            return part.from <= minutes && minutes < part.to;
+        });
+        if (meals.length < RATIO_MIN_MEALS) continue;
+
+        // Подъём — только по завершённым и не прерванным окнам, как в сводке:
+        // незакрытое окно ещё не знает своего пика.
+        const clean = meals.filter((meal) => meal.complete && !meal.cut);
+        rows.push({
+            label: part.label,
+            count: meals.length,
+            ratio: medianOf(meals.map((meal) => meal.carbs / meal.dose.units)),
+            rise: clean.length ? medianOf(clean.map((meal) => meal.rise)) : null,
+        });
+    }
+
+    if (!rows.length) {
+        els.ratio.hidden = true;
+        return;
+    }
+
+    els.ratioNote.textContent =
+        `По приёмам с записанным болюсом (${dosed.length} за окно разбора): ` +
+        "сколько граммов углеводов пришлось на единицу короткого, медиана. " +
+        "Это описание записей, а не рекомендация дозы: в нём нет ни " +
+        "упреждения, ни активности, ни остатка предыдущей дозы.";
+
+    const head = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    for (const title of ["Время суток", "Приёмов", "Г на 1 ед", "Подъём, медиана"]) {
+        const cell = document.createElement("th");
+        cell.scope = "col";
+        cell.textContent = title;
+        headRow.append(cell);
+    }
+    head.append(headRow);
+
+    const body = document.createElement("tbody");
+    for (const row of rows) {
+        const tr = document.createElement("tr");
+        tr.append(
+            textCell(row.label),
+            textCell(String(row.count)),
+            textCell(formatAmount(row.ratio)),
+            textCell(row.rise === null ? "—" : formatDelta(row.rise))
+        );
+        body.append(tr);
+    }
+
+    const caption = els.ratioTable.querySelector("caption");
+    els.ratioTable.replaceChildren(...(caption ? [caption] : []), head, body);
+    els.ratio.hidden = false;
+}
+
 function renderReview() {
     const analysis = snapshot.analysis;
 
@@ -2120,6 +2213,7 @@ function renderReview() {
     els.review.hidden = false;
 
     renderReviewStats(analysis);
+    renderRatio(analysis);
     drawOverlay(visible);
     renderMeals(visible);
 
