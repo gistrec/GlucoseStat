@@ -797,8 +797,9 @@ function drawDayProfile(ctx, runs, x, y) {
         ctx.globalAlpha = 1;
 
         // Медиана — тонкой сплошной: она и есть «обычно», коридор — разброс.
-        // Приглушена: это контекст под сегодняшней кривой, и в полную силу
-        // цвета она спорила бы с ней за внимание.
+        // Приглушена сильнее коридора: это контекст под сегодняшней кривой, и
+        // там, где линии пересекаются, читаться должна сегодняшняя — на 0.55
+        // медиана спорила с ней за внимание в каждой точке пересечения.
         ctx.beginPath();
         run.forEach((slot, index) => {
             if (index === 0) ctx.moveTo(x(slot.t), y(toMmol(slot.p50)));
@@ -808,7 +809,7 @@ function drawDayProfile(ctx, runs, x, y) {
         ctx.lineWidth = 1.25;
         ctx.lineJoin = "round";
         ctx.lineCap = "round";
-        ctx.globalAlpha = 0.55;
+        ctx.globalAlpha = 0.35;
         ctx.stroke();
         ctx.globalAlpha = 1;
     }
