@@ -1287,10 +1287,12 @@ function drawForecast(ctx, tail, x, y, plotTop, plotBottom) {
 
     // Число у кольца — то же, что в подсказке, с той же оговоркой «≈»: без
     // него хвост нем, а наведение на десять пикселей — это упражнение, а не
-    // интерфейс. Короб цветом панели — как у подписи ориентира на оверлее:
-    // число обязано читаться поверх кривой, коридора и сетки. Ставится с
-    // противоположной приходу хвоста стороны: падающий приходит сверху —
-    // подпись вниз, растущий — вверх; у рамки прижимается внутрь холста.
+    // интерфейс. Ставится с противоположной приходу хвоста стороны: падающий
+    // приходит сверху — подпись вниз, растущий — вверх; у рамки прижимается
+    // внутрь холста. Под буквами — ореол цветом панели, а не плашка: плашка
+    // закрашивала прямоугольник подложки нормы, и в тёмной теме над зелёной
+    // полосой висел чёрный короб. Ореол обводит ровно буквы — тот же приём,
+    // что у выделенной кривой на оверлее.
     const text = `≈ ${formatMmol(tail.to.mgdl)}`;
     ctx.font = '11px "JetBrains Mono", monospace';
     ctx.textAlign = "right";
@@ -1300,9 +1302,10 @@ function drawForecast(ctx, tail, x, y, plotTop, plotBottom) {
         Math.max(endY + (below ? 16 : -16), plotTop + 8),
         plotBottom - 8
     );
-    const box = ctx.measureText(text).width + 8;
-    ctx.fillStyle = readColor("--panel", "#0d0d14");
-    ctx.fillRect(endX - box + 3, labelY - 8, box, 16);
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = readColor("--panel", "#0d0d14");
+    ctx.strokeText(text, endX - 1, labelY);
     ctx.fillStyle = color;
     ctx.fillText(text, endX - 1, labelY);
 }
