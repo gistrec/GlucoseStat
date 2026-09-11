@@ -964,8 +964,12 @@ function drawChart() {
 
     // Профиль обычного дня — до масштаба: края его коридора участвуют в
     // niceScale наравне с кривой, иначе коридор упирался бы в рамку.
+    // Коридор дотягивается до конца хвоста прогноза, а не до «сейчас»:
+    // «обычно» — климатология по времени суток, и ближайшие полчаса ей
+    // известны не хуже прошедших. Пунктир без коридора рядом висел бы в
+    // пустоте, которую страница только что уверенно называла «обычно».
     const profile = daily ? null : dayProfile();
-    const runs = profile ? profileRuns(profile, startTime, now) : [];
+    const runs = profile ? profileRuns(profile, startTime, endTime) : [];
 
     const scale = niceScale(
         daily
@@ -1248,19 +1252,34 @@ function drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeigh
 
 /* Хвост прогноза: та же кривая тем же цветом, но штрихом — продолжение, а не
    замер. Одним цветом, без отсечений по зонам: окраска по порогам обещала бы
-   линейной экстраполяции точность, которой у неё нет. */
+   линейной экстраполяции точность, которой у неё нет. Штрих в полную силу и
+   чуть толще кривой: полупрозрачная версия терялась на подложке нормы, а
+   хвосту отведено полтора десятка пикселей — блёкнуть ему не на чем.
+   В конце — кольцо: куда прямая приводит через полчаса. Контур, а не заливка,
+   тем же словарём, что у длинного инсулина, — «не замер». */
 function drawForecast(ctx, tail, x, y) {
-    ctx.strokeStyle = readColor("--accent", "#7eb8f7");
-    ctx.lineWidth = 1.75;
+    const color = readColor("--accent", "#7eb8f7");
+    const endX = x(tail.to.t);
+    const endY = y(toMmol(tail.to.mgdl));
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.25;
     ctx.lineCap = "round";
-    ctx.setLineDash([3, 5]);
-    ctx.globalAlpha = 0.65;
+    ctx.setLineDash([5, 5]);
     ctx.beginPath();
     ctx.moveTo(x(tail.from.t), y(toMmol(tail.from.mgdl)));
-    ctx.lineTo(x(tail.to.t), y(toMmol(tail.to.mgdl)));
+    ctx.lineTo(endX, endY);
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.globalAlpha = 1;
+
+    ctx.beginPath();
+    ctx.arc(endX, endY, 3, 0, Math.PI * 2);
+    // Заливка цветом панели: кольцо не должно терять контур там, где под ним
+    // проходит коридор «обычно».
+    ctx.fillStyle = readColor("--panel", "#0d0d14");
+    ctx.fill();
+    ctx.lineWidth = 1.75;
+    ctx.stroke();
 }
 
 /* Горизонталь коробки дня: середина наблюдаемого куска, прижатая к рамке.

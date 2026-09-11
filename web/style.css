@@ -391,8 +391,8 @@ body {
 .legend__key--dashed {
     background: repeating-linear-gradient(
         90deg,
-        currentColor 0 3px,
-        transparent 3px 6px
+        currentColor 0 4px,
+        transparent 4px 7px
     ) !important;
 }
 
