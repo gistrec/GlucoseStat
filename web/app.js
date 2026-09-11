@@ -38,6 +38,18 @@ const SPAN_SECONDS = { day: 86400, two_days: 2 * 86400, week: 7 * 86400, month: 
    на суточном ответ стоит на самом краю холста и обрезан им. */
 const HOURLY_RANGES = new Set(["day", "two_days"]);
 
+/* Горизонт пунктирного прогноза. Линейное продолжение по 15-минутной скорости
+   честно на полчаса — дальше еда и инсулин ломают прямую раньше, чем она
+   успевает сбыться. Скорость — та же latest.rate, по которой рисуется стрелка
+   тренда: две подписи одного числа не вправе разойтись. */
+const FORECAST_MINUTES = 30;
+
+/* Шкала сенсора: значений за её пределами Libre не отдаёт, и хвост, ушедший
+   ниже 40 мг/дл, обещал бы замер, которого не может быть. На границе шкалы
+   хвост обрезается, а не ложится горизонталью. */
+const SENSOR_MIN_MGDL = 40;
+const SENSOR_MAX_MGDL = 500;
+
 /* Сколько приёмов показывать сразу и сколько добавлять кнопкой. Разбор читают
    с последнего, и десяти строк хватает на пару дней.
 
@@ -175,6 +187,16 @@ function readNumber(name, fallback) {
    оказывается тогда не «необычный», а просто тот, о ком вспомнили. */
 const SERIES = {
     glucose: { token: "--accent", fallback: "#7eb8f7", label: "Глюкоза", unit: "ммоль/л" },
+    /* Продолжение той же кривой, но не замер: цвет общий с глюкозой, а
+       различает их пунктир — им же обязаны различать легенда и подсказка. */
+    forecast: {
+        token: "--accent",
+        fallback: "#7eb8f7",
+        label: "Прогноз",
+        unit: "ммоль/л",
+        line: true,
+        dashed: true,
+    },
     meal: { token: "--meal", fallback: "#bd8a30", label: "Углеводы", unit: "г" },
     insulin: {
         token: "--insulin",
@@ -555,7 +577,7 @@ function renderStats() {
 /* Что «видно» на графике, словами: сам холст для скринридера пуст, а
    пересказывать сотни точек бессмысленно — нужен итог. Числа окна — из
    stats, то есть по сырым замерам, а не по нарисованной сводке. */
-function chartDescription(daily, hasData) {
+function chartDescription(daily, hasData, tail) {
     const period = RANGE_LABELS[activeRange];
     if (!hasData) return `График глюкозы за ${period}: данных нет`;
 
@@ -575,7 +597,13 @@ function chartDescription(daily, hasData) {
         );
     }
 
-    return `График глюкозы за ${period}: ${summary}`;
+    // Пунктирный хвост назван словами: из пересказа сотни точек он выпал бы,
+    // а обещать прогноз, которого на холсте нет, подпись не вправе — отсюда
+    // фраза только при нарисованном хвосте.
+    const forecast = tail
+        ? `. Пунктиром — прогноз на ${Math.round((tail.to.t - tail.from.t) / 60)} минут вперёд по текущей скорости`
+        : "";
+    return `График глюкозы за ${period}: ${summary}${forecast}`;
 }
 
 /* Принимает готовые значения в ммоль/л, а не точки: у ломаной это сами замеры,
@@ -838,10 +866,42 @@ function drawDayProfile(ctx, runs, x, y) {
     }
 }
 
+/* Привратник прогноза — по образцу eventLanes() и dayProfile(): null всюду,
+   где рисовать нечего или нечестно. Свежесть меряется от правого края холста
+   (generated_at), а не от часов устройства: пока Abbott молчит, снимок
+   продолжает штамповаться, точка отходит от края — и тянуть из неё будущее
+   значило бы врать дважды. Порог — тот же, каким шапка гасит цвет значения. */
+function forecastTail() {
+    if (!HOURLY_RANGES.has(activeRange)) return null;
+
+    const latest = snapshot.latest;
+    if (!latest || latest.rate === null || latest.rate === undefined) return null;
+    if ((snapshot.generated_at - latest.t) * 1000 > STALE_AFTER_MS) return null;
+
+    let minutes = FORECAST_MINUTES;
+    if (latest.rate > 0) {
+        minutes = Math.min(minutes, (SENSOR_MAX_MGDL - latest.mgdl) / latest.rate);
+    }
+    if (latest.rate < 0) {
+        minutes = Math.min(minutes, (SENSOR_MIN_MGDL - latest.mgdl) / latest.rate);
+    }
+    // Хвост короче минуты не читается — это уже не прогноз, а заусенец.
+    if (minutes < 1) return null;
+
+    return {
+        from: { t: latest.t, mgdl: latest.mgdl },
+        to: {
+            t: latest.t + Math.round(minutes * 60),
+            mgdl: latest.mgdl + latest.rate * minutes,
+        },
+    };
+}
+
 /* Порядок слоёв — контракт, по которому в каркас вставляются отрисовщики:
    профиль обычного дня → полоса нормы → сетка → подписи осей → кривая с
-   отсечениями по зонам (или дневные коробки) → одиночные точки → дорожки
-   событий → перекрестие. Кто нарисован раньше, тот лежит ниже. */
+   отсечениями по зонам (или дневные коробки) → одиночные точки → хвост
+   прогноза → дорожки событий → перекрестие. Кто нарисован раньше, тот лежит
+   ниже. */
 function drawChart() {
     // Снимок прежнего сборщика может не знать окна «48 часов»: страница и
     // данные обновляются не одним щелчком, и минуту-другую после выкладки
@@ -854,13 +914,14 @@ function drawChart() {
     const points = daily ? [] : series.points;
     const days = daily ? series.days : [];
     const lanes = daily ? [] : eventLanes();
+    const tail = daily ? null : forecastTail();
 
     // Один предикат «есть ли что рисовать» на оба ранних выхода: у дневного
     // вида points не существует вовсе, и points.length здесь бы падал.
     const hasData = daily ? days.some((day) => day.count > 0) : points.length > 0;
 
     els.chartEmpty.hidden = hasData;
-    els.canvas.setAttribute("aria-label", chartDescription(daily, hasData));
+    els.canvas.setAttribute("aria-label", chartDescription(daily, hasData, tail));
 
     const canvas = els.canvas;
     // Холст растёт вместе с дорожками. Подписи оси обязаны остаться внутри:
@@ -896,6 +957,10 @@ function drawChart() {
     const now = snapshot.generated_at;
     const spanSeconds = SPAN_SECONDS[activeRange];
     const startTime = now - spanSeconds;
+    // Правый край холста — не «сейчас», когда есть прогноз: будущему нужно
+    // место, иначе хвост рисовать некуда. Метки оси при этом остаются на
+    // долях самого окна — «сейчас» просто отходит от рамки на ширину хвоста.
+    const endTime = tail ? Math.max(now, tail.to.t) : now;
 
     // Профиль обычного дня — до масштаба: края его коридора участвуют в
     // niceScale наравне с кривой, иначе коридор упирался бы в рамку.
@@ -908,6 +973,9 @@ function drawChart() {
             : [
                   ...points.map((p) => toMmol(p[1])),
                   ...runs.flatMap((run) => run.flatMap((slot) => [toMmol(slot.p25), toMmol(slot.p75)])),
+                  // Конец хвоста — в кадре наравне с кривой: обрезанный рамкой
+                  // прогноз читался бы как «дальше неизвестно», а не «выше».
+                  ...(tail ? [toMmol(tail.to.mgdl)] : []),
               ]
     );
 
@@ -915,8 +983,12 @@ function drawChart() {
     // snapshot.events: иначе месячное окно обещало бы «Углеводы» на графике
     // без единого столбика, а пустой профиль — коридор, которого нет.
     const legendItems = [];
-    if (!daily && (lanes.length || runs.length)) {
+    if (!daily && (lanes.length || runs.length || tail)) {
         legendItems.push({ ...SERIES.glucose, line: true });
+        // Сразу за глюкозой: хвост — её продолжение, а не отдельная сущность.
+        if (tail) {
+            legendItems.push(SERIES.forecast);
+        }
         if (runs.length) {
             legendItems.push(SERIES.profile);
         }
@@ -928,7 +1000,7 @@ function drawChart() {
     }
     renderLegend(legendItems);
 
-    const x = (t) => padding.left + ((t - startTime) / spanSeconds) * plotWidth;
+    const x = (t) => padding.left + ((t - startTime) / (endTime - startTime)) * plotWidth;
     const y = (mmol) =>
         padding.top + plotHeight - ((mmol - scale.min) / (scale.max - scale.min)) * plotHeight;
 
@@ -1033,6 +1105,7 @@ function drawChart() {
         drawDailyBoxes(ctx, days, x, y, padding.left, width - padding.right, boxWidth);
     } else {
         drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeight);
+        if (tail) drawForecast(ctx, tail, x, y);
     }
 
     // Дорожки событий — под графиком, над подписями оси.
@@ -1066,10 +1139,13 @@ function drawChart() {
             return found || (last && t === last.end ? last : null);
         },
         laneBoxes,
+        tail,
         x,
         y,
         startTime,
-        spanSeconds,
+        // Наведению нужен нарисованный размах оси, с местом под хвост: доля
+        // ширины холста переводится во время по нему, а не по длине окна.
+        spanSeconds: endTime - startTime,
         plotTop: padding.top,
         plotBottom: padding.top + plotHeight,
         left: padding.left,
@@ -1168,6 +1244,23 @@ function drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeigh
             ctx.fill();
         }
     }
+}
+
+/* Хвост прогноза: та же кривая тем же цветом, но штрихом — продолжение, а не
+   замер. Одним цветом, без отсечений по зонам: окраска по порогам обещала бы
+   линейной экстраполяции точность, которой у неё нет. */
+function drawForecast(ctx, tail, x, y) {
+    ctx.strokeStyle = readColor("--accent", "#7eb8f7");
+    ctx.lineWidth = 1.75;
+    ctx.lineCap = "round";
+    ctx.setLineDash([3, 5]);
+    ctx.globalAlpha = 0.65;
+    ctx.beginPath();
+    ctx.moveTo(x(tail.from.t), y(toMmol(tail.from.mgdl)));
+    ctx.lineTo(x(tail.to.t), y(toMmol(tail.to.mgdl)));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
 }
 
 /* Горизонталь коробки дня: середина наблюдаемого куска, прижатая к рамке.
@@ -1292,7 +1385,9 @@ function legendItem(series) {
         ? "legend__key legend__key--hollow"
         : `legend__key${series.line ? " legend__key--line" : ""}${
               series.thick ? " legend__key--thick" : ""
-          }${series.band ? " legend__key--band" : ""}`;
+          }${series.band ? " legend__key--band" : ""}${
+              series.dashed ? " legend__key--dashed" : ""
+          }`;
     // Контурная метка красится через currentColor — так одна и та же переменная
     // задаёт и заливку, и рамку.
     key.style.color = `var(${series.token})`;
@@ -1346,6 +1441,11 @@ function tipRow(series, text) {
         key.style.background = "none";
         key.style.border = "1.5px solid currentColor";
     }
+    // Пунктирный ряд и в подсказке помечен пунктиром — см. SERIES.forecast.
+    if (series.dashed) {
+        key.style.background = "none";
+        key.style.border = "1.5px dashed currentColor";
+    }
 
     const label = document.createElement("span");
     label.textContent = text;
@@ -1361,13 +1461,28 @@ function showTip(clientX) {
     const point = nearestPoint(hoverTime);
     const rows = [];
 
+    // Справа от последнего замера строка глюкозы уступает место прогнозу:
+    // «Замер» под курсором в будущем приписывал бы старой точке чужое время.
+    const tail = geometry.tail;
+    const future = tail && hoverTime > tail.from.t;
+
     // Порядок строк зафиксирован: глюкоза → профиль → события.
-    if (point) {
+    if (point && !future) {
         // «Замер» у любой точки, свежей и старой: одно слово на всю ось.
         // «Сейчас» у свежей было отвергнуто — две метки для одного ряда
         // читаются как два ряда.
         rows.push(
             tipRow(SERIES.glucose, `Замер ${formatMmol(point[1])} ${SERIES.glucose.unit}`)
+        );
+    }
+
+    if (future && hoverTime <= tail.to.t) {
+        const share = (hoverTime - tail.from.t) / (tail.to.t - tail.from.t);
+        const mgdl = tail.from.mgdl + (tail.to.mgdl - tail.from.mgdl) * share;
+        // «≈» — единственная строка подсказки с оговоркой: остальные
+        // пересказывают записи, эта — прямую, продлённую в будущее.
+        rows.push(
+            tipRow(SERIES.forecast, `Прогноз ≈ ${formatMmol(mgdl)} ${SERIES.forecast.unit}`)
         );
     }
 

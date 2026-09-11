@@ -22,6 +22,13 @@ coefficient of variation, and GMI. The 48-hour window exists to answer "what
 was happening exactly a day ago" — on the 24-hour one that moment sits on the
 very edge of the canvas, clipped by it.
 
+On the hourly windows the curve continues past "now" as a dashed 30-minute
+forecast — a linear extension of the same 15-minute rate that draws the trend
+arrow, so the two can never disagree. It is capped at half an hour because
+food and insulin break the straight line sooner than it comes true, and it
+disappears entirely while the latest reading is stale: extending a curve that
+stopped moving would be lying twice.
+
 GMI is the one figure that ignores the selected period: it is always the
 estimated HbA1c over the last **14 days**, the window Bergenstal et al. (2018)
 calibrated the formula on. Tying it to the buttons would put two different
