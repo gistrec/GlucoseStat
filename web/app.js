@@ -1109,7 +1109,7 @@ function drawChart() {
         drawDailyBoxes(ctx, days, x, y, padding.left, width - padding.right, boxWidth);
     } else {
         drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeight);
-        if (tail) drawForecast(ctx, tail, x, y);
+        if (tail) drawForecast(ctx, tail, x, y, padding.top, padding.top + plotHeight);
     }
 
     // Дорожки событий — под графиком, над подписями оси.
@@ -1253,19 +1253,23 @@ function drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeigh
 /* Хвост прогноза: та же кривая тем же цветом, но штрихом — продолжение, а не
    замер. Одним цветом, без отсечений по зонам: окраска по порогам обещала бы
    линейной экстраполяции точность, которой у неё нет. Штрих в полную силу и
-   чуть толще кривой: полупрозрачная версия терялась на подложке нормы, а
-   хвосту отведено полтора десятка пикселей — блёкнуть ему не на чем.
+   чуть толще кривой: полупрозрачная версия терялась на подложке нормы.
    В конце — кольцо: куда прямая приводит через полчаса. Контур, а не заливка,
-   тем же словарём, что у длинного инсулина, — «не замер». */
-function drawForecast(ctx, tail, x, y) {
+   тем же словарём, что у длинного инсулина, — «не замер».
+
+   Полчаса на суточной оси — полтора десятка пикселей, на двухсуточной —
+   меньше десяти: сама линия при любом штрихе читается заусенцем. Поэтому
+   смысл несут кольцо и число рядом с ним, а штрих только связывает их с
+   кривой — и набран мелко, чтобы в отведённые пиксели легло хоть несколько. */
+function drawForecast(ctx, tail, x, y, plotTop, plotBottom) {
     const color = readColor("--accent", "#7eb8f7");
     const endX = x(tail.to.t);
     const endY = y(toMmol(tail.to.mgdl));
 
     ctx.strokeStyle = color;
     ctx.lineWidth = 2.25;
-    ctx.lineCap = "round";
-    ctx.setLineDash([5, 5]);
+    ctx.lineCap = "butt";
+    ctx.setLineDash([3, 3]);
     ctx.beginPath();
     ctx.moveTo(x(tail.from.t), y(toMmol(tail.from.mgdl)));
     ctx.lineTo(endX, endY);
@@ -1273,13 +1277,34 @@ function drawForecast(ctx, tail, x, y) {
     ctx.setLineDash([]);
 
     ctx.beginPath();
-    ctx.arc(endX, endY, 3, 0, Math.PI * 2);
+    ctx.arc(endX, endY, 3.5, 0, Math.PI * 2);
     // Заливка цветом панели: кольцо не должно терять контур там, где под ним
     // проходит коридор «обычно».
     ctx.fillStyle = readColor("--panel", "#0d0d14");
     ctx.fill();
-    ctx.lineWidth = 1.75;
+    ctx.lineWidth = 2;
     ctx.stroke();
+
+    // Число у кольца — то же, что в подсказке, с той же оговоркой «≈»: без
+    // него хвост нем, а наведение на десять пикселей — это упражнение, а не
+    // интерфейс. Короб цветом панели — как у подписи ориентира на оверлее:
+    // число обязано читаться поверх кривой, коридора и сетки. Ставится с
+    // противоположной приходу хвоста стороны: падающий приходит сверху —
+    // подпись вниз, растущий — вверх; у рамки прижимается внутрь холста.
+    const text = `≈ ${formatMmol(tail.to.mgdl)}`;
+    ctx.font = '11px "JetBrains Mono", monospace';
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    const below = tail.to.mgdl <= tail.from.mgdl;
+    const labelY = Math.min(
+        Math.max(endY + (below ? 16 : -16), plotTop + 8),
+        plotBottom - 8
+    );
+    const box = ctx.measureText(text).width + 8;
+    ctx.fillStyle = readColor("--panel", "#0d0d14");
+    ctx.fillRect(endX - box + 3, labelY - 8, box, 16);
+    ctx.fillStyle = color;
+    ctx.fillText(text, endX - 1, labelY);
 }
 
 /* Горизонталь коробки дня: середина наблюдаемого куска, прижатая к рамке.
