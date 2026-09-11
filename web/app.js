@@ -110,9 +110,10 @@ const COLUMN_WIDTH = 7;
 // читаются как одно: «45» и «60» в паре пикселей друг от друга — это «4560».
 const LABEL_GAP = 4;
 
-/* Дневные коробки месячного вида. Ширина одна на все дни: коробка — карточка
-   суток, а не их длительность, и 25-часовые сутки перехода на зимнее время не
-   должны выглядеть толще соседей. Заливка полупрозрачная, чтобы засечка
+/* Дневные коробки месячного вида. Ширина одна на все полные дни: коробка —
+   карточка суток, а не их длительность, и 25-часовые сутки перехода на зимнее
+   время не должны выглядеть толще соседей. Обрезанные окном крайние дни уже —
+   по прожитой доле, см. dailyBoxWidth. Заливка полупрозрачная, чтобы засечка
    медианы читалась и поверх коробки собственного цвета. */
 const BOX_SHARE = 0.6;
 const BOX_MIN_WIDTH = 3;
@@ -1319,11 +1320,25 @@ function dailyBoxSpan(day, x, plotLeft, plotRight, width) {
     return { left, right: left + width };
 }
 
+/* Ширина коробки дня. Крайние дни окна — не сутки, а их кусок: сегодняшний
+   обрезан «сейчас», первый — левым краем окна. Коробка полной ширины на куске
+   в пару часов налезает на соседа: до пяти утра сегодняшняя карточка стояла
+   бы поверх вчерашней, и никакой сдвиг это не чинит — до полудня справа от
+   вчерашней коробки просто нет места на целую. Ширина по прожитой доле решает
+   перекрытие геометрией и говорит правду: карточка куска суток уже карточки
+   целых. Полные дни остаются одной ширины — 25-часовые сутки перехода никто
+   не резал, и толще соседей они не становятся. */
+function dailyBoxWidth(day, days, width) {
+    if (day !== days[0] && day !== days[days.length - 1]) return width;
+    return Math.max(BOX_MIN_WIDTH, width * Math.min(1, (day.end - day.start) / 86400));
+}
+
 /* Подневная форма месяца: коробка p25–p75 с засечкой медианы на каждый день.
    Коробка, а не столбик min–max, нарочно: час прогрева сенсора по 500 мг/дл
-   уходит в p90+ и не двигает ни p75, ни медиану. Ширина коробки одна на все
-   дни — от номинальных суток, а не от фактических: 25-часовой день перехода
-   не должен выглядеть толще соседей. */
+   уходит в p90+ и не двигает ни p75, ни медиану. Ширина у полных дней одна —
+   от номинальных суток, а не от фактических: 25-часовой день перехода не
+   должен выглядеть толще соседей. Обрезанные окном крайние дни уже —
+   см. dailyBoxWidth. */
 function drawDailyBoxes(ctx, days, x, y, plotLeft, plotRight, width) {
     const yLow = y(toMmol(snapshot.target.low));
     const yHigh = y(toMmol(snapshot.target.high));
@@ -1333,7 +1348,8 @@ function drawDailyBoxes(ctx, days, x, y, plotLeft, plotRight, width) {
 
         // Середина наблюдаемого куска: сегодняшняя коробка стоит в центре
         // прожитой части дня, то есть левее правого края холста.
-        const { left } = dailyBoxSpan(day, x, plotLeft, plotRight, width);
+        const boxWidth = dailyBoxWidth(day, days, width);
+        const { left } = dailyBoxSpan(day, x, plotLeft, plotRight, boxWidth);
         const top = y(toMmol(day.p75));
         const bottom = y(toMmol(day.p25));
 
@@ -1355,7 +1371,7 @@ function drawDailyBoxes(ctx, days, x, y, plotLeft, plotRight, width) {
             for (const [from, to, color] of parts) {
                 if (to - from <= 0) continue;
                 ctx.fillStyle = color;
-                ctx.fillRect(left, from, width, to - from);
+                ctx.fillRect(left, from, boxWidth, to - from);
             }
             ctx.globalAlpha = 1;
         }
@@ -1363,7 +1379,7 @@ function drawDailyBoxes(ctx, days, x, y, plotLeft, plotRight, width) {
         // Засечка целиком цветом своей зоны — как одиночная точка на кривой:
         // резать её по порогу не во что, она лежит по одну его сторону.
         ctx.fillStyle = readingColor(day.p50);
-        ctx.fillRect(left, y(toMmol(day.p50)) - 0.75, width, 1.5);
+        ctx.fillRect(left, y(toMmol(day.p50)) - 0.75, boxWidth, 1.5);
     }
 }
 
@@ -1382,7 +1398,8 @@ function drawCrosshair(ctx, muted) {
         // окном дня кусок — считанные пиксели, а прижатая к рамке коробка
         // стоит рядом с ним, и подсвечивать одно без другого значит
         // подсвечивать не то, на что смотрят.
-        const box = dailyBoxSpan(day, geometry.x, geometry.left, geometry.right, geometry.boxWidth);
+        const boxWidth = dailyBoxWidth(day, geometry.days, geometry.boxWidth);
+        const box = dailyBoxSpan(day, geometry.x, geometry.left, geometry.right, boxWidth);
         const from = Math.min(geometry.x(day.start), box.left);
         const to = Math.max(geometry.x(day.end), box.right);
 
