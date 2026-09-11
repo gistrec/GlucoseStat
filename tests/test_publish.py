@@ -227,6 +227,7 @@ class TestDaily:
         snapshot = build_snapshot(readings(120, 130), [], BASE + timedelta(hours=1))
 
         assert snapshot["series"]["day"]["kind"] == "points"
+        assert snapshot["series"]["two_days"]["kind"] == "points"
         assert snapshot["series"]["week"]["kind"] == "points"
         assert snapshot["series"]["month"]["kind"] == "daily"
         assert "points" not in snapshot["series"]["month"]
@@ -328,7 +329,7 @@ class TestCompare:
 
         assert "cv" not in compare
 
-    def test_snapshot_compares_week_and_month_but_not_day(self):
+    def test_snapshot_compares_week_and_month_but_not_hourly_windows(self):
         data = [
             (BASE - timedelta(days=15) + timedelta(minutes=5 * i), 120.0)
             for i in range(15 * 288)
@@ -337,6 +338,7 @@ class TestCompare:
         snapshot = build_snapshot(data, [], BASE)
 
         assert "prev" not in snapshot["stats"]["day"]
+        assert "prev" not in snapshot["stats"]["two_days"]
         assert snapshot["stats"]["week"]["prev"]["reason"] is None
         # Данных 15 дней: месяц есть, а предыдущего месяца ещё нет.
         assert snapshot["stats"]["month"]["prev"]["reason"] == "no_data"
@@ -436,6 +438,20 @@ class TestEvents:
         lanes = _events(journal, BASE - timedelta(days=1))
 
         assert lanes == {"meals": [], "bolus": [], "basal": []}
+
+    def test_snapshot_events_reach_back_two_days(self):
+        # Окно «48 часов» заведено ради «а что было ровно сутки назад»:
+        # события в снимке обязаны покрывать оба дня, а не только последний.
+        # Откат EVENT_WINDOW к суткам оставил бы кнопку на месте, но стёр бы
+        # с её холста именно вчерашние еду и дозы.
+        journal = [
+            self.entry("meal", 60 * 40, carbs=45.0),
+            self.entry("meal", 60 * 50, carbs=30.0),
+        ]
+
+        events = build_snapshot([], journal, BASE)["events"]
+
+        assert events["meals"] == [[unix(BASE - timedelta(hours=40)), 45.0]]
 
 
 class TestJournalAbsent:

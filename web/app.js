@@ -16,16 +16,27 @@ const RELOAD_INTERVAL_MS = 60 * 1000;
 // это уже не задержка, а молчание, о котором нужно сказать вслух.
 const COLLECTOR_SILENT_AFTER_MS = 15 * 60 * 1000;
 
-const RANGE_LABELS = { day: "24 часа", week: "7 дней", month: "30 дней" };
+const RANGE_LABELS = { day: "24 часа", two_days: "48 часов", week: "7 дней", month: "30 дней" };
 
-/* Подпись строки сравнения: какой период взят за точку отсчёта. Сутки снимок
-   не сравнивает вовсе — день против вчерашнего на CGM в основном шум, — но
-   подпись выписана: выбор за сборщиком, а не за страницей. */
+/* Подпись строки сравнения: какой период взят за точку отсчёта. Почасовые
+   окна снимок не сравнивает вовсе — день против вчерашнего на CGM в основном
+   шум, — но подписи выписаны: выбор за сборщиком, а не за страницей. */
 const PREV_LABELS = {
     day: "сутками раньше",
+    two_days: "двумя сутками раньше",
     week: "неделей раньше",
     month: "месяцем раньше",
 };
+
+/* Длина окна в секундах — одна на холст и срез событий: разъехавшись, они
+   резали бы разные окна под одной кнопкой. */
+const SPAN_SECONDS = { day: 86400, two_days: 2 * 86400, week: 7 * 86400, month: 30 * 86400 };
+
+/* Почасовые окна: непрерывная кривая, дорожки событий, коридор обычного дня.
+   «48 часов» — суточная панель, растянутая на «вчера»: те же слои, вдвое
+   больше времени. Окно заведено ради вопроса «а что было ровно сутки назад» —
+   на суточном ответ стоит на самом краю холста и обрезан им. */
+const HOURLY_RANGES = new Set(["day", "two_days"]);
 
 /* Сколько приёмов показывать сразу и сколько добавлять кнопкой. Разбор читают
    с последнего, и десяти строк хватает на пару дней.
@@ -524,10 +535,10 @@ function renderStats() {
     /* GMI живёт по своему окну в две недели, а не по выбранному периоду: под
        одним названием иначе оказывались бы два разных числа. Снимок отдаёт
        null, когда за две недели набралось меньше 70 % измерений — тогда
-       карточки просто нет, вместо солидно выглядящей выдумки. На суточной
-       панели не показываем: она про сегодня, а GMI — про две недели. */
+       карточки просто нет, вместо солидно выглядящей выдумки. На почасовых
+       панелях не показываем: они про сегодня и вчера, а GMI — про две недели. */
     const gmi = snapshot.gmi;
-    if (activeRange !== "day" && gmi) {
+    if (!HOURLY_RANGES.has(activeRange) && gmi) {
         cards.push(
             statCard("GMI", percent(gmi.value), `расчётный HbA1c за ${gmi.days} дней`)
         );
@@ -579,19 +590,28 @@ function niceScale(values) {
     return { min: Math.floor(min) - 0.5, max: Math.ceil(max) + 0.5 };
 }
 
-/* Событийные дорожки рисуются только на суточном окне. За месяц отметок
+/* Событийные дорожки рисуются только на почасовых окнах. За месяц отметок
    набирается сотня: они сливаются в сплошную полосу, из которой ничего не
    прочитать. На длинных окнах за события отвечает разбор ниже, а не график. */
 function eventLanes() {
-    if (activeRange !== "day") return [];
+    if (!HOURLY_RANGES.has(activeRange)) return [];
 
     const events = snapshot.events || {};
+
+    /* Снимок несёт события на самое длинное почасовое окно, короткому достаётся
+       срез. Резать надо здесь, до масштаба и легенды: вчерашний большой обед
+       иначе сжимал бы сегодняшние столбики, а легенда обещала бы ряд без
+       единого столбика на холсте. */
+    const since = snapshot.generated_at - SPAN_SECONDS[activeRange];
+    const cut = (list) => (list || []).filter(([t]) => t >= since);
+
+    const meals = cut(events.meals);
     const lanes = [];
 
-    if ((events.meals || []).length) {
+    if (meals.length) {
         lanes.push({
             unit: "г",
-            bars: events.meals.map(([t, v]) => ({ t, v, series: SERIES.meal })),
+            bars: meals.map(([t, v]) => ({ t, v, series: SERIES.meal })),
         });
     }
 
@@ -600,8 +620,8 @@ function eventLanes() {
        который выдумывает связь на пустом месте. Различаются заливкой:
        короткий сплошной, длинный контуром. */
     const insulin = [
-        ...(events.bolus || []).map(([t, v]) => ({ t, v, series: SERIES.insulin })),
-        ...(events.basal || []).map(([t, v]) => ({ t, v, series: SERIES.basal })),
+        ...cut(events.bolus).map(([t, v]) => ({ t, v, series: SERIES.insulin })),
+        ...cut(events.basal).map(([t, v]) => ({ t, v, series: SERIES.basal })),
     ].sort((a, b) => a.t - b.t);
 
     if (insulin.length) {
@@ -715,7 +735,7 @@ function formatAmount(value) {
 let profileTzWarned = false;
 
 function dayProfile() {
-    if (activeRange !== "day") return null;
+    if (!HOURLY_RANGES.has(activeRange)) return null;
 
     const profile = snapshot.profile;
     if (!profile) return null;
@@ -823,7 +843,11 @@ function drawDayProfile(ctx, runs, x, y) {
    отсечениями по зонам (или дневные коробки) → одиночные точки → дорожки
    событий → перекрестие. Кто нарисован раньше, тот лежит ниже. */
 function drawChart() {
-    const series = snapshot.series[activeRange];
+    // Снимок прежнего сборщика может не знать окна «48 часов»: страница и
+    // данные обновляются не одним щелчком, и минуту-другую после выкладки
+    // здесь лежит старый data.json. Пустая панель на эту минуту — штатный
+    // вид, а не падение на series.kind.
+    const series = snapshot.series[activeRange] || { kind: "points", step: 5, points: [] };
     // Снимок прежнего сборщика приходит без kind: тогда рисуется прежняя
     // ломаная, ни одной ошибки в консоли.
     const daily = series.kind === "daily";
@@ -870,7 +894,7 @@ function drawChart() {
     const plotHeight = height - padding.top - padding.bottom - lanesHeight;
 
     const now = snapshot.generated_at;
-    const spanSeconds = { day: 86400, week: 7 * 86400, month: 30 * 86400 }[activeRange];
+    const spanSeconds = SPAN_SECONDS[activeRange];
     const startTime = now - spanSeconds;
 
     // Профиль обычного дня — до масштаба: края его коридора участвуют в
@@ -956,7 +980,7 @@ function drawChart() {
     ctx.textBaseline = "top";
     // На узком холсте пять подписей сливаются в сплошную строку цифр —
     // «04:0610:06». Лучше меньше делений, чем нечитаемые.
-    const ticks = plotWidth < 340 ? 2 : activeRange === "day" ? 4 : 5;
+    const ticks = plotWidth < 340 ? 2 : HOURLY_RANGES.has(activeRange) ? 4 : 5;
     let previousDay = null;
 
     // Дневной вид подписывает ось зоной снимка: его коробки нарезаны на
@@ -973,21 +997,20 @@ function drawChart() {
             month: "short",
         });
 
-        // Суточное окно пересекает полночь, и без даты непонятно, «02:35» —
+        // Почасовое окно пересекает полночь, и без даты непонятно, «02:35» —
         // это сегодня или вчера. Дата подписывается там, где день меняется,
         // а не у каждой метки: повторять её пять раз незачем.
-        const labels =
-            activeRange === "day"
-                ? [
-                      date.toLocaleTimeString("ru-RU", {
-                          timeZone: TIMEZONE,
-                          hour: "2-digit",
-                          minute: "2-digit",
-                      }),
-                  ]
-                : [day];
+        const labels = HOURLY_RANGES.has(activeRange)
+            ? [
+                  date.toLocaleTimeString("ru-RU", {
+                      timeZone: TIMEZONE,
+                      hour: "2-digit",
+                      minute: "2-digit",
+                  }),
+              ]
+            : [day];
 
-        if (activeRange === "day" && day !== previousDay) {
+        if (HOURLY_RANGES.has(activeRange) && day !== previousDay) {
             labels.push(day);
         }
         previousDay = day;

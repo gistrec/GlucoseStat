@@ -16,9 +16,11 @@ LibreLinkUp ──poll 5m──▶ main.py ──▶ MySQL ──▶ publish.py 
 
 ## What the page shows
 
-Current value with a trend arrow, a chart over 24 hours / 7 days / 30 days,
-and per-period statistics: time in range, average, spread, coefficient of
-variation, and GMI.
+Current value with a trend arrow, a chart over 24 / 48 hours / 7 days /
+30 days, and per-period statistics: time in range, average, spread,
+coefficient of variation, and GMI. The 48-hour window exists to answer "what
+was happening exactly a day ago" — on the 24-hour one that moment sits on the
+very edge of the canvas, clipped by it.
 
 GMI is the one figure that ignores the selected period: it is always the
 estimated HbA1c over the last **14 days**, the window Bergenstal et al. (2018)
@@ -56,8 +58,8 @@ arbitrary, and a chart built that way invents a correlation that isn't in the
 data. Short and long insulin share one lane because they share a unit; the short
 one is filled, the long one is an outline.
 
-Only the 24-hour window shows them. A month holds a hundred marks, and they
-merge into a solid band that says nothing.
+Only the 24- and 48-hour windows show them. A month holds a hundred marks,
+and they merge into a solid band that says nothing.
 
 ## Meal review
 
