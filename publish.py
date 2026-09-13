@@ -87,10 +87,6 @@ COMPARE_MIN_COVERAGE = 0.7
 COMPARE_MIN_AVG_MGDL = 5
 COMPARE_MIN_TIR_PP = 5
 
-# Номинальный шаг CGM: 288 измерений в сутки. Libre 3 отдаёт чаще, так что
-# порог покрытия получается консервативным — и хорошо.
-CGM_READINGS_PER_DAY = 288
-
 # События рисуются только на почасовых панелях — 24 и 48 часов: сотня отметок
 # на месячном окне сливается в сплошную полосу, из которой ничего не прочитать.
 # Двое суток, а не одни: окно «48 часов» существует ради «а что было ровно
@@ -123,16 +119,17 @@ def _downsample(
     ]
 
 
-def _expected_readings(duration: timedelta) -> float:
-    """Сколько замеров номинально должно прийти за ``duration``.
+def _covered(readings: list[tuple[datetime, float]]) -> float:
+    """Сколько секунд окна фактически покрыто показаниями.
 
     Одна арифметика покрытия на весь модуль: «покрытие» обязано означать
-    буквально одно и то же в GMI, подневной сводке и сравнении периодов, а
-    три рукописных варианта (``* days``, ``/ 86400``, деление timedelta)
-    разошлись бы при первом же неполном дне.
+    буквально одно и то же в GMI, подневной сводке и сравнении периодов.
+    По времени, а не по числу замеров: при минутном опросе счёт замеров
+    объявлял бы четыре дня из четырнадцати «покрытием 140 %», а неделя
+    пятиминутного бэкфилла выглядела бы тонкой при полном покрытии.
     """
 
-    return CGM_READINGS_PER_DAY * (duration / timedelta(days=1))
+    return sum(weight for _, weight in _weigh(readings)) if readings else 0.0
 
 
 # Потолок веса одного замера. Дальше начинается молчание сенсора, которое не
@@ -185,6 +182,10 @@ def _stats(readings: list[tuple[datetime, float]]) -> dict | None:
 
     return {
         "count": count,
+        # Покрытые секунды окна. Наружу почти не смотрят, но именно по ним
+        # _compare решает, есть ли с чем сравнивать: счёт замеров при
+        # неоднородном шаге записи о покрытии не говорит ничего.
+        "covered": round(total),
         "avg": round(average, 1),
         "min": round(min(values)),
         "max": round(max(values)),
@@ -245,10 +246,9 @@ def _daily(
         if not day_readings:
             days.append({"start": int(start.timestamp()), "end": int(end.timestamp()), "count": 0})
         else:
-            values = [mgdl for _, mgdl in day_readings]
-            # Ожидание — по фактической длине наблюдаемого куска: полный
+            # Знаменатель — фактическая длина наблюдаемого куска: полный
             # 25-часовой день перехода не помечается неполным.
-            coverage = len(values) / _expected_readings(end - start)
+            coverage = _covered(day_readings) / (end - start).total_seconds()
             # Веса — те же, что в _stats: коробка дня и его плитки обязаны
             # рассказывать об одном и том же дне одинаковым способом.
             pairs = _weigh(day_readings)
@@ -260,7 +260,9 @@ def _daily(
                     "p25": round(_weighted_percentile(pairs, 25)),
                     "p50": round(_weighted_percentile(pairs, 50)),
                     "p75": round(_weighted_percentile(pairs, 75)),
-                    "coverage": round(100 * coverage),
+                    # Потолок: вес хвостовой точки может дать волосок сверх
+                    # ста, а «101 %» читается как баг, не как полнота.
+                    "coverage": min(100, round(100 * coverage)),
                     "partial": clipped or coverage < DAY_MIN_COVERAGE,
                 }
             )
@@ -282,7 +284,7 @@ def _gmi(readings: list[tuple[datetime, float]], now: datetime) -> dict | None:
     if not window:
         return None
 
-    coverage = len(window) / _expected_readings(GMI_WINDOW)
+    coverage = _covered(window) / GMI_WINDOW.total_seconds()
     if coverage < GMI_MIN_COVERAGE:
         return None
 
@@ -296,8 +298,8 @@ def _gmi(readings: list[tuple[datetime, float]], now: datetime) -> dict | None:
     return {
         "value": round(3.31 + 0.02392 * average, 1),
         "days": GMI_WINDOW.days,
-        # Больше 100 % — норма: Libre отдаёт чаще номинальных 288 в сутки.
-        "coverage": round(100 * coverage),
+        # Потолок — как у покрытия дня: хвостовой вес даёт волосок сверх ста.
+        "coverage": min(100, round(100 * coverage)),
     }
 
 
@@ -318,7 +320,7 @@ def _compare(stats: dict, previous: dict | None, span: timedelta) -> dict:
     if previous is None:
         return {"days": days, "count": 0, "reason": "no_data"}
 
-    if previous["count"] < COMPARE_MIN_COVERAGE * _expected_readings(span):
+    if previous["covered"] < COMPARE_MIN_COVERAGE * span.total_seconds():
         return {"days": days, "count": previous["count"], "reason": "thin"}
 
     avg_delta = round(stats["avg"] - previous["avg"], 1)

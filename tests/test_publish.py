@@ -26,7 +26,6 @@ from publish import (
     DAY_MIN_COVERAGE,
     TARGET_HIGH_MGDL,
     TARGET_LOW_MGDL,
-    CGM_READINGS_PER_DAY,
     _compare,
     _daily,
     _downsample,
@@ -524,8 +523,12 @@ class TestGmi:
 
     EXPECTED_AT_100 = 3.31 + 0.02392 * 100
 
+    # Замер каждые 5 минут — 288 в сутки; покрытие тут меряется временем,
+    # и плотность сетки на него не влияет.
+    READINGS_PER_DAY = 288
+
     def fortnight(self, value=100.0):
-        count = CGM_READINGS_PER_DAY * 14
+        count = self.READINGS_PER_DAY * 14
         start = BASE - timedelta(days=14)
         return [(start + timedelta(minutes=5 * i), value) for i in range(count)]
 
@@ -540,9 +543,17 @@ class TestGmi:
         """Расчётный HbA1c по трём дням выглядит так же солидно, как по
         четырнадцати, а означает совсем другое."""
 
-        sparse = self.fortnight()[: CGM_READINGS_PER_DAY * 3]
+        sparse = self.fortnight()[: self.READINGS_PER_DAY * 3]
 
         assert _gmi(sparse, BASE) is None
+
+    def test_dense_days_do_not_inflate_coverage(self):
+        # Четыре дня минутных замеров из четырнадцати — это 4/14 покрытия,
+        # а не «140 %», как выходило при счёте строк вместо времени.
+        start = BASE - timedelta(days=4)
+        dense = [(start + timedelta(minutes=i), 100.0) for i in range(4 * 1440)]
+
+        assert _gmi(dense, BASE) is None
 
     def test_readings_older_than_the_window_do_not_count(self):
         # Тысяча измерений по 400 мг/дл сдвинула бы среднее, попади они в расчёт
