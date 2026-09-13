@@ -93,3 +93,8 @@ per-process.
   which looks like a passing result.
 * Always read raw process output. Grepping for the line you hope to see hides
   the run that never happened.
+* `preview.py` without `--shot` calls `webbrowser.open` — on a desktop host
+  the drive quietly opens a tab in the user's browser. Use `--shot`, or
+  accept the tab when the live server is needed for `--dump-dom`.
+* Concurrent drives collide on the preview's default port — pass each one its
+  own `--port`, or one drive ends up dumping another's page.
