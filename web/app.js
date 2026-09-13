@@ -404,9 +404,17 @@ function trendArrow(rate) {
 /* Цвет отдельной отметки на кривой — кружка, а не отрезка. Отрезки красятся
    отсечением по линии порога, но точка лежит целиком по одну его сторону, и
    срезанный пополам кружок читался бы как ещё одно значение рядом. */
+/* Снимок без mid — от сборщика, который ещё не публикует внутреннюю границу.
+   Совпав с high, она гасит жёлтую зону, и страница читается по-старому, а не
+   рисует NaN-полосы поверх графика. */
+function targetMid() {
+    return snapshot.target.mid ?? snapshot.target.high;
+}
+
 function readingColor(mgdl) {
     if (mgdl < snapshot.target.low) return readColor("--hypo", "#ff5b5b");
-    if (mgdl > snapshot.target.high) return readColor("--hyper", "#ffd166");
+    if (mgdl > snapshot.target.high) return readColor("--high", "#f77e9b");
+    if (mgdl > targetMid()) return readColor("--hyper", "#ffd166");
     return readColor("--accent", "#7eb8f7");
 }
 
@@ -414,6 +422,7 @@ function zoneColor(mgdl) {
     const { low, high } = snapshot.target;
     if (mgdl < low) return "var(--hypo)";
     if (mgdl > high) return "var(--high)";
+    if (mgdl > targetMid()) return "var(--hyper)";
     return "var(--in-range)";
 }
 
@@ -1019,13 +1028,30 @@ function drawChart() {
     // под всем, что случилось сегодня, включая подложку нормы.
     if (runs.length) drawDayProfile(ctx, runs, x, y);
 
-    // Целевой диапазон — подложка, а не линии: так видно «сколько времени
-    // график провёл внутри», не считая пересечения глазами.
-    const targetTop = y(toMmol(snapshot.target.high));
-    const targetBottom = y(toMmol(snapshot.target.low));
-    ctx.fillStyle = inRange;
+    /* Три зоны — подложка, а не линии: так видно «сколько времени график
+       провёл в какой», не считая пересечения глазами. Зелёная — норма натощак
+       (до mid), жёлтая — допустимо после еды (mid–high), красная — выше цели;
+       гипогликемия внизу красится своим красным, тем же, что и кривая в ней.
+       Зоны режутся по краям панели: при узкой шкале y уходит за холст, и без
+       обрезки красное закрашивало бы подписи осей. */
+    const plotFloor = padding.top + plotHeight;
+    const yTargetLow = y(toMmol(snapshot.target.low));
+    const yTargetMid = y(toMmol(targetMid()));
+    const yTargetHigh = y(toMmol(snapshot.target.high));
+    const zones = [
+        [yTargetMid, yTargetLow, inRange],
+        [yTargetHigh, yTargetMid, readColor("--hyper", "#ffd166")],
+        [padding.top, yTargetHigh, readColor("--high", "#f77e9b")],
+        [yTargetLow, plotFloor, readColor("--hypo", "#ff5b5b")],
+    ];
     ctx.globalAlpha = Number(styles.getPropertyValue("--band-alpha")) || 0.07;
-    ctx.fillRect(padding.left, targetTop, plotWidth, targetBottom - targetTop);
+    for (const [zoneTop, zoneBottom, color] of zones) {
+        const from = Math.max(zoneTop, padding.top);
+        const to = Math.min(zoneBottom, plotFloor);
+        if (to - from <= 0) continue;
+        ctx.fillStyle = color;
+        ctx.fillRect(padding.left, from, plotWidth, to - from);
+    }
     ctx.globalAlpha = 1;
 
     // Горизонтальная сетка с подписями в ммоль/л.
@@ -1214,21 +1240,31 @@ function drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeigh
         ctx.restore();
     }
 
-    /* Выше цели — та же обводка в полосе над зелёной подложкой. Порог общий с
-       ней и с долей времени в диапазоне: третьего числа, по которому мог бы
-       меняться цвет, на странице нет, и заводить его здесь значило бы рисовать
-       границу, которую больше нигде не видно.
-
-       Времени выше цели набирается половина суток, так что это не тревога, а
-       состояние — цвет спокойнее красного внизу, которого бывает по несколько
-       минут за неделю. */
+    /* Жёлтая полоса — между mid и high: сахар, допустимый после еды. Времени
+       здесь набирается половина суток, так что это не тревога, а состояние —
+       цвет спокойнее красных по краям. Пороги общие с зонами подложки: граница
+       цвета кривой и граница зоны обязаны быть одной линией. */
     const hyperBottom = y(toMmol(snapshot.target.high));
+    const midTop = y(toMmol(targetMid()));
+    if (midTop > hyperBottom) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(padding.left, hyperBottom, plotWidth, midTop - hyperBottom);
+        ctx.clip();
+        ctx.strokeStyle = readColor("--hyper", "#ffd166");
+        traceSeries();
+        ctx.restore();
+    }
+
+    /* Выше high — красным всегда, была еда или нет. Не --hypo, а --high: тем
+       же цветом страница зовёт «выше цели» в числе шапки и статистике, а
+       красный гипогликемии остаётся только у неё. */
     if (hyperBottom > padding.top) {
         ctx.save();
         ctx.beginPath();
         ctx.rect(padding.left, padding.top, plotWidth, hyperBottom - padding.top);
         ctx.clip();
-        ctx.strokeStyle = readColor("--hyper", "#ffd166");
+        ctx.strokeStyle = readColor("--high", "#f77e9b");
         traceSeries();
         ctx.restore();
     }
@@ -1341,6 +1377,7 @@ function dailyBoxWidth(day, days, width) {
    см. dailyBoxWidth. */
 function drawDailyBoxes(ctx, days, x, y, plotLeft, plotRight, width) {
     const yLow = y(toMmol(snapshot.target.low));
+    const yMid = y(toMmol(targetMid()));
     const yHigh = y(toMmol(snapshot.target.high));
 
     for (const day of days) {
@@ -1362,8 +1399,9 @@ function drawDailyBoxes(ctx, days, x, y, plotLeft, plotRight, width) {
                отрицательные пересечения не рисуются — день целиком ниже
                нижнего порога выходит одноцветным, без полос-фантомов. */
             const parts = [
-                [top, Math.min(bottom, yHigh), readColor("--hyper", "#ffd166")],
-                [Math.max(top, yHigh), Math.min(bottom, yLow), readColor("--accent", "#7eb8f7")],
+                [top, Math.min(bottom, yHigh), readColor("--high", "#f77e9b")],
+                [Math.max(top, yHigh), Math.min(bottom, yMid), readColor("--hyper", "#ffd166")],
+                [Math.max(top, yMid), Math.min(bottom, yLow), readColor("--accent", "#7eb8f7")],
                 [Math.max(top, yLow), bottom, readColor("--hypo", "#ff5b5b")],
             ];
 

@@ -38,7 +38,11 @@ card disappears rather than showing a figure: an HbA1c estimated from three
 days looks exactly as authoritative as one estimated from fourteen.
 
 Values are stored in mg/dL and displayed in mmol/L. The target range is
-70–180 mg/dL (3.9–10.0 mmol/L), the standard CGM consensus range.
+70–180 mg/dL (3.9–10.0 mmol/L), the standard CGM consensus range. The chart
+splits it further at 130 mg/dL (7.2 mmol/L), the fasting target: green below
+that line, yellow up to 180 — acceptable after meals — and red beyond either
+end of the range. Time-in-range statistics still count the full 70–180 band;
+the three zones only change how the chart reads.
 
 The LibreLinkUp payload also contains the patient's name, date of birth and
 sensor serial, and none of that belongs on a public URL, so `data.json` carries
