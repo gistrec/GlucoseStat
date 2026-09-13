@@ -518,7 +518,10 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
         origins=meal_origins_since(now - ANALYSIS_WINDOW),
         # Не из readings: последнее измерение может быть старше окна графиков,
         # и тогда странице нужно показать «данных нет с такого-то числа».
-        latest=_trend(last_readings()),
+        # Сорок строк, а не десять: выборка обязана накрыть TREND_WINDOW при
+        # минутном опросе, иначе точки старше 15 минут в ней нет, rate выходит
+        # null — и страница молча гасит прогноз со стрелкой тренда.
+        latest=_trend(last_readings(40)),
     )
 
     directory = os.path.dirname(os.path.abspath(path))

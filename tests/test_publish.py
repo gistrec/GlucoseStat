@@ -360,7 +360,7 @@ class TestPublishWindow:
         monkeypatch.setattr("publish.readings_since", spy)
         monkeypatch.setattr("publish.journal_since", lambda since: [])
         monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
-        monkeypatch.setattr("publish.last_readings", list)
+        monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
 
         publish(path=str(tmp_path / "data.json"), last_success=1.0)
 
@@ -559,7 +559,7 @@ class TestPublishCarryForward:
         monkeypatch.setattr("publish.readings_since", lambda since: [])
         monkeypatch.setattr("publish.journal_since", lambda since: [])
         monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
-        monkeypatch.setattr("publish.last_readings", list)
+        monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
 
         path = str(tmp_path / "data.json")
         publish(path=path, last_success=1756500000.0)
@@ -576,7 +576,7 @@ class TestPublishCarryForward:
         monkeypatch.setattr("publish.readings_since", lambda since: [])
         monkeypatch.setattr("publish.journal_since", lambda since: [])
         monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
-        monkeypatch.setattr("publish.last_readings", list)
+        monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
 
         # Каталог на месте файла: переименовать в него нельзя, и publish
         # свалится уже после того, как временный файл написан.
