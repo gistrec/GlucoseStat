@@ -733,6 +733,15 @@ body {
     margin-bottom: 32px;
 }
 
+/* Три в ряд, а не сколько влезет: плиток в обеих секциях по пять, и при
+   четырёх колонках второй ряд — одна плитка и три дыры. При трёх выходит
+   3+2 — одна дыра вместо трёх. Узкие экраны остаются на auto-fit выше. */
+@media (min-width: 640px) {
+    .stats {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
 .stat {
     background: var(--panel);
     border: 1px solid var(--panel-chrome);
