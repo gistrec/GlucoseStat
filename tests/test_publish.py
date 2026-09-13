@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from conftest import BASE
+from daytime import _percentile, _weighted_percentile
 from publish import (
     COMPARE_MIN_AVG_MGDL,
     COMPARE_MIN_TIR_PP,
@@ -115,6 +116,49 @@ class TestStats:
         jumpy = _stats(readings(60, 120, 180))["cv"]
 
         assert jumpy > steady
+
+
+class TestTimeWeighting:
+    """Сводки считаются по времени, а не по числу замеров.
+
+    Шаг записи неоднороден: живой опрос минутный, бэкфилл — пятиминутный.
+    Плотный час не должен перевешивать редкий, а при равномерном шаге все
+    числа обязаны совпасть с прежними до последнего знака.
+    """
+
+    def test_equal_weights_match_the_plain_percentile(self):
+        values = [140, 90, 200, 110, 75, 160, 130]
+        pairs = [(v, 300.0) for v in values]
+
+        for q in (10, 25, 50, 75, 90):
+            assert _weighted_percentile(pairs, q) == pytest.approx(
+                _percentile(values, q)
+            )
+
+    def test_heavier_values_pull_the_percentile(self):
+        pairs = [(100, 300.0), (150, 900.0), (200, 600.0)]
+
+        assert _weighted_percentile(pairs, 50) == pytest.approx(166.67, abs=0.01)
+
+    def test_a_dense_hour_does_not_outweigh_a_sparse_one(self):
+        # Час минутных 200 и час пятиминутных 100 покрывают одинаковое время:
+        # по замерам их 60 против 12, по времени — поровну.
+        dense = readings(*[200] * 60, step_minutes=1)
+        sparse = readings(*[100] * 12, step_minutes=5, start=BASE + timedelta(hours=1))
+        stats = _stats(dense + sparse)
+
+        assert stats["avg"] == 150.0
+        assert stats["tir"] == 50.0
+        assert stats["above"] == 50.0
+
+    def test_a_reading_before_silence_is_capped(self):
+        # Точка перед двухчасовым молчанием представляет 15 минут, а не два
+        # часа: молчание не покрыто никем.
+        lone = readings(250)
+        dense = readings(*[100] * 61, step_minutes=1, start=BASE + timedelta(hours=2))
+        stats = _stats(lone + dense)
+
+        assert stats["avg"] == pytest.approx(129.6, abs=0.1)
 
 
 class TestDaily:

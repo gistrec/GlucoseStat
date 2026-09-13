@@ -14,7 +14,7 @@ from datetime import date, datetime, time, timedelta, timezone
 
 from agp import day_profile
 from analysis import analyse
-from daytime import DISPLAY_TZ, _percentile, _zone
+from daytime import DISPLAY_TZ, _weighted_percentile, _zone
 from database.queries import (
     journal_since,
     last_readings,
@@ -135,21 +135,52 @@ def _expected_readings(duration: timedelta) -> float:
     return CGM_READINGS_PER_DAY * (duration / timedelta(days=1))
 
 
+# Потолок веса одного замера. Дальше начинается молчание сенсора, которое не
+# покрыто никем: точка перед часовым разрывом не вправе «представлять» весь
+# этот час, иначе одинокий замер перед сном перевесил бы половину вечера.
+WEIGHT_CAP_SECONDS = 15 * 60
+
+
+def _weigh(readings: list[tuple[datetime, float]]) -> list[tuple[float, float]]:
+    """Пары ``(mgdl, вес в секундах)``: вес — интервал до следующего замера.
+
+    Все сводки по пулу точек считаются по времени, а не по числу замеров:
+    шаг записи неоднороден — живой опрос минутный, бэкфилл после сбоя идёт
+    пятиминутной сеткой, — и без весов плотный час весил бы впятеро больше
+    соседнего. Последней точке достаётся шаг её соседа: интервала после неё
+    ещё нет, а нулевой вес молча выкидывал бы свежайший замер из статистики.
+    """
+
+    if len(readings) == 1:
+        return [(readings[0][1], 1.0)]
+
+    pairs = []
+    for (moment, mgdl), (following, _) in zip(readings, readings[1:]):
+        gap = min((following - moment).total_seconds(), WEIGHT_CAP_SECONDS)
+        pairs.append((mgdl, gap))
+    pairs.append((readings[-1][1], pairs[-1][1]))
+    return pairs
+
+
 def _stats(readings: list[tuple[datetime, float]]) -> dict | None:
     """Summarise a window: average, time in range, variability, GMI."""
 
     if not readings:
         return None
 
+    pairs = _weigh(readings)
     values = [mgdl for _, mgdl in readings]
     count = len(values)
-    average = sum(values) / count
+    total = sum(weight for _, weight in pairs)
+    average = sum(value * weight for value, weight in pairs) / total
 
-    in_range = sum(1 for v in values if TARGET_LOW_MGDL <= v <= TARGET_HIGH_MGDL)
-    below = sum(1 for v in values if v < TARGET_LOW_MGDL)
-    above = sum(1 for v in values if v > TARGET_HIGH_MGDL)
+    in_range = sum(
+        weight for value, weight in pairs if TARGET_LOW_MGDL <= value <= TARGET_HIGH_MGDL
+    )
+    below = sum(weight for value, weight in pairs if value < TARGET_LOW_MGDL)
+    above = sum(weight for value, weight in pairs if value > TARGET_HIGH_MGDL)
 
-    variance = sum((v - average) ** 2 for v in values) / count
+    variance = sum(weight * (value - average) ** 2 for value, weight in pairs) / total
     deviation = variance**0.5
 
     return {
@@ -157,9 +188,9 @@ def _stats(readings: list[tuple[datetime, float]]) -> dict | None:
         "avg": round(average, 1),
         "min": round(min(values)),
         "max": round(max(values)),
-        "tir": round(100 * in_range / count, 1),
-        "below": round(100 * below / count, 1),
-        "above": round(100 * above / count, 1),
+        "tir": round(100 * in_range / total, 1),
+        "below": round(100 * below / total, 1),
+        "above": round(100 * above / total, 1),
         # Коэффициент вариации: ≤36% считается стабильной гликемией.
         "cv": round(100 * deviation / average, 1) if average else None,
     }
@@ -218,14 +249,17 @@ def _daily(
             # Ожидание — по фактической длине наблюдаемого куска: полный
             # 25-часовой день перехода не помечается неполным.
             coverage = len(values) / _expected_readings(end - start)
+            # Веса — те же, что в _stats: коробка дня и его плитки обязаны
+            # рассказывать об одном и том же дне одинаковым способом.
+            pairs = _weigh(day_readings)
             days.append(
                 {
                     "start": int(start.timestamp()),
                     "end": int(end.timestamp()),
                     **_stats(day_readings),
-                    "p25": round(_percentile(values, 25)),
-                    "p50": round(_percentile(values, 50)),
-                    "p75": round(_percentile(values, 75)),
+                    "p25": round(_weighted_percentile(pairs, 25)),
+                    "p50": round(_weighted_percentile(pairs, 50)),
+                    "p75": round(_weighted_percentile(pairs, 75)),
                     "coverage": round(100 * coverage),
                     "partial": clipped or coverage < DAY_MIN_COVERAGE,
                 }
@@ -252,7 +286,12 @@ def _gmi(readings: list[tuple[datetime, float]], now: datetime) -> dict | None:
     if coverage < GMI_MIN_COVERAGE:
         return None
 
-    average = sum(mgdl for _, mgdl in window) / len(window)
+    # Средняя по времени, как и в _stats: формула GMI определена через
+    # среднюю глюкозу за период, а не через среднее по строкам журнала.
+    pairs = _weigh(window)
+    average = sum(value * weight for value, weight in pairs) / sum(
+        weight for _, weight in pairs
+    )
 
     return {
         "value": round(3.31 + 0.02392 * average, 1),

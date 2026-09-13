@@ -38,3 +38,31 @@ def _percentile(values: list[float], q: float) -> float:
     low = math.floor(position)
     high = math.ceil(position)
     return ordered[low] + (ordered[high] - ordered[low]) * (position - low)
+
+
+def _weighted_percentile(pairs: list[tuple[float, float]], q: float) -> float:
+    """Перцентиль пар ``(значение, вес)``; при равных весах — та же R type 7.
+
+    Позиция значения — накопленный вес слева, делённый на полный вес без
+    последнего: при равных весах это в точности (i-1)/(n-1) обычного type 7,
+    так что переход на веса сам по себе не сдвигает ни одного числа — сдвиг
+    появляется только там, где веса действительно разные.
+    """
+
+    ordered = sorted(pairs)
+    if len(ordered) == 1:
+        return ordered[0][0]
+
+    span = sum(weight for _, weight in ordered) - ordered[-1][1]
+    if span <= 0:
+        return ordered[-1][0]
+
+    target = span * q / 100
+    seen = 0.0
+    for (value, weight), (following, _) in zip(ordered, ordered[1:]):
+        if seen + weight >= target:
+            if weight == 0:
+                return value
+            return value + (following - value) * (target - seen) / weight
+        seen += weight
+    return ordered[-1][0]
