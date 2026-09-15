@@ -161,7 +161,9 @@ const els = {
     ratioTable: document.getElementById("ratio-table"),
     ratioSizeTable: document.getElementById("ratio-size-table"),
     ratioSizeWrap: document.getElementById("ratio-size-wrap"),
+    reviewPanel: document.getElementById("review-panel"),
     overlay: document.getElementById("overlay"),
+    overlayTip: document.getElementById("overlay-tip"),
     overlayLegend: document.getElementById("overlay-legend"),
     meals: document.getElementById("meals"),
     footUpdated: document.getElementById("foot-updated"),
@@ -2092,7 +2094,7 @@ function showTip(clientX) {
     })}, ${TIMEZONE_LABEL}`;
 
     els.tip.replaceChildren(time, ...rows);
-    placeTip(clientX);
+    placeTip(els.tip, els.chart, els.canvas, geometry.plotTop, clientX);
 }
 
 /* Подсказка дневного вида: не мгновение, а сутки. Медиана с меткой цвета
@@ -2159,25 +2161,25 @@ function showDayTip(clientX) {
     }
 
     els.tip.replaceChildren(...rows);
-    placeTip(clientX);
+    placeTip(els.tip, els.chart, els.canvas, geometry.plotTop, clientX);
 }
 
 /* Позиция считается от карточки, а не от холста: у карточки есть внутренний
-   отступ, и без поправки подсказка уезжает на его ширину. */
-function placeTip(clientX) {
-    els.tip.hidden = false;
+   отступ, и без поправки подсказка уезжает на его ширину.
 
-    const chart = els.chart.getBoundingClientRect();
-    const canvas = els.canvas.getBoundingClientRect();
-    const width = els.tip.offsetWidth;
-    const half = width / 2;
-    const wanted = clientX - chart.left;
+   Карточка и холст приходят параметрами — тем же счётом живёт подсказка
+   оверлея в разборе приёмов. Своё у неё только содержимое: прижать её к краю
+   собственной карточки нужно ровно так же. */
+function placeTip(tip, host, canvas, plotTop, clientX) {
+    tip.hidden = false;
 
-    els.tip.style.left = `${Math.min(
-        Math.max(wanted, half + 4),
-        chart.width - half - 4
-    )}px`;
-    els.tip.style.top = `${canvas.top - chart.top + geometry.plotTop}px`;
+    const card = host.getBoundingClientRect();
+    const box = canvas.getBoundingClientRect();
+    const half = tip.offsetWidth / 2;
+    const wanted = clientX - card.left;
+
+    tip.style.left = `${Math.min(Math.max(wanted, half + 4), card.width - half - 4)}px`;
+    tip.style.top = `${box.top - card.top + plotTop}px`;
 }
 
 function hideTip() {
@@ -2189,18 +2191,38 @@ function hideTip() {
 /* Ряды оверлея. Отдельные кривые намеренно приглушены: они дают форму и
    разброс, а читается по ним медиана. */
 const OVERLAY_SERIES = {
-    single: { token: "--muted", fallback: "#8a90a6", label: "Отдельные приёмы", line: true },
-    median: { token: "--accent", fallback: "#7eb8f7", label: "Медиана", line: true },
+    single: {
+        token: "--muted",
+        fallback: "#8a90a6",
+        label: "Отдельные приёмы",
+        unit: "ммоль/л",
+        line: true,
+    },
+    median: {
+        token: "--accent",
+        fallback: "#7eb8f7",
+        label: "Медиана",
+        unit: "ммоль/л",
+        line: true,
+    },
     // Цвет еды, а не акцента: акцентом нарисована медиана, и вторая синяя
     // линия читалась бы как ещё одна сводка, а не как один приём.
     picked: {
         token: "--meal",
         fallback: "#bd8a30",
         label: "Выбранный приём",
+        unit: "ммоль/л",
         line: true,
         thick: true,
     },
 };
+
+/* Раскладка последней отрисовки оверлея и минута под указателем — та же пара,
+   что geometry и hoverTime у графика выше, и по той же причине: считать
+   геометрию заново на каждое движение мыши значит однажды разойтись с тем, что
+   нарисовано. Минута, а не момент времени: ось оверлея — время от еды. */
+let overlayGeometry = null;
+let overlayHoverMin = null;
 
 /* Какой приём подсвечен на оверлее. Закреплённый нажатием — состояние покоя,
    к которому подсветка возвращается; указатель и фокус поверх него только
@@ -2281,6 +2303,10 @@ function drawOverlay(analysis) {
     const ctx = canvas.getContext("2d");
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, width, height);
+
+    // Пустой холст не оставляет за собой раскладку: наведение на него обязано
+    // ничего не найти, а не считать по прошлому набору кривых.
+    overlayGeometry = null;
 
     const drawn = analysis.meals.filter((meal) => meal.curve.length > 1);
     if (!drawn.length) return;
@@ -2434,6 +2460,176 @@ function drawOverlay(analysis) {
     // обещала бы линию, которой на холсте нет.
     if (picked >= 0) legend.push(legendItem(OVERLAY_SERIES.picked));
     els.overlayLegend.replaceChildren(...legend);
+
+    overlayGeometry = {
+        x,
+        y,
+        span,
+        left: padding.left,
+        right: width - padding.right,
+        plotTop: padding.top,
+        plotBottom: height - padding.bottom,
+        // Нормализованные кривые, а не сырые приёмы: подсказка называет те же
+        // отклонения, что нарисованы, и считать их второй раз незачем.
+        curves,
+        median,
+        meals: drawn,
+        picked,
+    };
+
+    // Последним, поверх всего: под указателем важнее прочитать значение, чем
+    // сохранить в целости подпись ориентира.
+    drawOverlayCursor(ctx);
+}
+
+// Допуск поиска значения под указателем. Кривые идут пятиминутным шагом, так
+// что десять минут переживают один пропуск сенсора, но не выдают за значение
+// под курсором точку из другого куска кривой.
+const OVERLAY_NEAREST_MIN = 10;
+
+function overlayValueAt(curve, minute) {
+    let best = null;
+    for (const [offset, mgdl] of curve) {
+        const distance = Math.abs(offset - minute);
+        if (distance <= OVERLAY_NEAREST_MIN && (best === null || distance < best[0])) {
+            best = [distance, mgdl];
+        }
+    }
+    return best === null ? null : best[1];
+}
+
+/* Засечка на кривой: кольцо цветом панели вокруг точки — тот же приём, что у
+   графика выше, и по той же причине: без кольца точка теряется там, где
+   кривые сходятся. */
+function overlayDot(ctx, minute, mgdl, color) {
+    ctx.beginPath();
+    ctx.arc(overlayGeometry.x(minute), overlayGeometry.y(toMmol(mgdl)), 4, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = readColor("--panel", "#0d0d14");
+    ctx.stroke();
+}
+
+function drawOverlayCursor(ctx) {
+    if (overlayHoverMin === null || !overlayGeometry) return;
+
+    const px = Math.round(overlayGeometry.x(overlayHoverMin)) + 0.5;
+    if (px < overlayGeometry.left || px > overlayGeometry.right) return;
+
+    ctx.strokeStyle = readColor("--muted", "#8a90a6");
+    ctx.globalAlpha = 0.45;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(px, overlayGeometry.plotTop);
+    ctx.lineTo(px, overlayGeometry.plotBottom);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // Засечки — только у двух названных рядов. У отдельных кривых их нет
+    // намеренно: десяток колец на одной вертикали не сообщает ничего, чего не
+    // сказала бы строка разброса в подсказке.
+    const median = overlayValueAt(overlayGeometry.median, overlayHoverMin);
+    if (median !== null) {
+        overlayDot(ctx, overlayHoverMin, median, readColor("--accent", "#7eb8f7"));
+    }
+
+    if (overlayGeometry.picked >= 0) {
+        const own = overlayValueAt(
+            overlayGeometry.curves[overlayGeometry.picked],
+            overlayHoverMin
+        );
+        if (own !== null) {
+            overlayDot(ctx, overlayHoverMin, own, readColor("--meal", "#bd8a30"));
+        }
+    }
+}
+
+/* Сколько прошло от еды — словами. У нуля «в момент еды»: «через 0 мин» — та
+   же мысль, высказанная арифметикой. */
+function offsetLabel(minutes) {
+    if (minutes < 1) return "в момент еды";
+
+    const hours = Math.floor(minutes / 60);
+    const rest = minutes % 60;
+    if (!hours) return `через ${rest} мин`;
+    return rest ? `через ${hours} ч ${rest} мин` : `через ${hours} ч`;
+}
+
+/* Подсказка оверлея. Порядок строк зафиксирован, как у графика выше: сводка →
+   разброс → выбранное. Отдельные кривые названы краями, а не перечислены: их
+   числа читаются в таблице, а на холсте они нарисованы ради широты. */
+function showOverlayTip(clientX) {
+    if (overlayHoverMin === null || !overlayGeometry) return hideOverlayTip();
+
+    const rows = [];
+    const unit = OVERLAY_SERIES.median.unit;
+
+    const median = overlayValueAt(overlayGeometry.median, overlayHoverMin);
+    if (median !== null) {
+        rows.push(
+            tipRow(OVERLAY_SERIES.median, `Медиана ${formatDelta(median)} ${unit}`)
+        );
+    }
+
+    const values = overlayGeometry.curves
+        .map((curve) => overlayValueAt(curve, overlayHoverMin))
+        .filter((value) => value !== null);
+
+    if (values.length) {
+        rows.push(
+            tipRow(
+                OVERLAY_SERIES.single,
+                `Разброс ${formatDelta(Math.min(...values))} … ${formatDelta(
+                    Math.max(...values)
+                )} ${unit}`
+            )
+        );
+    }
+
+    if (overlayGeometry.picked >= 0) {
+        const own = overlayValueAt(
+            overlayGeometry.curves[overlayGeometry.picked],
+            overlayHoverMin
+        );
+        if (own !== null) {
+            rows.push(
+                tipRow(OVERLAY_SERIES.picked, `Выбранный ${formatDelta(own)} ${unit}`)
+            );
+        }
+    }
+
+    // Ни одной кривой под указателем — нечего и показывать: справа от самого
+    // длинного окна холст пуст, и подсказка с одним временем обещала бы, что
+    // там что-то есть.
+    if (!rows.length) return hideOverlayTip();
+
+    const time = document.createElement("p");
+    time.className = "tip__time";
+    time.textContent = offsetLabel(overlayHoverMin);
+
+    // Счёт кривых — не украшение: он объясняет, почему медианы в этой минуте
+    // может не быть вовсе. Молча пропавшая строка читается как «подъёма
+    // здесь нет», а не как «считать ещё не по чему».
+    const note = document.createElement("p");
+    note.className = "tip__note";
+    note.textContent =
+        median === null && values.length < MEDIAN_MIN_CURVES
+            ? `Кривых здесь ${values.length} — медиана считается от ${MEDIAN_MIN_CURVES}`
+            : `Кривых здесь ${values.length}`;
+
+    els.overlayTip.replaceChildren(time, ...rows, note);
+    placeTip(
+        els.overlayTip,
+        els.reviewPanel,
+        els.overlay,
+        overlayGeometry.plotTop,
+        clientX
+    );
+}
+
+function hideOverlayTip() {
+    els.overlayTip.hidden = true;
 }
 
 /* Четыре состояния, и приглушены из них те два, где мерить было нечего.
@@ -2725,10 +2921,17 @@ function markPicked() {
 
 function refreshPicked() {
     markPicked();
-    // Тот же набор, что нарисован при отрисовке секции, а не весь разбор:
-    // полный уговор — в renderReview. Здесь стоял snapshot.analysis целиком, и
-    // первое же наведение подкладывало на холст кривые приёмов, которых нет в
-    // списке под ним, вместе с медианой, посчитанной по другому набору.
+    redrawOverlay();
+}
+
+/* Перерисовать один холст разбора — тем же набором, что показан сейчас, а не
+   всем разбором: полный уговор — в renderReview. Здесь стоял snapshot.analysis
+   целиком, и первое же наведение подкладывало на холст кривые приёмов, которых
+   нет в списке под ним, вместе с медианой, посчитанной по другому набору.
+
+   renderReview() на эту роль не годится: наведение — и на строку, и на сам
+   холст — меняет только картинку, а он пересобрал бы таблицу под указателем. */
+function redrawOverlay() {
     const visible = visibleMeals();
     if (visible) drawOverlay(visible);
 }
@@ -3199,6 +3402,39 @@ els.canvas.addEventListener("pointermove", hoverAt);
 els.canvas.addEventListener("pointerleave", clearHover);
 els.canvas.addEventListener("pointerup", clearHover);
 els.canvas.addEventListener("pointercancel", clearHover);
+
+/* Наведение на оверлей разбора — тот же набор событий и тот же счёт, только
+   ось считает минуты от еды, а не время суток. Закрепление кривой остаётся за
+   таблицей: холст тут отвечает на «сколько было в эту минуту», а не на «какой
+   это приём» — по десятку сошедшихся кривых ближайшую не выбрать. */
+function overlayHoverAt(event) {
+    if (!overlayGeometry) return;
+
+    const rect = els.overlay.getBoundingClientRect();
+    const px = event.clientX - rect.left;
+    if (px < overlayGeometry.left || px > overlayGeometry.right) {
+        clearOverlayHover();
+        return;
+    }
+
+    const share = (px - overlayGeometry.left) / (overlayGeometry.right - overlayGeometry.left);
+    overlayHoverMin = Math.round(share * overlayGeometry.span);
+    redrawOverlay();
+    showOverlayTip(event.clientX);
+}
+
+function clearOverlayHover() {
+    if (overlayHoverMin === null) return;
+    overlayHoverMin = null;
+    hideOverlayTip();
+    redrawOverlay();
+}
+
+els.overlay.addEventListener("pointerdown", overlayHoverAt);
+els.overlay.addEventListener("pointermove", overlayHoverAt);
+els.overlay.addEventListener("pointerleave", clearOverlayHover);
+els.overlay.addEventListener("pointerup", clearOverlayHover);
+els.overlay.addEventListener("pointercancel", clearOverlayHover);
 
 els.theme.addEventListener("click", () => {
     const next = THEMES[(THEMES.findIndex((item) => item.id === theme) + 1) % THEMES.length];

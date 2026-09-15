@@ -107,12 +107,18 @@
 
             <section class="stats stats--tight" id="review-stats"></section>
 
-            <div class="review__panel">
+            <div class="review__panel" id="review-panel">
                 <canvas id="overlay" role="img"></canvas>
+                <!-- Своя подсказка, а не та же, что у графика выше: они живут в
+                     разных карточках, и абсолютная позиция считается от
+                     ближайшей из них. -->
+                <div class="tip" id="overlay-tip" hidden></div>
                 <ul class="legend" id="overlay-legend"></ul>
                 <p class="review__hint">
                     Нажмите на время приёма — его кривая закрепится. Строка под
-                    указателем подсвечивает свою и без нажатия.
+                    указателем подсвечивает свою и без нажатия. По самому
+                    графику можно вести указателем: подсказка назовёт медиану,
+                    разброс и выбранный приём на этой минуте.
                 </p>
             </div>
 
