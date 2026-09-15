@@ -2860,27 +2860,66 @@ function medianOf(values) {
     return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
+/* Приём, у которого отношение углеводов к дозе вообще о чём-то говорит.
+   Четыре условия, и каждое отсекает свой способ соврать.
+
+   Опора внутри целевого диапазона: болюс привязывается к еде целиком (см.
+   ``_doses`` в analysis.py), и часть, введённая на снижение высокого сахара,
+   делится в коэффициенте на те же углеводы — выходит меньше граммов на
+   единицу, чем нужно было еде. Вход с низкого — обратная ошибка: дозу там
+   урезают руками, и коэффициент задирается.
+
+   Нижняя граница почти всегда уже сработала как from_hypo — порог
+   гипогликемии и низ диапазона это один TARGET_LOW_MGDL, — но не всегда:
+   опора берётся ближайшим показанием, в том числе до начала приёма, а
+   from_hypo смотрит только внутрь окна.
+
+   Гипогликемия после пика — это «дозы было слишком много», и такой приём
+   называет свой коэффициент ровно тем, чем он не является. Незакрытое и
+   прерванное окно отброшены по той же причине, что в сводке: чем кончился
+   подъём, никто не видел. */
+function ratioReady(meal) {
+    return (
+        meal.complete &&
+        !meal.cut &&
+        !meal.hypo &&
+        !meal.from_hypo &&
+        meal.baseline >= snapshot.target.low &&
+        meal.baseline <= snapshot.target.high
+    );
+}
+
 /* Сколько граммов углеводов пришлось на единицу короткого — по записям, а не
-   по правилам. Считается по тем же приёмам, что и сводка: окно разбора
-   целиком, а не раскрытая часть таблицы. Подъём рядом — чтобы коэффициент
-   читался с исходом: одинаковые «10 г/ед» с подъёмом в ориентире и с подъёмом
-   вдвое выше — разные истории. Вывод из них — не дело страницы. */
+   по правилам. Считается по окну разбора целиком, а не по раскрытой части
+   таблицы. Подъём рядом — чтобы коэффициент читался с исходом: одинаковые
+   «10 г/ед» с подъёмом в ориентире и с подъёмом вдвое выше — разные истории.
+   Вывод из них — не дело страницы. */
 function renderRatio(analysis) {
     const dosed = analysis.meals.filter(
         (meal) => meal.dose && meal.dose.units > 0 && meal.carbs > 0
     );
+    const clean = dosed.filter(ratioReady);
 
-    const byDaypart = ratioRows(dosed, DAYPARTS, (meal) => minutesOfDay(meal.t));
-    const byPortion = ratioRows(dosed, PORTIONS, (meal) => meal.carbs);
+    const byDaypart = ratioRows(clean, DAYPARTS, (meal) => minutesOfDay(meal.t));
+    const byPortion = ratioRows(clean, PORTIONS, (meal) => meal.carbs);
 
     if (!byDaypart.length && !byPortion.length) {
         els.ratio.hidden = true;
         return;
     }
 
+    // Отброшенные названы числом и причиной: коэффициент, посчитанный по
+    // половине приёмов с болюсом, обязан сказать, по какой именно половине, —
+    // иначе «12 приёмов» читается как «все, что были».
+    const dropped = dosed.length - clean.length;
     els.ratioNote.textContent =
         "Сколько граммов углеводов пришлось на единицу короткого — медиана " +
-        `по ${dosed.length} приёмам с болюсом. Не рекомендация дозы.`;
+        `по ${clean.length} приёмам с болюсом` +
+        (dropped
+            ? ` из ${dosed.length}. Остальные отброшены: опора вне целевого ` +
+              "диапазона, гипогликемия или незакрытое окно"
+            : "") +
+        ". Не рекомендация дозы.";
 
     fillRatioTable(els.ratioTable, "Время суток", byDaypart);
     els.ratioTable.parentElement.hidden = !byDaypart.length;
@@ -2903,14 +2942,15 @@ function ratioRows(dosed, groups, valueOf) {
         });
         if (meals.length < RATIO_MIN_MEALS) continue;
 
-        // Подъём — только по завершённым и не прерванным окнам, как в сводке:
-        // незакрытое окно ещё не знает своего пика.
-        const clean = meals.filter((meal) => meal.complete && !meal.cut);
+        // Оба числа — по одной и той же группе: выборку уже просеял
+        // ratioReady, и отдельного отбора для подъёма здесь больше нет.
+        // Раньше он был, и «Приёмов» считало всю группу, а «Подъём» — её
+        // чистую часть: строка про пять приёмов показывала медиану одного.
         rows.push({
             label: group.label,
             count: meals.length,
             ratio: medianOf(meals.map((meal) => meal.carbs / meal.dose.units)),
-            rise: clean.length ? medianOf(clean.map((meal) => meal.rise)) : null,
+            rise: medianOf(meals.map((meal) => meal.rise)),
         });
     }
     return rows;
@@ -2934,7 +2974,7 @@ function fillRatioTable(table, firstColumn, rows) {
             textCell(row.label),
             textCell(String(row.count)),
             textCell(formatAmount(row.ratio)),
-            textCell(row.rise === null ? "—" : formatDelta(row.rise))
+            textCell(formatDelta(row.rise))
         );
         body.append(tr);
     }
