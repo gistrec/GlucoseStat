@@ -72,6 +72,41 @@ one is filled, the long one is an outline.
 Only the 24- and 48-hour windows show them. A month holds a hundred marks,
 and they merge into a solid band that says nothing.
 
+## Nights
+
+Night is the one stretch of the day nobody watches. A low at three in the
+afternoon announces itself; at three in the morning only the sensor notices, and
+only if someone looks afterwards. Every other panel on the page hides it: the
+weekly curve is thinned into 15-minute buckets, so a dip to 3.6 mmol/L that
+lasted a few minutes is averaged with its neighbours and drawn as 4.3. The night
+block therefore counts from the **raw** readings in `nights.py`, not from what
+the chart shows.
+
+It reports three figures over its own seven-day window — the buttons above do
+not move it, same deal as the meal review and the day profile. Nights with
+hypoglycaemia, the median of the nightly minimums, and the median drift.
+
+The drift is measured from 03:00 to 06:00, not from midnight. By three the
+supper bolus has finished working, so the difference describes basal insulin; from
+midnight it would describe the tail of the meal. On a live week the two choices
+disagree about the sign — median +0.3 from midnight against −0.7 from three —
+which is exactly why the narrower window is the honest one.
+
+**Two denominators, and the page names both.** Hypoglycaemia counts and the
+minimum are computed over every night the sensor covered: they are measured
+facts, and filtering them would throw away the nights that matter most — a late
+supper makes a night more dangerous, not less interesting. The drift is computed
+only over "fasting" nights, where the journal shows no food or bolus within four
+hours of 03:00 and none during the night itself. An evening with no journal
+entries at all counts as unknown rather than fasting: an empty evening means "not
+recorded", not "did not eat". Below three qualifying nights the median is not
+shown at all, only the count that fell short.
+
+Each night also gets a sparkline. Its buckets carry the **minimum** of the
+bucket rather than the average, so the lowest point of the drawn line is the same
+reading as the number printed beside it — smoothing the dip away is the mistake
+the block exists to correct.
+
 ## Meal review
 
 For each recent meal the page reports what happened in the four hours after it:

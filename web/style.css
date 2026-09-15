@@ -823,6 +823,67 @@ body {
     padding: 16px;
 }
 
+/* ── Ночи ──────────────────────────────────────────────────────────── */
+
+/* Семь-восемь маленьких кривых в ряд, по одной на ночь. Ячейки равной ширины,
+   а не auto-fit по содержимому: ночи сравнивают формой, и колонка шире
+   соседней врала бы о длительности провала. */
+.nights {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.nights__item {
+    background: var(--panel);
+    border: 1px solid var(--panel-chrome);
+    border-radius: var(--radius);
+    padding: 8px 6px;
+    text-align: center;
+}
+
+/* Ночь без показаний остаётся в ряду: пропущенная молча, она сдвинула бы
+   соседние даты друг к другу, и неделя с тремя ночами читалась бы как неделя
+   из трёх ночей. */
+.nights__item--empty {
+    border-style: dashed;
+}
+
+.nights__spark {
+    display: block;
+    width: 100%;
+    height: 44px;
+}
+
+.nights__blank {
+    margin: 0;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 0.7rem;
+}
+
+.nights__date {
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.nights__min {
+    margin: 2px 0 0;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+    /* Цвет ставит app.js по зоне минимума; серый — ночь без показаний. */
+    color: var(--muted);
+}
+
 .stat__label {
     margin: 0;
     color: var(--muted);

@@ -283,6 +283,29 @@ class TestDaily:
         assert "profile" in snapshot
         assert snapshot["profile"] is None
 
+    def test_snapshot_carries_the_nights_key(self):
+        # То же про ночи, и с той же оговоркой: пара замеров в час дня — не
+        # ночь, и сводка честно отсутствует.
+        snapshot = build_snapshot(readings(120, 130), [], BASE + timedelta(hours=1))
+
+        assert "nights" in snapshot
+        assert snapshot["nights"] is None
+
+    def test_nights_count_hypoglycaemia_by_the_page_threshold(self):
+        # Порог ночной гипогликемии приходит из publish, а не заводится в
+        # nights.py заново: «ниже целевого диапазона» на графике и «ночь с
+        # гипогликемией» обязаны означать одно число.
+        night = [
+            (BASE - timedelta(days=1) + timedelta(minutes=5 * i), 120.0)
+            for i in range(72)
+        ]
+        night[40] = (night[40][0], float(TARGET_LOW_MGDL - 1))
+
+        snapshot = build_snapshot(night, [], BASE)
+
+        assert snapshot["nights"]["hypo_mgdl"] == TARGET_LOW_MGDL
+        assert snapshot["nights"]["hypo_nights"] == 1
+
 
 class TestCompare:
     """Окно против предыдущего такого же: дельты, оценка, значимость."""

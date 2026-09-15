@@ -90,6 +90,17 @@
 
         <section class="stats" id="stats" hidden></section>
 
+        <!-- Ночь считается по сырым замерам, а не по прореженной кривой выше:
+             провал в пару минут корзина усредняет, и на графике его нет. -->
+        <section class="review" id="night" hidden>
+            <h2 class="review__title">Ночь отдельно</h2>
+            <p class="review__note" id="night-note"></p>
+
+            <section class="stats" id="night-stats"></section>
+
+            <ul class="nights" id="night-strip" role="list"></ul>
+        </section>
+
         <section class="review" id="review" hidden>
             <h2 class="review__title">Разбор приёмов пищи</h2>
             <p class="review__note" id="review-note"></p>

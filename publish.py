@@ -14,13 +14,14 @@ from datetime import date, datetime, time, timedelta, timezone
 
 from agp import day_profile
 from analysis import analyse
-from daytime import DISPLAY_TZ, _weighted_percentile, _zone
 from database.queries import (
     journal_since,
     last_readings,
     meal_origins_since,
     readings_since,
 )
+from daytime import DISPLAY_TZ, _covered, _weigh, _weighted_percentile, _zone
+from nights import night_summary
 
 
 # Читается при загрузке модуля, до всякого .env, — потому и задавать его нужно
@@ -117,46 +118,6 @@ def _downsample(
         [bucket, round(sum(values) / len(values))]
         for bucket, values in sorted(buckets.items())
     ]
-
-
-def _covered(readings: list[tuple[datetime, float]]) -> float:
-    """Сколько секунд окна фактически покрыто показаниями.
-
-    Одна арифметика покрытия на весь модуль: «покрытие» обязано означать
-    буквально одно и то же в GMI, подневной сводке и сравнении периодов.
-    По времени, а не по числу замеров: при минутном опросе счёт замеров
-    объявлял бы четыре дня из четырнадцати «покрытием 140 %», а неделя
-    пятиминутного бэкфилла выглядела бы тонкой при полном покрытии.
-    """
-
-    return sum(weight for _, weight in _weigh(readings)) if readings else 0.0
-
-
-# Потолок веса одного замера. Дальше начинается молчание сенсора, которое не
-# покрыто никем: точка перед часовым разрывом не вправе «представлять» весь
-# этот час, иначе одинокий замер перед сном перевесил бы половину вечера.
-WEIGHT_CAP_SECONDS = 15 * 60
-
-
-def _weigh(readings: list[tuple[datetime, float]]) -> list[tuple[float, float]]:
-    """Пары ``(mgdl, вес в секундах)``: вес — интервал до следующего замера.
-
-    Все сводки по пулу точек считаются по времени, а не по числу замеров:
-    шаг записи неоднороден — живой опрос минутный, бэкфилл после сбоя идёт
-    пятиминутной сеткой, — и без весов плотный час весил бы впятеро больше
-    соседнего. Последней точке достаётся шаг её соседа: интервала после неё
-    ещё нет, а нулевой вес молча выкидывал бы свежайший замер из статистики.
-    """
-
-    if len(readings) == 1:
-        return [(readings[0][1], 1.0)]
-
-    pairs = []
-    for (moment, mgdl), (following, _) in zip(readings, readings[1:]):
-        gap = min((following - moment).total_seconds(), WEIGHT_CAP_SECONDS)
-        pairs.append((mgdl, gap))
-    pairs.append((readings[-1][1], pairs[-1][1]))
-    return pairs
 
 
 def _stats(readings: list[tuple[datetime, float]]) -> dict | None:
@@ -488,6 +449,10 @@ def build_snapshot(
         # Профиль обычного дня — тоже по своему окну (AGP_WINDOW): «обычно»
         # не зависит от того, какая панель открыта.
         "profile": day_profile(readings, now),
+        # И ночи — по своему (NIGHTS_WINDOW). Порог гипогликемии передаётся, а
+        # не берётся модулем у себя: «ниже целевого диапазона» на странице и
+        # «ночная гипогликемия» обязаны означать одно число.
+        "nights": night_summary(readings, journal, now, hypo_mgdl=TARGET_LOW_MGDL),
         "events": _events(journal, now - EVENT_WINDOW),
         "analysis": analyse(
             meals,
