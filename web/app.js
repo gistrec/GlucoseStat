@@ -159,6 +159,8 @@ const els = {
     ratio: document.getElementById("ratio"),
     ratioNote: document.getElementById("ratio-note"),
     ratioTable: document.getElementById("ratio-table"),
+    ratioSizeTable: document.getElementById("ratio-size-table"),
+    ratioSizeWrap: document.getElementById("ratio-size-wrap"),
     overlay: document.getElementById("overlay"),
     overlayLegend: document.getElementById("overlay-legend"),
     meals: document.getElementById("meals"),
@@ -2750,6 +2752,22 @@ const DAYPARTS = [
     { label: "Ночь", from: 0, to: 6 * 60 },
 ];
 
+/* Второй разрез тех же приёмов — по размеру порции. Границы фиксированные и
+   круглые, а не перцентили выборки: строка «до 40 г» обязана значить одно и то
+   же сегодня и через месяц, иначе её не с чем сравнить, а на живом журнале
+   подпись менялась бы при каждом пересчёте.
+
+   Сорок и семьдесят выбраны по этому журналу, а не по привычке: приёмы в нём
+   лежат между 14 и 100 граммами с медианой 50, и эта пара делит их примерно на
+   терцили (p33 = 38, p75 = 66). Мельче делить нечего — перекусы до SNACK_CARBS
+   в разбор не попадают вовсе, и приёмов легче двадцати граммов в нём считаные
+   единицы; крупнее — тоже: за сотню выходит от силы один. */
+const PORTIONS = [
+    { label: "До 40 г", from: 0, to: 40 },
+    { label: "40–70 г", from: 40, to: 70 },
+    { label: "70 г и больше", from: 70, to: Infinity },
+];
+
 // Тот же порог, что MEDIAN_MIN_CURVES у оверлея, и по той же причине: медиана
 // по двум обедам — это среднее двух обедов, выданное за общую картину.
 const RATIO_MIN_MEALS = 3;
@@ -2770,26 +2788,10 @@ function renderRatio(analysis) {
         (meal) => meal.dose && meal.dose.units > 0 && meal.carbs > 0
     );
 
-    const rows = [];
-    for (const part of DAYPARTS) {
-        const meals = dosed.filter((meal) => {
-            const minutes = minutesOfDay(meal.t);
-            return part.from <= minutes && minutes < part.to;
-        });
-        if (meals.length < RATIO_MIN_MEALS) continue;
+    const byDaypart = ratioRows(dosed, DAYPARTS, (meal) => minutesOfDay(meal.t));
+    const byPortion = ratioRows(dosed, PORTIONS, (meal) => meal.carbs);
 
-        // Подъём — только по завершённым и не прерванным окнам, как в сводке:
-        // незакрытое окно ещё не знает своего пика.
-        const clean = meals.filter((meal) => meal.complete && !meal.cut);
-        rows.push({
-            label: part.label,
-            count: meals.length,
-            ratio: medianOf(meals.map((meal) => meal.carbs / meal.dose.units)),
-            rise: clean.length ? medianOf(clean.map((meal) => meal.rise)) : null,
-        });
-    }
-
-    if (!rows.length) {
+    if (!byDaypart.length && !byPortion.length) {
         els.ratio.hidden = true;
         return;
     }
@@ -2798,9 +2800,44 @@ function renderRatio(analysis) {
         "Сколько граммов углеводов пришлось на единицу короткого — медиана " +
         `по ${dosed.length} приёмам с болюсом. Не рекомендация дозы.`;
 
+    fillRatioTable(els.ratioTable, "Время суток", byDaypart);
+    els.ratioTable.parentElement.hidden = !byDaypart.length;
+
+    fillRatioTable(els.ratioSizeTable, "Размер порции", byPortion);
+    els.ratioSizeWrap.hidden = !byPortion.length;
+
+    els.ratio.hidden = false;
+}
+
+/* Один и тот же счёт для обоих разрезов: группы задаются парой границ и тем,
+   какую величину у приёма мерить — час еды или граммы. Разводить их по двум
+   похожим функциям значило бы однажды поправить кворум в одной из них. */
+function ratioRows(dosed, groups, valueOf) {
+    const rows = [];
+    for (const group of groups) {
+        const meals = dosed.filter((meal) => {
+            const value = valueOf(meal);
+            return group.from <= value && value < group.to;
+        });
+        if (meals.length < RATIO_MIN_MEALS) continue;
+
+        // Подъём — только по завершённым и не прерванным окнам, как в сводке:
+        // незакрытое окно ещё не знает своего пика.
+        const clean = meals.filter((meal) => meal.complete && !meal.cut);
+        rows.push({
+            label: group.label,
+            count: meals.length,
+            ratio: medianOf(meals.map((meal) => meal.carbs / meal.dose.units)),
+            rise: clean.length ? medianOf(clean.map((meal) => meal.rise)) : null,
+        });
+    }
+    return rows;
+}
+
+function fillRatioTable(table, firstColumn, rows) {
     const head = document.createElement("thead");
     const headRow = document.createElement("tr");
-    for (const title of ["Время суток", "Приёмов", "Г на 1 ед", "Подъём, медиана"]) {
+    for (const title of [firstColumn, "Приёмов", "Г на 1 ед", "Подъём, медиана"]) {
         const cell = document.createElement("th");
         cell.scope = "col";
         cell.textContent = title;
@@ -2820,9 +2857,8 @@ function renderRatio(analysis) {
         body.append(tr);
     }
 
-    const caption = els.ratioTable.querySelector("caption");
-    els.ratioTable.replaceChildren(...(caption ? [caption] : []), head, body);
-    els.ratio.hidden = false;
+    const caption = table.querySelector("caption");
+    table.replaceChildren(...(caption ? [caption] : []), head, body);
 }
 
 function renderReview() {

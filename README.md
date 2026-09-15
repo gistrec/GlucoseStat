@@ -171,6 +171,22 @@ confidence falls back to the old rule — full for scales, middling for a spoken
 number, and for a photo as far as the model runs agreed with each other. A meal
 merged from several records takes the marks of its weakest one.
 
+Below the list sits the carb ratio — grams of carbohydrate per unit of rapid
+insulin, taken from the records rather than from a rule. The same meals are cut
+two ways: by time of day, because insulin sensitivity follows the sun rather
+than the name of the meal, and by portion size. A group of fewer than three
+meals is not shown at all; the median rise sits beside each ratio, because the
+same "10 g/u" with a rise inside the target and with one twice as high are
+different stories.
+
+The portion boundaries are fixed at 40 g and 70 g, not recomputed as percentiles
+of the current sample: "under 40 g" has to mean the same thing next month, or
+there is nothing to compare it to. Those two numbers come from this journal —
+meals in it run from 14 to 100 g with a median of 50, so the pair splits them
+close to terciles. Finer cuts have nothing to divide: snacks under `SNACK_CARBS`
+never enter the review, and meals past a hundred grams are rare enough to miss
+the quorum.
+
 This describes outcomes and stops there. Whether a dose was right also depends
 on activity, on illness and on insulin still active from an earlier injection —
 none of which is in this data, and the page says so.
