@@ -29,6 +29,22 @@ food and insulin break the straight line sooner than it comes true, and it
 disappears entirely while the latest reading is stale: extending a curve that
 stopped moving would be lying twice.
 
+Readings are thinned into buckets before they reach the browser — but a bucket
+that dipped below 70 mg/dL publishes its **minimum** instead of its average. A
+two-minute drop to 3.4 mmol/L inside a quarter-hour bucket averages out to 6.2
+and disappears; the curve would show calm where there was a low. The error is
+pushed to the safe side on purpose, and only downwards: highs last hours and
+land in a bucket whole, so peaks are still averaged.
+
+The same window also carries the low episodes themselves, counted from the raw
+readings: start, end, depth and duration, drawn as red segments along the 3.9
+line with the duration beside them. The curve alone answers "was there a low";
+it cannot answer "how many" — two dips in neighbouring buckets look like one —
+or "for how long", since a minute is a quarter of a pixel on the weekly panel.
+An episode ends where the reading comes back over the threshold, and dips
+separated by less than 15 minutes count as one: flapping around the line is one
+low lived through, not five. There is deliberately no minimum duration.
+
 GMI is the one figure that ignores the selected period: it is always the
 estimated HbA1c over the last **14 days**, the window Bergenstal et al. (2018)
 calibrated the formula on. Tying it to the buttons would put two different

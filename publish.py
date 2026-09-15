@@ -99,11 +99,36 @@ EVENT_WINDOW = timedelta(days=2)
 # слишком мало, чтобы медиана подъёма что-то значила.
 ANALYSIS_WINDOW = timedelta(days=14)
 
+# Эпизоды ниже нормы считаются за неделю — самое широкое окно, на котором
+# рисуется кривая: у месяца своя форма, подневные коробки, и там доля времени
+# ниже нормы уже стоит в каждом дне.
+LOW_WINDOW = timedelta(days=7)
+
+# Разрыв, который ещё не разделяет два эпизода. Пятнадцать минут — то же
+# правило, по которому consensus-документы считают гипогликемию законченной:
+# без него дребезг вокруг порога плодил бы пяток «эпизодов» там, где человек
+# пережил один. Минимальной длительности у эпизода нарочно нет: провал в две
+# минуты — тоже провал, и прятать его значило бы повторить ошибку прореживания
+# другим способом.
+LOW_GAP = timedelta(minutes=15)
+
 
 def _downsample(
-    readings: list[tuple[datetime, float]], step_minutes: int
+    readings: list[tuple[datetime, float]], step_minutes: int, low: int
 ) -> list[list[int]]:
-    """Average readings into fixed buckets, as ``[unix_seconds, mg/dL]``."""
+    """Average readings into fixed buckets, as ``[unix_seconds, mg/dL]``.
+
+    Кроме корзин, где сахар опускался ниже ``low``: такая отдаёт свой минимум,
+    а не среднее. Пятнадцатиминутная корзина недельной панели усредняет провал
+    до 3,6 ммоль с соседями и рисует 4,3 — то есть стирает гипогликемию ровно
+    на том окне, где её ищут глазами. Ошибка при этом сдвигается в безопасную
+    сторону: линия показывает провал, который действительно был, вместо
+    благополучия, которого не было.
+
+    Только вниз и только за порогом: усреднять пики незачем — высокий сахар
+    держится часами и в корзину целиком, а лишний экстремум сверху сделал бы
+    кривую нервной без всякой пользы.
+    """
 
     if not readings:
         return []
@@ -115,9 +140,75 @@ def _downsample(
         buckets.setdefault(bucket, []).append(mgdl)
 
     return [
-        [bucket, round(sum(values) / len(values))]
+        [
+            bucket,
+            round(min(values) if min(values) < low else sum(values) / len(values)),
+        ]
         for bucket, values in sorted(buckets.items())
     ]
+
+
+def _lows(readings: list[tuple[datetime, float]], low: int) -> list[dict]:
+    """Эпизоды ниже нормы по сырым замерам: когда, как долго, как глубоко.
+
+    Отдельным списком, а не поверх кривой: линия прорежена и о числе эпизодов
+    не говорит вовсе — на недельной панели два провала в соседних корзинах
+    выглядят одним, а трёхминутный не виден никак. Здесь же считается то, ради
+    чего на ночной сахар вообще смотрят: сколько раз и сколько минут.
+
+    Длительность — от первого замера ниже порога до первого замера выше него,
+    а не до последнего низкого: сенсор отдаёт точку раз в минуту-пять, и без
+    правого края одиночный провал получал бы нулевую длину.
+    """
+
+    episodes: list[dict] = []
+    current: list[tuple[datetime, float]] = []
+    left: datetime | None = None
+
+    def close(right: datetime | None) -> None:
+        if not current:
+            return
+        start, finish = current[0][0], right or current[-1][0]
+        episodes.append(
+            {
+                "start": int(start.replace(tzinfo=timezone.utc).timestamp()),
+                "end": int(finish.replace(tzinfo=timezone.utc).timestamp()),
+                "min": round(min(mgdl for _, mgdl in current)),
+                "minutes": max(1, round((finish - start).total_seconds() / 60)),
+            }
+        )
+        current.clear()
+
+    for moment, mgdl in readings:
+        if mgdl < low:
+            # Левый край — предыдущий замер над порогом: пересечение случилось
+            # между ними, и относить его целиком к первому низкому замеру
+            # значило бы терять до пяти минут эпизода.
+            if not current and left is not None:
+                current.append((left, float(low)))
+            current.append((moment, mgdl))
+        else:
+            close(moment)
+            left = moment
+    close(None)
+
+    if not episodes:
+        return []
+
+    # Склейка соседних: дребезг вокруг порога — один эпизод, а не пять.
+    merged = [episodes[0]]
+    for episode in episodes[1:]:
+        previous = merged[-1]
+        if episode["start"] - previous["end"] <= LOW_GAP.total_seconds():
+            previous["end"] = episode["end"]
+            previous["min"] = min(previous["min"], episode["min"])
+            previous["minutes"] = max(
+                1, round((previous["end"] - previous["start"]) / 60)
+            )
+        else:
+            merged.append(episode)
+
+    return merged
 
 
 def _stats(readings: list[tuple[datetime, float]]) -> dict | None:
@@ -393,7 +484,7 @@ def build_snapshot(
             series[name] = {
                 "kind": "points",
                 "step": step_minutes,
-                "points": _downsample(subset, step_minutes),
+                "points": _downsample(subset, step_minutes, TARGET_LOW_MGDL),
             }
 
         window_stats = _stats(subset)
@@ -454,6 +545,12 @@ def build_snapshot(
         # «ночная гипогликемия» обязаны означать одно число.
         "nights": night_summary(readings, journal, now, hypo_mgdl=TARGET_LOW_MGDL),
         "events": _events(journal, now - EVENT_WINDOW),
+        # Эпизоды ниже нормы — тоже по своему окну, и тоже по сырью: прореженная
+        # кривая не отвечает ни на «сколько раз», ни на «сколько минут».
+        "lows": _lows(
+            [item for item in readings if item[0] >= now - LOW_WINDOW],
+            TARGET_LOW_MGDL,
+        ),
         "analysis": analyse(
             meals,
             readings,

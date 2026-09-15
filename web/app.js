@@ -1446,6 +1446,9 @@ function drawChart() {
     } else {
         drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeight);
         if (tail) drawForecast(ctx, tail, x, y, padding.top, padding.top + plotHeight);
+        // После кривой: отрезки лежат на линии порога и обязаны быть поверх
+        // неё — под кривой их бы наполовину перекрыло ей же.
+        drawLows(ctx, x, y, padding.left, width - padding.right);
     }
 
     // Дорожки событий — под графиком, над подписями оси.
@@ -1499,6 +1502,74 @@ function drawChart() {
 /* Тело кривой day- и week-окон: ломаная с отсечениями по зонам.
    gapSeconds живёт здесь, а не в каркасе: у дневного вида series.step не
    существует, NaN в сравнениях давал бы false и молча гасил все разрывы. */
+/* Эпизоды ниже нормы — отрезками по линии порога, с длительностью подписью.
+
+   Кривая и без них краснеет ниже 3,9, но отвечает она только на «было или не
+   было». «Сколько раз» по ней не прочитать — два провала подряд сливаются в
+   один росчерк, — а «сколько минут» не прочитать тем более: у недельной панели
+   минута занимает четверть пикселя. Числа приходят из снимка посчитанными по
+   сырым замерам (_lows в publish.py), поэтому отрезок не зависит от того, что
+   уцелело при прореживании.
+
+   Минимальная ширина отрезка — три пикселя: двухминутный провал на недельном
+   окне тоньше волоса, и без неё самый короткий эпизод был бы виден хуже всех,
+   хотя ищут глазами как раз такие. */
+
+const LOW_MIN_WIDTH = 3;
+
+// Сколько места нужно подписи справа от отрезка. Она ставится сбоку, а не по
+// центру: часовой эпизод на суточной панели занимает три десятка пикселей, то
+// есть уже своей подписи, и по центру её не рисовал бы никто и никогда — как
+// раз у коротких провалов длительность и есть главное, что о них известно.
+const LOW_LABEL_SPACE = 42;
+
+function drawLows(ctx, x, y, left, right) {
+    const lows = snapshot.lows || [];
+    if (!lows.length) return;
+
+    const py = y(toMmol(snapshot.target.low));
+    const color = readColor("--hypo", "#ff5b5b");
+
+    ctx.save();
+    ctx.font = '10px "JetBrains Mono", monospace';
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.lineCap = "round";
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 3;
+
+    const visible = lows
+        .map((low) => ({
+            low,
+            from: Math.max(left, x(low.start)),
+            to: Math.min(right, x(low.end)),
+        }))
+        .filter((item) => item.to >= left && item.from <= right);
+
+    for (const [index, item] of visible.entries()) {
+        const width = Math.max(LOW_MIN_WIDTH, item.to - item.from);
+        const end = item.from + width;
+
+        ctx.beginPath();
+        ctx.moveTo(item.from, py);
+        ctx.lineTo(end, py);
+        ctx.stroke();
+
+        // Подпись молчит, когда следующий эпизод стоит слишком близко: число
+        // поперёк соседнего провала хуже, чем отсутствие числа.
+        const next = visible[index + 1];
+        const room = Math.min(right, next ? next.from : right) - end;
+        if (room >= LOW_LABEL_SPACE) {
+            // Ниже порога, в красной зоне: над линией идёт сама кривая, и
+            // число село бы прямо на неё.
+            ctx.fillText(`${item.low.minutes} мин`, end + 4, py + 3);
+        }
+    }
+
+    ctx.restore();
+}
+
 function drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeight) {
     // Разрыв длиннее трёх шагов означает, что сенсор молчал — соединять такие
     // точки нельзя, иначе пропуск выглядит как ровный тренд.
