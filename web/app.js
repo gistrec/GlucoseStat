@@ -203,6 +203,17 @@ const SERIES = {
         line: true,
         dashed: true,
     },
+    /* Полоса эпизодов по дну панели. Она не ряд данных, а отметка времени, но
+       в легенде стоит наравне с рядами: это новый цветной знак на холсте, и
+       опознать его иначе нечем. */
+    low: {
+        token: "--hypo",
+        fallback: "#ff5b5b",
+        label: "Ниже нормы",
+        unit: "мин",
+        line: true,
+        thick: true,
+    },
     meal: { token: "--meal", fallback: "#bd8a30", label: "Углеводы", unit: "г" },
     insulin: {
         token: "--insulin",
@@ -1305,12 +1316,24 @@ function drawChart() {
     // Состав легенды собирает рисующая ветка — из нарисованного, а не из
     // snapshot.events: иначе месячное окно обещало бы «Углеводы» на графике
     // без единого столбика, а пустой профиль — коридор, которого нет.
+    // Эпизоды, попавшие в окно: легенда называет полосу, только когда она на
+    // холсте есть, — по тому же правилу, что и остальные её строки.
+    const lowsShown =
+        !daily &&
+        (snapshot.lows || []).some(
+            (low) => low.end >= startTime && low.start <= endTime
+        );
+
     const legendItems = [];
-    if (!daily && (lanes.length || runs.length || tail)) {
+    if (!daily && (lanes.length || runs.length || tail || lowsShown)) {
         legendItems.push({ ...SERIES.glucose, line: true });
         // Сразу за глюкозой: хвост — её продолжение, а не отдельная сущность.
         if (tail) {
             legendItems.push(SERIES.forecast);
+        }
+        // И следом — полоса ниже нормы: она про ту же кривую, а не про журнал.
+        if (lowsShown) {
+            legendItems.push(SERIES.low);
         }
         if (runs.length) {
             legendItems.push(SERIES.profile);
@@ -1448,7 +1471,7 @@ function drawChart() {
         if (tail) drawForecast(ctx, tail, x, y, padding.top, padding.top + plotHeight);
         // После кривой: отрезки лежат на линии порога и обязаны быть поверх
         // неё — под кривой их бы наполовину перекрыло ей же.
-        drawLows(ctx, x, y, padding.left, width - padding.right);
+        drawLows(ctx, x, padding.left, width - padding.right, padding.top + plotHeight);
     }
 
     // Дорожки событий — под графиком, над подписями оси.
@@ -1502,7 +1525,7 @@ function drawChart() {
 /* Тело кривой day- и week-окон: ломаная с отсечениями по зонам.
    gapSeconds живёт здесь, а не в каркасе: у дневного вида series.step не
    существует, NaN в сравнениях давал бы false и молча гасил все разрывы. */
-/* Эпизоды ниже нормы — отрезками по линии порога, с длительностью подписью.
+/* Эпизоды ниже нормы — полосой по дну области графика, с длительностью рядом.
 
    Кривая и без них краснеет ниже 3,9, но отвечает она только на «было или не
    было». «Сколько раз» по ней не прочитать — два провала подряд сливаются в
@@ -1510,6 +1533,11 @@ function drawChart() {
    минута занимает четверть пикселя. Числа приходят из снимка посчитанными по
    сырым замерам (_lows в publish.py), поэтому отрезок не зависит от того, что
    уцелело при прореживании.
+
+   По дну, а не по самой линии порога: там отрезок ложился ровно поперёк
+   провала кривой, и два разных знака — «вот где кривая ушла вниз» и «вот
+   сколько это длилось» — сливались в одну неразборчивую фигуру. Внизу полоса
+   читается как отрезок времени, чем она и является.
 
    Минимальная ширина отрезка — три пикселя: двухминутный провал на недельном
    окне тоньше волоса, и без неё самый короткий эпизод был бы виден хуже всех,
@@ -1523,17 +1551,19 @@ const LOW_MIN_WIDTH = 3;
 // раз у коротких провалов длительность и есть главное, что о них известно.
 const LOW_LABEL_SPACE = 42;
 
-function drawLows(ctx, x, y, left, right) {
+function drawLows(ctx, x, left, right, bottom) {
     const lows = snapshot.lows || [];
     if (!lows.length) return;
 
-    const py = y(toMmol(snapshot.target.low));
+    // Полтора пикселя от дна: линия толщиной в три, и её нижняя половина
+    // иначе срезалась бы краем области.
+    const py = bottom - 2;
     const color = readColor("--hypo", "#ff5b5b");
 
     ctx.save();
     ctx.font = '10px "JetBrains Mono", monospace';
     ctx.textAlign = "left";
-    ctx.textBaseline = "top";
+    ctx.textBaseline = "bottom";
     ctx.lineCap = "round";
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
@@ -1561,9 +1591,7 @@ function drawLows(ctx, x, y, left, right) {
         const next = visible[index + 1];
         const room = Math.min(right, next ? next.from : right) - end;
         if (room >= LOW_LABEL_SPACE) {
-            // Ниже порога, в красной зоне: над линией идёт сама кривая, и
-            // число село бы прямо на неё.
-            ctx.fillText(`${item.low.minutes} мин`, end + 4, py + 3);
+            ctx.fillText(`${item.low.minutes} мин`, end + 4, py - 1);
         }
     }
 
