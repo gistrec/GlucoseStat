@@ -54,12 +54,18 @@
         </header>
 
         <section class="now" id="now" hidden>
-            <div class="now__reading">
-                <span class="now__value" id="now-value">—</span>
-                <span class="now__unit">ммоль/л</span>
-                <span class="now__arrow" id="now-arrow"></span>
+            <div class="now__main">
+                <div class="now__reading">
+                    <span class="now__value" id="now-value">—</span>
+                    <span class="now__unit">ммоль/л</span>
+                    <span class="now__arrow" id="now-arrow"></span>
+                </div>
+                <p class="now__meta" id="now-meta"></p>
             </div>
-            <p class="now__meta" id="now-meta"></p>
+
+            <!-- Последняя еда и оба инсулина. Состав задаёт app.js: строки,
+                 которой нечего показать за двое суток, тут не будет вовсе. -->
+            <ul class="now__events" id="now-events" role="list" hidden></ul>
         </section>
 
         <p class="empty" id="empty" hidden></p>

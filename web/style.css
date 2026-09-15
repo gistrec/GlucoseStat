@@ -203,6 +203,12 @@ body {
 
 /* ── Текущее значение ──────────────────────────────────────────────── */
 .now {
+    display: flex;
+    /* По центру, а не по верху: строки журнала — три коротких кегля против
+       числа в четыре с половиной, и прижатые к верхней кромке они висели бы
+       в пустой нижней половине плашки. */
+    align-items: center;
+    gap: 28px;
     background: var(--panel);
     border: 1px solid var(--panel-chrome);
     border-radius: var(--radius);
@@ -246,6 +252,74 @@ body {
 
 .now__meta--stale {
     color: var(--low);
+}
+
+/* Последнее из журнала — еда и оба инсулина. Сетка общая на все строки:
+   числа стоят столбиком только пока колонки одни и те же, а порознь
+   размеченные строки разъезжаются на первом же трёхзначном числе. */
+.now__events {
+    flex: 1;
+    display: grid;
+    grid-template-columns: auto 1fr auto auto auto;
+    align-items: baseline;
+    gap: 14px 8px;
+    margin: 0;
+    padding: 0 0 0 28px;
+    border-left: 1px solid var(--panel-chrome);
+    list-style: none;
+    font-size: 0.85rem;
+}
+
+/* Строка раскладывается по колонкам родителя. Роль возвращается руками:
+   display: contents вынимает строку из дерева доступности, и список для
+   скринридера оказывается пустым. */
+.now__event {
+    display: contents;
+}
+
+/* Метка — та же, что в легенде под графиком. Пустой квадратик базовой линии не
+   имеет: по ней он встал бы на строку нижней кромкой и провис под текстом. */
+.now__event .legend__key {
+    align-self: center;
+}
+
+.now__event-value {
+    font-family: "JetBrains Mono", monospace;
+    /* Цифры одной ширины: плашка перерисовывается раз в минуту, и «5 ед»,
+       сменившись на «14 ед», не должна двигать соседние колонки. */
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.now__event-unit {
+    color: var(--muted);
+}
+
+.now__event-ago {
+    /* Отступ от единицы измерения — больше колоночного: без него «г» и «2 ч
+       18 мин назад» читаются одной фразой. */
+    margin-left: 10px;
+    color: var(--muted);
+    font-size: 0.8rem;
+    text-align: right;
+    white-space: nowrap;
+}
+
+/* Плашка узкая — строки уходят под число, а разделитель из вертикального
+   становится горизонтальным. Порог не по вьюпорту вообще, а по той ширине,
+   на которой числу и трём колонкам перестаёт хватать места рядом. */
+@media (max-width: 640px) {
+    .now {
+        display: block;
+    }
+
+    .now__events {
+        margin-top: 20px;
+        padding: 20px 0 0;
+        border-left: none;
+        border-top: 1px solid var(--panel-chrome);
+    }
 }
 
 /* ── Пустое состояние ──────────────────────────────────────────────── */

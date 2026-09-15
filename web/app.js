@@ -139,6 +139,7 @@ const els = {
     nowValue: document.getElementById("now-value"),
     nowArrow: document.getElementById("now-arrow"),
     nowMeta: document.getElementById("now-meta"),
+    nowEvents: document.getElementById("now-events"),
     empty: document.getElementById("empty"),
     ranges: document.getElementById("ranges"),
     chart: document.getElementById("chart"),
@@ -330,6 +331,22 @@ function formatAgo(ms) {
     return `${days} дн назад`;
 }
 
+/* Возраст записи журнала — с минутами внутри часа. formatAgo округляет до
+   целого часа, а у еды и укола стирает ровно тот десяток минут, ради которого
+   на них и смотрят: успел ли подействовать короткий, много ли осталось от
+   съеденного. За сутками минуты снова не нужны — длинный, поставленный «27 ч
+   назад», просрочен независимо от их числа. */
+function formatEventAgo(ms) {
+    const minutes = Math.round(ms / 60000);
+    if (minutes < 1) return "только что";
+    if (minutes < 60) return `${minutes} мин назад`;
+
+    const hours = Math.floor(minutes / 60);
+    const rest = minutes % 60;
+    if (hours >= 24 || rest === 0) return `${hours} ч назад`;
+    return `${hours} ч ${rest} мин назад`;
+}
+
 function formatDateTime(date) {
     return date.toLocaleString("ru-RU", {
         timeZone: TIMEZONE,
@@ -456,7 +473,93 @@ function renderNow() {
         els.nowMeta.className = "now__meta";
     }
 
+    // Журнал молчанию сенсора не подчиняется: когда замеры устарели, «что ел и
+    // чем колол» — единственное, что на странице осталось свежим.
+    renderNowEvents();
+
     els.now.hidden = false;
+}
+
+/* Три строки рядом с текущим значением: последнее из журнала за двое суток —
+   столько событий несёт снимок (EVENT_WINDOW в publish.py). Ряды те же, что на
+   графике, и метку берут оттуда же — цвет квадратика обязан значить в плашке
+   ровно то же, что под холстом.
+
+   Имена короче легендных: «Короткий инсулин» рядом с «5 ед» договаривает то,
+   что уже сказано единицей, а колонка узкая. Еда осталась «Углеводами» —
+   99,3 г это углеводы, а не вес тарелки, и «Еда» на этом месте врёт. */
+const NOW_EVENTS = [
+    { lane: "meals", series: SERIES.meal, label: "Углеводы", unit: "г" },
+    { lane: "bolus", series: SERIES.insulin, label: "Короткий", unit: "ед" },
+    { lane: "basal", series: SERIES.basal, label: "Длинный", unit: "ед" },
+];
+
+// Тот же порог, по которому разбор склеивает записи в один приём пищи
+// (SAME_MEAL_GAP в analysis.py).
+const SAME_MEAL_GAP_SEC = 30 * 60;
+
+// Записи в дорожке идут от старых к новым — последняя и есть последняя.
+function lastEvent(lane) {
+    const entries = (snapshot.events || {})[lane] || [];
+    if (!entries.length) return null;
+
+    const [seconds, amount] = entries[entries.length - 1];
+    return { t: seconds, amount };
+}
+
+/* Приём, записанный в несколько заходов, — одна еда, как и в таблице разбора:
+   иначе плашка покажет последнюю добавку («14 г») вместо тарелки, к которой
+   она была добавлена. Время — начало приёма, тем же правилом, что в разборе. */
+function lastMeal() {
+    const meals = (snapshot.events || {}).meals || [];
+    if (!meals.length) return null;
+
+    let start = meals.length - 1;
+    let carbs = meals[start][1];
+    while (start > 0 && meals[start][0] - meals[start - 1][0] <= SAME_MEAL_GAP_SEC) {
+        start -= 1;
+        carbs += meals[start][1];
+    }
+
+    return { t: meals[start][0], amount: carbs };
+}
+
+function nowEventRow(kind, event) {
+    const item = document.createElement("li");
+    item.className = "now__event";
+    // Роль — руками: .now__event раскладывается display: contents, а он
+    // вынимает строку из дерева доступности вместе со смыслом списка.
+    item.setAttribute("role", "listitem");
+
+    const label = document.createElement("span");
+    label.textContent = kind.label;
+
+    const value = document.createElement("span");
+    value.className = "now__event-value";
+    value.textContent = formatAmount(event.amount);
+
+    const unit = document.createElement("span");
+    unit.className = "now__event-unit";
+    unit.textContent = kind.unit;
+
+    const ago = document.createElement("span");
+    ago.className = "now__event-ago";
+    ago.textContent = formatEventAgo(Date.now() - event.t * 1000);
+
+    item.append(seriesKey(kind.series), label, value, unit, ago);
+    return item;
+}
+
+function renderNowEvents() {
+    const rows = NOW_EVENTS.map((kind) => [
+        kind,
+        kind.lane === "meals" ? lastMeal() : lastEvent(kind.lane),
+    ]).filter(([, event]) => event);
+
+    // Строки «Длинный — нет данных» нет: она занимает место, не сообщая
+    // ничего, кроме того, что журнал за двое суток пуст.
+    els.nowEvents.replaceChildren(...rows.map(([kind, event]) => nowEventRow(kind, event)));
+    els.nowEvents.hidden = rows.length === 0;
 }
 
 /* ── Статистика ────────────────────────────────────────────────────── */
@@ -1478,10 +1581,10 @@ function drawCrosshair(ctx, muted) {
 
 /* ── Легенда и подсказка ───────────────────────────────────────────── */
 
-function legendItem(series) {
-    const item = document.createElement("li");
-    item.className = "legend__item";
-
+/* Цветная метка ряда. Одна на легенду и на строки в шапке: там и там она
+   опознаёт один и тот же ряд, а собранная в двух местах порознь — однажды
+   разойдётся, и контурный квадратик под графиком станет залитым над ним. */
+function seriesKey(series) {
     const key = document.createElement("span");
     key.className = series.hollow
         ? "legend__key legend__key--hollow"
@@ -1494,6 +1597,14 @@ function legendItem(series) {
     // задаёт и заливку, и рамку.
     key.style.color = `var(${series.token})`;
     key.style.background = `var(${series.token})`;
+    return key;
+}
+
+function legendItem(series) {
+    const item = document.createElement("li");
+    item.className = "legend__item";
+
+    const key = seriesKey(series);
 
     const text = document.createElement("span");
     text.textContent = series.label;
