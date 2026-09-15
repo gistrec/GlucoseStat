@@ -11,6 +11,7 @@ from conftest import BASE
 from daytime import DISPLAY_TZ
 from nights import (
     DRIFT_FROM_HOUR,
+    FASTING_GAP,
     NIGHT_MIN_COVERAGE,
     NIGHTS_MIN_MEDIAN,
     SPARK_SLOT_MINUTES,
@@ -45,10 +46,23 @@ def week(nights=7, **kwargs):
     return readings
 
 
-def supper(days_ago, hours_before_midnight=5.0):
-    """Еда и короткий вечером накануне ночи ``days_ago``."""
+def supper(days_ago, hours_before_drift=None):
+    """Еда и короткий перед ночью ``days_ago``, за N часов до начала дрейфа.
 
-    moment = BASE - timedelta(days=days_ago, hours=hours_before_midnight)
+    Отсчёт от 03:00, а не от полуночи: правило «натощак» смотрит именно на этот
+    разрыв, и тест не должен пересчитывать его в уме при каждой правке
+    ``FASTING_GAP``.
+    """
+
+    if hours_before_drift is None:
+        hours_before_drift = FASTING_GAP.total_seconds() / 3600 + 1
+
+    moment = (
+        BASE
+        - timedelta(days=days_ago)
+        + timedelta(hours=DRIFT_FROM_HOUR)
+        - timedelta(hours=hours_before_drift)
+    )
     return [
         (moment, "meal", 60.0, None),
         (moment, "bolus", None, 5.0),
@@ -131,9 +145,9 @@ class TestDrift:
         assert summary["drift_median"] == 36
 
     def test_a_late_supper_leaves_the_night_dirty(self):
-        # Ужин в 23:30: к трём ночи прошло три с половиной часа, короткий ещё
-        # работает, и разность мерила бы его, а не базал.
-        late = suppers(hours_before_midnight=0.5)
+        # Час до порога не дотянул: короткий ещё работает, и разность мерила бы
+        # его, а не базал.
+        late = suppers(hours_before_drift=FASTING_GAP.total_seconds() / 3600 - 1)
 
         summary = night_summary(week(values=self.rising), late, BASE, HYPO)
 
@@ -141,6 +155,16 @@ class TestDrift:
         assert summary["drift_median"] is None
         # Счёт ночей при этом не страдает: безопасность считается по всем.
         assert summary["counted"] == 7
+
+    def test_the_gap_counts_from_the_drift_hour(self):
+        # Ровно порог — уже натощак: граница включающая, и ужин, отстоящий от
+        # трёх ночи на FASTING_GAP, проходит. Ради этого порог и опущен —
+        # обычный ужин до полуночи обязан давать зачётную ночь.
+        journal = suppers(hours_before_drift=FASTING_GAP.total_seconds() / 3600)
+
+        summary = night_summary(week(values=self.rising), journal, BASE, HYPO)
+
+        assert summary["clean"] == 7
 
     def test_a_night_snack_leaves_the_night_dirty(self):
         journal = suppers()
