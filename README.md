@@ -115,6 +115,12 @@ midnight it would describe the tail of the meal. On a live week the two choices
 disagree about the sign — median +0.3 from midnight against −0.7 from three —
 which is exactly why the narrower window is the honest one.
 
+The hypoglycaemia count carries its minutes, both per night and for the week:
+"1 of 7" says nothing about whether that night spent a minute under the line or
+half an hour, and those are different nights. The minutes come from the same
+episodes the chart draws (`lows.py`), so the two places can never disagree about
+how long a low lasted.
+
 **Two denominators, and the page names both.** Hypoglycaemia counts and the
 minimum are computed over every night the sensor covered: they are measured
 facts, and filtering them would throw away the nights that matter most — a late

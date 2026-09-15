@@ -745,11 +745,16 @@ function renderNights() {
 }
 
 function nightCards(nights) {
+    /* Минуты рядом со счётом ночей: флаг отвечает «случалось ли», а решение
+       требует «сколько». Минута под порогом и полчаса под ним — разные ночи, и
+       одинаковое «1 из 7» у них читалось бы как одна и та же неделя. */
     const cards = [
         statCard(
             "Ночей с гипогликемией",
             `${nights.hypo_nights} из ${nights.counted}`,
-            `ниже ${formatMmol(nights.hypo_mgdl)} ммоль/л хотя бы раз за ночь`
+            nights.hypo_minutes
+                ? `ниже ${formatMmol(nights.hypo_mgdl)} ммоль/л · всего ${nights.hypo_minutes} мин за неделю`
+                : `ниже ${formatMmol(nights.hypo_mgdl)} ммоль/л хотя бы раз за ночь`
         ),
     ];
 
@@ -851,6 +856,17 @@ function nightCell(night, scale) {
     if (night.count) low.style.color = zoneColor(night.min);
 
     item.append(date, low);
+
+    // Длительность — только у ночей, где под порогом побывали: у остальных эта
+    // строка была бы нулём, который ничего не сообщает, но занимает место под
+    // каждой из семи ячеек.
+    if (night.low_minutes) {
+        const minutes = document.createElement("p");
+        minutes.className = "nights__below";
+        minutes.textContent = `${night.low_minutes} мин ниже`;
+        item.append(minutes);
+    }
+
     return item;
 }
 
@@ -1338,7 +1354,16 @@ function drawChart() {
             legendItems.push(SERIES.low);
         }
         if (runs.length) {
-            legendItems.push(SERIES.profile);
+            /* С числом дней, по которым построен коридор. «Обычно» без него —
+               обещание без выборки: коридор по семи дням и по четырнадцати
+               выглядит одинаково уверенно, а значит разное. Число публикуется
+               в снимке с самого начала (agp.py) и до сих пор нигде не читалось. */
+            const days = snapshot.profile && snapshot.profile.days;
+            legendItems.push(
+                days
+                    ? { ...SERIES.profile, label: `${SERIES.profile.label}, ${days} дн` }
+                    : SERIES.profile
+            );
         }
         for (const kind of [SERIES.meal, SERIES.insulin, SERIES.basal]) {
             if (lanes.some((lane) => lane.bars.some((bar) => bar.series === kind))) {
@@ -2691,7 +2716,22 @@ function markPicked() {
 
 function refreshPicked() {
     markPicked();
-    if (snapshot && snapshot.analysis) drawOverlay(snapshot.analysis);
+    // Тот же набор, что нарисован при отрисовке секции, а не весь разбор:
+    // полный уговор — в renderReview. Здесь стоял snapshot.analysis целиком, и
+    // первое же наведение подкладывало на холст кривые приёмов, которых нет в
+    // списке под ним, вместе с медианой, посчитанной по другому набору.
+    const visible = visibleMeals();
+    if (visible) drawOverlay(visible);
+}
+
+/* Видимая часть разбора: последние ``mealsShown`` приёмов. Считается в одном
+   месте — иначе холст и таблица однажды разойдутся в том, что показывают. */
+function visibleMeals() {
+    const analysis = snapshot && snapshot.analysis;
+    if (!analysis || !analysis.meals.length) return null;
+
+    const shown = analysis.meals.slice(-Math.min(mealsShown, analysis.meals.length));
+    return { ...analysis, meals: shown };
 }
 
 function renderReviewStats(analysis) {
@@ -2909,8 +2949,8 @@ function renderReview() {
        N приёмов» считала бы одно, а глаз видел другое. Сводка выше остаётся по
        всему окну: она про две недели, а не про то, что сейчас раскрыто, и её
        карточка так и подписана. */
-    const shown = analysis.meals.slice(-Math.min(mealsShown, analysis.meals.length));
-    const visible = { ...analysis, meals: shown };
+    const visible = visibleMeals();
+    const shown = visible.meals;
 
     const reviewSince = sinceLabel(new Date(shown[0].t * 1000));
     els.reviewNote.textContent =

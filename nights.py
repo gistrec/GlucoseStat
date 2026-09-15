@@ -19,6 +19,7 @@
 from datetime import date, datetime, time, timedelta, timezone
 
 from daytime import DISPLAY_TZ, _covered, _percentile, _zone
+from lows import low_episodes
 
 # Своё окно, не AGP_WINDOW и не ANALYSIS_WINDOW: ночей всего по одной в сутки,
 # и две недели здесь — это четырнадцать наблюдений, а не четырнадцать дней
@@ -222,6 +223,14 @@ def night_summary(
             record["hypo"] = min(values) < hypo_mgdl
             record["points"] = _spark(night)
 
+            # Не только «была ли», но и сколько длилась: минута под порогом и
+            # час под ним — разные ночи, а флаг у них один. Эпизоды те же, что
+            # рисует полоса под кривой, и считает их тот же модуль — два ответа
+            # на «сколько минут» не должны расходиться.
+            episodes = low_episodes(night, hypo_mgdl)
+            record["low_minutes"] = sum(item["minutes"] for item in episodes)
+            record["low_count"] = len(episodes)
+
             fasting = _fasting(journal, evening, drift_start, end)
             record["fasting"] = fasting
             record["drift"] = None
@@ -258,6 +267,9 @@ def night_summary(
         # Знаменатель счёта гипогликемий: ночей, за которые сенсор отвечает.
         "counted": len(counted),
         "hypo_nights": sum(1 for item in counted if item["hypo"]),
+        # Сумма, а не медиана: ночей с гипогликемией обычно одна-две, и медиана
+        # по всем ночам была бы нулём при любой тяжести тех, где она случилась.
+        "hypo_minutes": sum(item["low_minutes"] for item in counted),
         # Знаменатель медиан: ночей, где ужин успел отработать.
         "clean": len(clean),
         "min_median": (

@@ -85,6 +85,26 @@ class TestCounting:
         assert summary["hypo_nights"] == 0
         assert len(summary["nights"]) == 7
 
+    def test_the_night_counts_its_minutes_below(self):
+        # Флага «была гипогликемия» мало: минута под порогом и полчаса под ним
+        # — разные ночи. Три замера подряд с шагом в пять минут плюс возврат
+        # выше порога дают пятнадцать минут эпизода.
+        readings = week(nights=6) + night_of(
+            7, values=lambda i: 65.0 if 40 <= i <= 42 else 120.0
+        )
+
+        summary = night_summary(readings, suppers(), BASE, HYPO)
+        low = next(item for item in summary["nights"] if item["hypo"])
+
+        assert low["low_count"] == 1
+        assert low["low_minutes"] == 20
+        assert summary["hypo_minutes"] == 20
+
+    def test_a_quiet_week_has_no_minutes_below(self):
+        summary = night_summary(week(), suppers(), BASE, HYPO)
+
+        assert summary["hypo_minutes"] == 0
+
     def test_a_single_low_reading_makes_the_night_hypo(self):
         # Ровно тот случай, ради которого ночь считается по сырью: один замер
         # 65 мг/дл в 03:20. На недельной ломаной он попадает в корзину с
