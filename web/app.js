@@ -836,7 +836,10 @@ function nightCell(night, scale) {
         canvas.setAttribute("role", "img");
         canvas.setAttribute(
             "aria-label",
-            `Ночь ${nightLabel(night)}: минимум ${formatMmol(night.min)} ммоль/л`
+            `Ночь ${nightLabel(night)}: минимум ${formatMmol(night.min)} ммоль/л` +
+                (night.low_minutes
+                    ? `, ${night.low_minutes} мин ниже ${formatMmol(snapshot.target.low)}`
+                    : "")
         );
         item.append(canvas);
     } else {
@@ -863,7 +866,13 @@ function nightCell(night, scale) {
     if (night.low_minutes) {
         const minutes = document.createElement("p");
         minutes.className = "nights__below";
+        // Коротко — «ниже» без «нормы»: ячейка шириной в сотню пикселей, а
+        // полная фраза рвала бы строку. Чего именно ниже, сказано рядом: тем
+        // же порогом подписана плитка слева, и красное число прямо над этой
+        // строкой — тот самый минимум. Полностью фраза живёт в подсказке и в
+        // метке для скринридера, где место есть.
         minutes.textContent = `${night.low_minutes} мин ниже`;
+        minutes.title = `${night.low_minutes} мин ниже ${formatMmol(snapshot.target.low)} ммоль/л`;
         item.append(minutes);
     }
 
