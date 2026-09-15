@@ -288,6 +288,20 @@ class TestDaily:
 
         assert day["coverage"] < 100 * DAY_MIN_COVERAGE
         assert day["partial"] is True
+        # Причина названа отдельно от факта: сутки не обрезаны, молчал сенсор.
+        assert day["clipped"] is False
+
+    def test_a_clipped_day_says_so_even_at_full_coverage(self):
+        # Сегодняшние сутки в полдень: замеры идут сплошь, но день ещё не
+        # кончился. Для страницы это другая оговорка, чем редкие замеры.
+        noon = BASE + timedelta(hours=12)
+        data = [(BASE + timedelta(minutes=5 * i), 120.0) for i in range(144)]
+
+        day = _daily(data, noon, timedelta(days=1))[-1]
+
+        assert day["coverage"] == 100
+        assert day["clipped"] is True
+        assert day["partial"] is True
 
     def test_a_25_hour_day_is_not_partial(self):
         # Белград, 25 октября 2026 — 25-часовые сутки перехода на зимнее
@@ -336,7 +350,7 @@ class TestDaily:
         for key in (
             "start", "end", "count", "avg", "min", "max",
             "tir", "below", "above", "cv",
-            "p25", "p50", "p75", "coverage", "partial",
+            "p25", "p50", "p75", "coverage", "partial", "clipped",
         ):
             assert key in day, key
 

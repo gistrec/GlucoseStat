@@ -1828,6 +1828,18 @@ function drawDailyBoxes(ctx, days, x, y, plotLeft, plotRight, width) {
         // резать её по порогу не во что, она лежит по одну его сторону.
         ctx.fillStyle = readingColor(day.p50);
         ctx.fillRect(left, y(toMmol(day.p50)) - 0.75, boxWidth, 1.5);
+
+        /* Неполные сутки — штрихом под коробкой. Сама коробка не меняется:
+           её квартили посчитаны честно, просто по куску дня, и перекрашивать
+           их значило бы сказать, что день был другим. Штрих говорит ровно то,
+           что есть, — этому дню верить меньше, чем соседям, — а сколько
+           именно, называет подсказка при наведении. */
+        if (day.partial) {
+            ctx.fillStyle = readColor("--muted", "#8a90a6");
+            ctx.globalAlpha = 0.55;
+            ctx.fillRect(left, y(toMmol(day.p25)) + 4, boxWidth, 1);
+            ctx.globalAlpha = 1;
+        }
     }
 }
 
@@ -2091,7 +2103,28 @@ function showDayTip(clientX) {
     note.className = "tip__note";
     note.textContent = `Ниже ${percent(day.below)} · выше ${percent(day.above)}`;
 
-    els.tip.replaceChildren(time, median, spread, tir, note);
+    const rows = [time, median, spread, tir, note];
+
+    /* Неполный день говорит об этом вслух. Коробка у него той же ширины, что у
+       целых суток, и квартили выглядят так же уверенно — а посчитаны они по
+       обрезанному куску: по краям окна день входит хвостом, а в середине его
+       может проредить молчание сенсора. Снимок отмечал это с самого начала
+       (partial, coverage в _daily), но никто не читал. */
+    if (day.partial) {
+        // Две причины неполноты, и они означают разное: обрезанные окном сутки
+        // — «это ещё не весь день», редкие замеры — «этому дню верить меньше».
+        // Совпасть они тоже могут: сегодняшнее утро с молчавшим сенсором.
+        const reasons = [];
+        if (day.clipped) reasons.push("сутки показаны не целиком");
+        if (day.coverage < 100) reasons.push(`покрытие ${percent(day.coverage)}`);
+
+        const partial = document.createElement("p");
+        partial.className = "tip__note tip__note--warn";
+        partial.textContent = reasons.join(" · ");
+        rows.push(partial);
+    }
+
+    els.tip.replaceChildren(...rows);
     placeTip(clientX);
 }
 

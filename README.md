@@ -22,6 +22,13 @@ coefficient of variation, and GMI. The 48-hour window exists to answer "what
 was happening exactly a day ago" — on the 24-hour one that moment sits on the
 very edge of the canvas, clipped by it.
 
+The 30-day window is not a line but a box per local day — p25 to p75 with the
+median notched across it. A day that is not whole carries a grey dash under its
+box, and the tooltip names which kind of "not whole" it is: the day is shown in
+part (clipped by the edge of the window, or still running), or the sensor was
+quiet through some of it and the coverage says how much. The box itself is not
+recoloured — its quartiles are honest, they just describe a slice of the day.
+
 On the hourly windows the curve continues past "now" as a dashed 30-minute
 forecast — a linear extension of the same 15-minute rate that draws the trend
 arrow, so the two can never disagree. It is capped at half an hour because
