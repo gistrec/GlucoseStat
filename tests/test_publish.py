@@ -627,9 +627,7 @@ class TestDbLastSuccess:
     """Отметка в базе — единственная, которую видит рендерер на другом хосте."""
 
     def test_naive_utc_becomes_epoch_and_not_local_time(self, monkeypatch):
-        # Ради этого теста всё и затевалось: переведи наивный UTC в epoch без
-        # явной зоны — и на russia-03 (MSK) отметка уехала бы на три часа,
-        # показав сборщика бодрее, чем он есть.
+        # Без явной зоны отметка уехала бы на смещение хоста.
         monkeypatch.setattr("publish.read_last_success", lambda: BASE)
 
         assert _db_last_success() == BASE.replace(tzinfo=timezone.utc).timestamp()
@@ -666,8 +664,7 @@ class TestLastSuccessSource:
     def test_falls_back_to_the_snapshot_while_the_row_is_missing(
         self, tmp_path, monkeypatch
     ):
-        # Переходный случай: сборщик ещё не обновлён и отметку не писал. Без
-        # запасного пути первый же пересбор стёр бы живую отметку.
+        # Сборщик ещё не обновлён: без запасного пути пересбор стёр бы отметку.
         path = tmp_path / "data.json"
         path.write_text('{"collector": {"last_success": 1756500000}}', encoding="utf-8")
         self._stub_queries(monkeypatch)
@@ -724,8 +721,7 @@ class TestPublishCarryForward:
         monkeypatch.setattr("publish.journal_since", lambda since: [])
         monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
         monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
-        # Пустая база — то самое состояние, ради которого наследование из файла
-        # и осталось: сборщик ещё не записал ни одной отметки.
+        # Пустая база — то состояние, ради которого наследование и осталось.
         monkeypatch.setattr("publish.read_last_success", lambda: None)
 
         path = str(tmp_path / "data.json")

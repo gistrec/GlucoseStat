@@ -178,9 +178,8 @@ def run_once(
     except Exception:
         log.exception("failed to stamp the freshness file")
 
-    # Отметка уходит и в базу — своим запросом, а не внутри try опроса: запись
-    # сюда не должна выглядеть как неудачный опрос и включать backoff. Рендерер
-    # на реплике видит только базу, память этого процесса ему недоступна.
+    # Своим try, а не внутри опроса: упавшая запись не должна выглядеть
+    # неудачным опросом и включать backoff.
     if last_success is not None:
         try:
             store_last_success(

@@ -133,9 +133,7 @@ class TestRunOnce:
         assert backoff == BACKOFF_MIN * 2
 
     def test_a_successful_poll_stores_the_mark_as_naive_utc(self, monkeypatch):
-        # Рендерер на реплике видит только базу — память этого процесса ему
-        # недоступна. Наивный UTC, как и у показаний: MySQL DATETIME зоны не
-        # несёт, а местное время хоста увело бы отметку на смещение.
+        # Наивный UTC: местное время хоста увело бы отметку на смещение.
         stored = []
         fetched = [(BASE, 120.0)]
         self.quiet(monkeypatch)
@@ -151,8 +149,7 @@ class TestRunOnce:
         assert abs((now - stored[0]).total_seconds()) < 5
 
     def test_a_failed_poll_stores_no_mark(self, monkeypatch):
-        # Иначе страница объявляла бы сборщика живым ровно тогда, когда он
-        # до Abbott не достучался.
+        # Иначе страница объявит сборщика живым ровно когда он молчит.
         stored = []
         self.quiet(monkeypatch)
         monkeypatch.setattr("main.store_readings", lambda readings: 0)
