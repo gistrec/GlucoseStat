@@ -61,6 +61,26 @@ meal_estimates = Table(
 )
 
 
+class CollectorState(Base):
+    """Состояние сборщика, которое обязан видеть рендерер на другой машине.
+
+    ``last_success`` — когда сборщик последний раз достучался до LibreLinkUp —
+    жил в памяти процесса и наследовался из предыдущего снимка. Рендереру на
+    реплике наследовать не из чего: он видит только базу. Без этой таблицы его
+    страница навсегда осталась бы без отметки «данные не идут», то есть без
+    того единственного признака, который отличает свежие цифры от вчерашних.
+
+    Пишет сюда только сборщик — он один на парк; рендереры читают.
+    """
+
+    __tablename__ = "collector_state"
+
+    # `key` — зарезервированное слово MySQL, отсюда `name`.
+    name = Column(String(32), primary_key=True)
+    # Наивный UTC, как timestamp у показаний: MySQL DATETIME зоны не несёт.
+    occurred_at = Column(DateTime, nullable=False)
+
+
 class GlucoseReading(Base):
     """Single glucose reading as published by LibreLinkUp.
 

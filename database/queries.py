@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .connection import session
 from .models import (
+    CollectorState,
     GlucoseReading,
     journal_entries,
     meal_confirmations,
@@ -41,6 +42,39 @@ def store_readings(readings: list[tuple[datetime, float]]) -> int:
         result = db.execute(statement)
         db.commit()
         return result.rowcount
+
+
+def store_last_success(when: datetime) -> None:
+    """Запомнить, когда сборщик последний раз достучался до LibreLinkUp.
+
+    Одна строка, переписываемая каждым удачным опросом. UPSERT, а не
+    INSERT IGNORE: здесь нужно именно перезаписать значение, а не сохранить
+    первое. ``when`` — наивный UTC, как и timestamp показаний.
+    """
+
+    statement = insert(CollectorState).values(name="last_success", occurred_at=when)
+    statement = statement.on_duplicate_key_update(
+        occurred_at=statement.inserted.occurred_at
+    )
+
+    with session() as db:
+        db.execute(statement)
+        db.commit()
+
+
+def read_last_success() -> datetime | None:
+    """Отметка сборщика, или None — если он её ещё ни разу не сохранял.
+
+    None означает «сказать нечего», а не «данные не идут»: так выглядит база
+    до первого удачного опроса после обновления сборщика.
+    """
+
+    with session() as db:
+        return db.execute(
+            select(CollectorState.occurred_at).where(
+                CollectorState.name == "last_success"
+            )
+        ).scalar_one_or_none()
 
 
 def readings_since(start: datetime) -> list[tuple[datetime, float]]:

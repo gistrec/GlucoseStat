@@ -18,6 +18,7 @@ from database.queries import (
     journal_since,
     last_readings,
     meal_origins_since,
+    read_last_success,
     readings_since,
 )
 from daytime import DISPLAY_TZ, _covered, _weigh, _weighted_percentile, _zone
@@ -498,6 +499,24 @@ def build_snapshot(
     }
 
 
+def _db_last_success() -> float | None:
+    """Отметка сборщика из базы, приведённая к epoch.
+
+    Ошибку не глушим: снимок всё равно строится запросами к той же базе, так
+    что недоступная MySQL обязана уронить публикацию, а не тихо выставить
+    странице «сборщик молчит» поверх данных, которых мы просто не прочитали.
+    """
+
+    stored = read_last_success()
+    if stored is None:
+        return None
+
+    # В базе наивный UTC — зону возвращаем перед переводом в epoch, иначе
+    # timestamp() истолковал бы его по локальной зоне хоста, и отметка
+    # разъехалась бы ровно на смещение (на russia-03 это три часа).
+    return stored.replace(tzinfo=timezone.utc).timestamp()
+
+
 def _stored_last_success(path: str) -> float | None:
     """Прошлое значение ``last_success`` из уже опубликованного снимка.
 
@@ -534,7 +553,11 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
     """
 
     if last_success is None:
-        last_success = _stored_last_success(path)
+        # База — первая: она единственная видна рендереру на другом хосте, где
+        # снимок свой и наследовать из него нечего. Файл остаётся запасным
+        # путём на время, пока сборщик ещё не записал ни одной отметки: без
+        # него первый же пересбор после обновления стёр бы живую отметку.
+        last_success = _db_last_success() or _stored_last_success(path)
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     # Удвоенное окно — ради сравнения с предыдущим периодом. Откат этой
