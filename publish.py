@@ -97,6 +97,11 @@ COMPARE_MIN_TIR_PP = 5
 # этого запаса свой кусок сама.
 EVENT_WINDOW = timedelta(days=2)
 
+#: Виды записи «начата новая ручка» и какой инсулин в ней. Значения — те же
+#: строки, что пишет бот в ``journal_entries.kind``; на странице по второму
+#: слову метка красится как короткий или как длинный.
+PEN_KINDS = {"pen_bolus": "bolus", "pen_basal": "basal"}
+
 # А разбор приёмов пищи собирается за две недели: на суточном окне выборки
 # слишком мало, чтобы медиана подъёма что-то значила.
 ANALYSIS_WINDOW = timedelta(days=14)
@@ -369,16 +374,28 @@ def _trend(readings: list[tuple[datetime, float]]) -> dict | None:
 def _events(
     journal: list[tuple[datetime, str, float | None, float | None]], since: datetime
 ) -> dict:
-    """Group journal entries into the three lanes the page draws.
+    """Group journal entries into the lanes the page draws.
 
     Записи без своей величины пропускаются: столбик нулевой высоты на панели
     неотличим от её отсутствия, а место в снимке занимает.
+
+    Исключение — смена ручки (``pen_bolus``/``pen_basal``): у неё величины нет
+    по построению, это отметка момента, а не количество. Она идёт отдельным
+    списком ``pens`` парами «момент, какой инсулин»: страница рисует её в
+    дорожке инсулина, а не своим столбиком, — иначе с этого момента разбор
+    стал бы читать ноль единиц там, где просто открыли новую ручку.
     """
 
-    lanes: dict[str, list[list[float]]] = {"meals": [], "bolus": [], "basal": []}
+    lanes: dict[str, list[list]] = {"meals": [], "bolus": [], "basal": [], "pens": []}
 
     for occurred_at, kind, carbs, units in journal:
         if occurred_at < since:
+            continue
+
+        seconds = int(occurred_at.replace(tzinfo=timezone.utc).timestamp())
+
+        if kind in PEN_KINDS:
+            lanes["pens"].append([seconds, PEN_KINDS[kind]])
             continue
 
         if kind == "meal":
@@ -391,7 +408,6 @@ def _events(
         if amount is None:
             continue
 
-        seconds = int(occurred_at.replace(tzinfo=timezone.utc).timestamp())
         lanes[lane].append([seconds, round(amount, 1)])
 
     return lanes

@@ -105,6 +105,9 @@ const PLOT_HEIGHT = 340;
 const LANE_HEIGHT = 34;
 const LANE_GAP = 8;
 const COLUMN_WIDTH = 7;
+// Кружок на макушке метки смены ручки. Чуть шире половины столбика: метка
+// стоит между столбиками и не должна теряться рядом с ними.
+const MARK_RADIUS = 3.5;
 
 // Просвет между соседними подписями на дорожке. Впритык поставленные числа
 // читаются как одно: «45» и «60» в паре пикселей друг от друга — это «4560».
@@ -230,6 +233,25 @@ const SERIES = {
         fallback: "#cc4fb0",
         label: "Длинный инсулин",
         unit: "ед длинного",
+        hollow: true,
+    },
+    /* Смена ручки — отметка момента в дорожке инсулина, не столбик: у неё нет
+       количества. В легенде и подсказке это кружок, а не квадрат, — иначе
+       метка короткого обещала бы столбик того же цвета, что и укол. Заливка и
+       контур различают ручки тем же правилом, каким столбики различают уколы. */
+    penBolus: {
+        token: "--insulin",
+        fallback: "#cc4fb0",
+        label: "Новая ручка короткого",
+        unit: "",
+        marker: true,
+    },
+    penBasal: {
+        token: "--insulin",
+        fallback: "#cc4fb0",
+        label: "Новая ручка длинного",
+        unit: "",
+        marker: true,
         hollow: true,
     },
     // Коридор «обычного дня» под сегодняшней кривой. Полоса и медиана — один
@@ -999,6 +1021,7 @@ function eventLanes() {
         lanes.push({
             unit: "г",
             bars: meals.map(([t, v]) => ({ t, v, series: SERIES.meal })),
+            marks: [],
         });
     }
 
@@ -1011,8 +1034,16 @@ function eventLanes() {
         ...cut(events.basal).map(([t, v]) => ({ t, v, series: SERIES.basal })),
     ].sort((a, b) => a.t - b.t);
 
-    if (insulin.length) {
-        lanes.push({ unit: "ед", bars: insulin });
+    /* Смена ручки стоит в дорожке инсулина: она про тот же инсулин, что и
+       столбики. Дорожка нужна и без единого укола в окне — метке надо где-то
+       стоять, а своя дорожка ради вертикальной черты была бы пустой полосой. */
+    const pens = cut(events.pens).map(([t, insulin]) => ({
+        t,
+        series: insulin === "basal" ? SERIES.penBasal : SERIES.penBolus,
+    }));
+
+    if (insulin.length || pens.length) {
+        lanes.push({ unit: "ед", bars: insulin, marks: pens });
     }
 
     return lanes;
@@ -1109,6 +1140,44 @@ function drawLane(ctx, lane, box, x, muted, axisAlpha) {
         ctx.fillText(text, centre, top - 2);
     }
     ctx.globalAlpha = 1;
+
+    // Поверх столбиков и подписей: метка — граница «с этого момента другая
+    // ручка», и столбик рядом с ней не должен её перекрывать.
+    drawMarks(ctx, lane.marks || [], box, x);
+}
+
+/* Смена ручки: вертикальная черта на всю дорожку с кружком на макушке. Не
+   столбик — количества нет, а черта читается как граница. Кружок залит у
+   короткого и пуст у длинного, тем же правилом, что и столбики уколов. Круг
+   сидит в верхнем запасе дорожки, там же, где подписи столбиков: подпись
+   рядом с меткой иногда ляжет на неё, и это дешевле, чем дорожка выше на
+   восемь пикселей ради события раз в месяц. */
+function drawMarks(ctx, marks, box, x) {
+    const bottom = box.top + LANE_HEIGHT;
+
+    for (const mark of marks) {
+        const centre = x(mark.t);
+        if (centre < box.left - MARK_RADIUS || centre > box.right + MARK_RADIUS) continue;
+
+        const color = readColor(mark.series.token, mark.series.fallback);
+        const line = Math.round(centre) + 0.5;
+
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(line, bottom);
+        ctx.lineTo(line, box.top + MARK_RADIUS * 2);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(line, box.top + MARK_RADIUS, MARK_RADIUS, 0, Math.PI * 2);
+        if (mark.series.hollow) {
+            ctx.stroke();
+        } else {
+            ctx.fill();
+        }
+    }
 }
 
 function formatAmount(value) {
@@ -1378,6 +1447,12 @@ function drawChart() {
         }
         for (const kind of [SERIES.meal, SERIES.insulin, SERIES.basal]) {
             if (lanes.some((lane) => lane.bars.some((bar) => bar.series === kind))) {
+                legendItems.push(kind);
+            }
+        }
+        // Метки — тем же правилом: строка есть, только когда метка на холсте.
+        for (const kind of [SERIES.penBolus, SERIES.penBasal]) {
+            if (lanes.some((lane) => (lane.marks || []).some((mark) => mark.series === kind))) {
                 legendItems.push(kind);
             }
         }
@@ -1941,13 +2016,17 @@ function drawCrosshair(ctx, muted) {
    разойдётся, и контурный квадратик под графиком станет залитым над ним. */
 function seriesKey(series) {
     const key = document.createElement("span");
-    key.className = series.hollow
-        ? "legend__key legend__key--hollow"
-        : `legend__key${series.line ? " legend__key--line" : ""}${
-              series.thick ? " legend__key--thick" : ""
-          }${series.band ? " legend__key--band" : ""}${
-              series.dashed ? " legend__key--dashed" : ""
-          }`;
+    // Флаги складываются, а не исключают друг друга: метка длинной ручки —
+    // и контур, и кружок разом.
+    const flags = [
+        series.hollow && "legend__key--hollow",
+        series.line && "legend__key--line",
+        series.thick && "legend__key--thick",
+        series.band && "legend__key--band",
+        series.dashed && "legend__key--dashed",
+        series.marker && "legend__key--marker",
+    ].filter(Boolean);
+    key.className = ["legend__key", ...flags].join(" ");
     // Контурная метка красится через currentColor — так одна и та же переменная
     // задаёт и заливку, и рамку.
     key.style.color = `var(${series.token})`;
@@ -2014,6 +2093,10 @@ function tipRow(series, text) {
         key.style.background = "none";
         key.style.border = "1.5px dashed currentColor";
     }
+    // Метка смены ручки — кружком, как в легенде.
+    if (series.marker) {
+        key.style.borderRadius = "50%";
+    }
 
     const label = document.createElement("span");
     label.textContent = text;
@@ -2077,6 +2160,13 @@ function showTip(clientX) {
         for (const bar of box.lane.bars) {
             if (Math.abs(bar.t - hoverTime) <= 900) {
                 rows.push(tipRow(bar.series, `${formatAmount(bar.v)} ${bar.series.unit}`));
+            }
+        }
+        // Метка смены ручки — тем же допуском. Числа у неё нет, строка
+        // называет её словами легенды.
+        for (const mark of box.lane.marks || []) {
+            if (Math.abs(mark.t - hoverTime) <= 900) {
+                rows.push(tipRow(mark.series, mark.series.label));
             }
         }
     }

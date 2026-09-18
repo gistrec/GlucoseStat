@@ -196,6 +196,12 @@ def synthetic_snapshot(now: datetime | None = None) -> dict:
         for moment, value in readings
     ]
 
+    # Смена ручки — событие раз в месяц-полтора, синтетике хватает одной на
+    # каждый инсулин. Обе в окне двух суток, чтобы на холсте были и залитая
+    # метка, и контурная; короткая — в сутках, и на суточном окне тоже видна.
+    journal.append((now - timedelta(hours=20), "pen_bolus", None, None))
+    journal.append((now - timedelta(hours=36), "pen_basal", None, None))
+
     journal.sort()
 
     # Снимок собирает publish, а не этот файл. Своя сборка молча расходилась бы

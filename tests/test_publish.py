@@ -533,7 +533,30 @@ class TestEvents:
 
         lanes = _events(journal, BASE - timedelta(days=1))
 
-        assert lanes == {"meals": [], "bolus": [], "basal": []}
+        assert lanes == {"meals": [], "bolus": [], "basal": [], "pens": []}
+
+    def test_pen_changes_are_listed_with_their_insulin(self):
+        # Смена ручки — отметка момента, а не количество: величины у неё нет
+        # по построению, и правило «без величины — пропуск» её не касается.
+        # Второе слово говорит странице, залить метку или обвести.
+        journal = [
+            self.entry("pen_basal", 600),
+            self.entry("pen_bolus", 60),
+        ]
+
+        lanes = _events(journal, BASE - timedelta(days=1))
+
+        assert lanes["pens"] == [
+            [unix(BASE - timedelta(minutes=600)), "basal"],
+            [unix(BASE - timedelta(minutes=60)), "bolus"],
+        ]
+        # И не в дорожках уколов: ноль единиц там читался бы как доза.
+        assert lanes["bolus"] == [] and lanes["basal"] == []
+
+    def test_pen_change_outside_the_window_is_dropped(self):
+        journal = [self.entry("pen_bolus", 60 * 30)]
+
+        assert _events(journal, BASE - timedelta(days=1))["pens"] == []
 
     def test_snapshot_events_reach_back_two_days(self):
         # Окно «48 часов» заведено ради «а что было ровно сутки назад»:

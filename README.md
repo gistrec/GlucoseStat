@@ -92,6 +92,16 @@ arbitrary, and a chart built that way invents a correlation that isn't in the
 data. Short and long insulin share one lane because they share a unit; the short
 one is filled, the long one is an outline.
 
+A new pen is an event too, though not an amount: `pen_bolus` and `pen_basal`
+entries carry no units, so they are not columns. They stand in the insulin lane
+as a vertical mark with a dot on top — filled for the short pen, hollow for the
+long one, the same rule the columns follow — and the hover names them. The
+date matters more than it looks: a pen is good for 28 days once opened, and a
+fresh one and one running out do not act alike, so a shift in the meal review
+after that mark points at the insulin before it points at the ratio. The lane
+appears for a mark alone, without a single dose in the window: the mark has to
+stand somewhere.
+
 Only the 24- and 48-hour windows show them. A month holds a hundred marks,
 and they merge into a solid band that says nothing.
 
