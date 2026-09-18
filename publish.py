@@ -18,6 +18,7 @@ from database.queries import (
     journal_since,
     last_readings,
     meal_origins_since,
+    read_last_success,
     readings_since,
 )
 from daytime import DISPLAY_TZ, _covered, _weigh, _weighted_percentile, _zone
@@ -498,6 +499,18 @@ def build_snapshot(
     }
 
 
+def _db_last_success() -> float | None:
+    """Отметка сборщика из базы, приведённая к epoch."""
+
+    stored = read_last_success()
+    if stored is None:
+        return None
+
+    # Зону возвращаем явно: иначе timestamp() истолкует наивный UTC по зоне
+    # хоста и сдвинет отметку на смещение — на московском это три часа.
+    return stored.replace(tzinfo=timezone.utc).timestamp()
+
+
 def _stored_last_success(path: str) -> float | None:
     """Прошлое значение ``last_success`` из уже опубликованного снимка.
 
@@ -534,7 +547,9 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
     """
 
     if last_success is None:
-        last_success = _stored_last_success(path)
+        # База первая: на другом хосте снимок свой и наследовать из него
+        # нечего. Файл — запасной путь, пока сборщик не записал отметку.
+        last_success = _db_last_success() or _stored_last_success(path)
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     # Удвоенное окно — ради сравнения с предыдущим периодом. Откат этой

@@ -28,6 +28,7 @@ from publish import (
     TARGET_LOW_MGDL,
     _compare,
     _daily,
+    _db_last_success,
     _downsample,
     _events,
     _gmi,
@@ -622,6 +623,59 @@ class TestGmi:
         assert _gmi([], BASE) is None
 
 
+class TestDbLastSuccess:
+    """Отметка в базе — единственная, которую видит рендерер на другом хосте."""
+
+    def test_naive_utc_becomes_epoch_and_not_local_time(self, monkeypatch):
+        # Без явной зоны отметка уехала бы на смещение хоста.
+        monkeypatch.setattr("publish.read_last_success", lambda: BASE)
+
+        assert _db_last_success() == BASE.replace(tzinfo=timezone.utc).timestamp()
+
+    def test_no_row_means_nothing_to_report(self, monkeypatch):
+        monkeypatch.setattr("publish.read_last_success", lambda: None)
+
+        assert _db_last_success() is None
+
+
+class TestLastSuccessSource:
+    """Порядок источников: база, потом прежний снимок, и только потом пусто."""
+
+    @staticmethod
+    def _stub_queries(monkeypatch):
+        monkeypatch.setattr("publish.readings_since", lambda since: [])
+        monkeypatch.setattr("publish.journal_since", lambda since: [])
+        monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
+        monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
+
+    def test_the_database_wins_over_the_previous_snapshot(self, tmp_path, monkeypatch):
+        path = tmp_path / "data.json"
+        path.write_text('{"collector": {"last_success": 1}}', encoding="utf-8")
+        self._stub_queries(monkeypatch)
+        monkeypatch.setattr("publish.read_last_success", lambda: BASE)
+
+        publish(path=str(path))
+
+        stored = json.loads(path.read_text(encoding="utf-8"))
+        assert stored["collector"]["last_success"] == int(
+            BASE.replace(tzinfo=timezone.utc).timestamp()
+        )
+
+    def test_falls_back_to_the_snapshot_while_the_row_is_missing(
+        self, tmp_path, monkeypatch
+    ):
+        # Сборщик ещё не обновлён: без запасного пути пересбор стёр бы отметку.
+        path = tmp_path / "data.json"
+        path.write_text('{"collector": {"last_success": 1756500000}}', encoding="utf-8")
+        self._stub_queries(monkeypatch)
+        monkeypatch.setattr("publish.read_last_success", lambda: None)
+
+        publish(path=str(path))
+
+        stored = json.loads(path.read_text(encoding="utf-8"))
+        assert stored["collector"]["last_success"] == 1756500000
+
+
 class TestStoredLastSuccess:
     """The collector's memory dies with its process; the snapshot's does not."""
 
@@ -667,6 +721,8 @@ class TestPublishCarryForward:
         monkeypatch.setattr("publish.journal_since", lambda since: [])
         monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
         monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
+        # Пустая база — то состояние, ради которого наследование и осталось.
+        monkeypatch.setattr("publish.read_last_success", lambda: None)
 
         path = str(tmp_path / "data.json")
         publish(path=path, last_success=1756500000.0)
@@ -684,6 +740,7 @@ class TestPublishCarryForward:
         monkeypatch.setattr("publish.journal_since", lambda since: [])
         monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
         monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
+        monkeypatch.setattr("publish.read_last_success", lambda: None)
 
         # Каталог на месте файла: переименовать в него нельзя, и publish
         # свалится уже после того, как временный файл написан.

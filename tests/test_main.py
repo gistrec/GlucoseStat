@@ -94,6 +94,7 @@ class TestRunOnce:
 
         monkeypatch.setattr("main.publish", lambda **kwargs: None)
         monkeypatch.setattr("main.stamp_freshness", lambda readings: None)
+        monkeypatch.setattr("main.store_last_success", lambda when: None)
 
     def test_db_outage_does_not_silence_the_alert(self, monkeypatch):
         def down(*args, **kwargs):
@@ -131,6 +132,34 @@ class TestRunOnce:
         assert delay == BACKOFF_MIN
         assert backoff == BACKOFF_MIN * 2
 
+    def test_a_successful_poll_stores_the_mark_as_naive_utc(self, monkeypatch):
+        # Наивный UTC: местное время хоста увело бы отметку на смещение.
+        stored = []
+        fetched = [(BASE, 120.0)]
+        self.quiet(monkeypatch)
+        monkeypatch.setattr("main.store_readings", lambda readings: len(readings))
+        monkeypatch.setattr("main.last_readings", lambda n: fetched)
+        monkeypatch.setattr("main.store_last_success", stored.append)
+
+        run_once(FakeCollector(fetched), None, 300, BACKOFF_MIN, None)
+
+        assert len(stored) == 1
+        assert stored[0].tzinfo is None
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        assert abs((now - stored[0]).total_seconds()) < 5
+
+    def test_a_failed_poll_stores_no_mark(self, monkeypatch):
+        # Иначе страница объявит сборщика живым ровно когда он молчит.
+        stored = []
+        self.quiet(monkeypatch)
+        monkeypatch.setattr("main.store_readings", lambda readings: 0)
+        monkeypatch.setattr("main.last_readings", lambda n: [])
+        monkeypatch.setattr("main.store_last_success", stored.append)
+
+        run_once(FakeCollector(RuntimeError("network down")), None, 300, BACKOFF_MIN, None)
+
+        assert stored == []
+
     def test_successful_cycle_resets_backoff_and_publishes_the_mark(
         self, monkeypatch
     ):
@@ -140,6 +169,7 @@ class TestRunOnce:
         monkeypatch.setattr("main.last_readings", lambda n: fetched[-1:])
         monkeypatch.setattr("main.publish", lambda **kwargs: published.update(kwargs))
         monkeypatch.setattr("main.stamp_freshness", lambda readings: None)
+        monkeypatch.setattr("main.store_last_success", lambda when: None)
 
         notifier = RecordingNotifier()
         delay, backoff, last_success = run_once(

@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 from database.connection import init_schema
-from database.queries import last_readings, store_readings
+from database.queries import last_readings, store_last_success, store_readings
 from librelinkup import COOLDOWN_MAX, AuthError, LibreLinkUp, RateLimited
 from notify import Notifier
 from publish import publish
@@ -177,6 +177,16 @@ def run_once(
         stamp_freshness(latest)
     except Exception:
         log.exception("failed to stamp the freshness file")
+
+    # Своим try, а не внутри опроса: упавшая запись не должна выглядеть
+    # неудачным опросом и включать backoff.
+    if last_success is not None:
+        try:
+            store_last_success(
+                datetime.fromtimestamp(last_success, timezone.utc).replace(tzinfo=None)
+            )
+        except Exception:
+            log.exception("failed to store the last-success mark")
 
     # Снимок переписывается и после неудачи: только так на странице
     # появляется отметка, что сборщик молчит. Прежде publish() стоял

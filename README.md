@@ -267,6 +267,35 @@ An hour-long gap is not always a fault: LibreLinkUp reports nothing at all
 while no sensor is on, so a sensor change shows up here as a hole the width of
 however long the new one took to go on.
 
+## Roles
+
+The two entry points are two roles, and the difference is worth stating because
+only one of them may run twice:
+
+| | collector — `main.py` | renderer — `publish.py` |
+|---|---|---|
+| Runs as | a pm2 loop, polling Abbott | a one-shot command, on a schedule |
+| Copies | **exactly one**, anywhere | as many as there are hosts serving the page |
+| Database | writes | reads only |
+| Needs | the whole `.env` | the `MYSQL_*` block |
+| Local state | `.llu-token.json`, `.alerts.json` | none |
+
+The collector is a singleton for three separate reasons, any one of which is
+enough: a replica refuses its writes, LibreLinkUp hands out one session per
+account so two logins evict each other, and `.alerts.json` is per-process — two
+copies would each alert about the same low.
+
+The renderer is not. A second host with a read replica can rebuild the snapshot
+from its own copy of the data and serve its own `web/data.json`, which is how
+the page is served from inside Russia, where the Finnish origin is throttled.
+That host runs no collector; it renders on a one-minute cron and nothing else.
+
+This is why `last_success` — when the collector last reached LibreLinkUp — lives
+in the `collector_state` table rather than only in the collector's memory. A
+renderer on another machine has no memory to inherit it from, and without it the
+page there could never say "the numbers stopped moving", which is the one thing
+distinguishing fresh glucose from yesterday's.
+
 ## Running
 
 ```bash

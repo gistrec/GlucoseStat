@@ -5,10 +5,11 @@ from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.dialects.mysql import insert
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import ProgrammingError, SQLAlchemyError
 
 from .connection import session
 from .models import (
+    CollectorState,
     GlucoseReading,
     journal_entries,
     meal_confirmations,
@@ -41,6 +42,36 @@ def store_readings(readings: list[tuple[datetime, float]]) -> int:
         result = db.execute(statement)
         db.commit()
         return result.rowcount
+
+
+def store_last_success(when: datetime) -> None:
+    """Запомнить, когда сборщик последний раз достучался до LibreLinkUp."""
+
+    statement = insert(CollectorState).values(name="last_success", occurred_at=when)
+    statement = statement.on_duplicate_key_update(
+        occurred_at=statement.inserted.occurred_at
+    )
+
+    with session() as db:
+        db.execute(statement)
+        db.commit()
+
+
+def read_last_success() -> datetime | None:
+    """Отметка сборщика, или None, если сказать нечего."""
+
+    try:
+        with session() as db:
+            return db.execute(
+                select(CollectorState.occurred_at).where(
+                    CollectorState.name == "last_success"
+                )
+            ).scalar_one_or_none()
+    except ProgrammingError:
+        # Таблицы ещё нет: её создаёт init_schema() сборщика, а рендерер на
+        # реплике и не может — там запись запрещена. Пусть публикация
+        # наследует отметку из прежнего снимка, как делала до этой таблицы.
+        return None
 
 
 def readings_since(start: datetime) -> list[tuple[datetime, float]]:
