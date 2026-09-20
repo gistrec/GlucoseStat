@@ -31,6 +31,7 @@ from publish import (
     _db_last_success,
     _downsample,
     _events,
+    _gaps,
     _gmi,
     _stats,
     _stored_last_success,
@@ -174,6 +175,56 @@ class TestTimeWeighting:
         stats = _stats(lone + dense)
 
         assert stats["avg"] == pytest.approx(129.6, abs=0.1)
+
+
+class TestGaps:
+    """Молчание сенсора: что попадает в полосу «нет сигнала» на графике."""
+
+    def window(self, hours=48):
+        return BASE - timedelta(hours=hours)
+
+    def test_steady_readings_have_no_gaps(self):
+        assert _gaps(readings(*[120] * 12), self.window()) == []
+
+    def test_a_single_missed_reading_is_not_silence(self):
+        # Десять минут между замерами — обычная задержка выгрузки.
+        data = readings(120, 120, step_minutes=10)
+
+        assert _gaps(data, self.window()) == []
+
+    def test_a_sensor_change_becomes_one_gap(self):
+        data = [(BASE, 120.0), (BASE + timedelta(minutes=100), 130.0)]
+
+        assert _gaps(data, self.window()) == [
+            {
+                "start": unix(BASE),
+                "end": unix(BASE + timedelta(minutes=100)),
+                "minutes": 100,
+            }
+        ]
+
+    def test_the_gap_keeps_raw_edges_not_bucket_edges(self):
+        # Замеры встали не на границу пятиминутной корзины, и длительность
+        # обязана остаться той, что между ними, а не округлённой к шагу.
+        left = BASE + timedelta(minutes=3)
+        data = [(left, 120.0), (left + timedelta(minutes=97), 130.0)]
+
+        assert _gaps(data, self.window())[0]["minutes"] == 97
+
+    def test_a_gap_that_ended_before_the_window_is_dropped(self):
+        old = BASE - timedelta(days=5)
+        data = [(old, 120.0), (old + timedelta(hours=2), 130.0), (BASE, 120.0)]
+
+        # Молчание пятидневной давности за окном; разрыв до BASE — внутри.
+        assert [gap["minutes"] for gap in _gaps(data, self.window())] == [
+            round(timedelta(days=5, hours=-2).total_seconds() / 60)
+        ]
+
+    def test_silence_that_still_lasts_is_left_to_the_page(self):
+        # Правого края у него нет: последний замер — не конец молчания.
+        data = readings(120, 130)
+
+        assert _gaps(data, self.window()) == []
 
 
 class TestDaily:

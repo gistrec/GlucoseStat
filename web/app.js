@@ -221,6 +221,17 @@ const SERIES = {
         line: true,
         thick: true,
     },
+    /* Промежуток, где сенсор молчал. Как и полоса эпизодов, это отметка
+       времени, а не ряд данных, — но знак на холсте новый, и опознать его
+       иначе нечем. Цветом семейства --muted: молчание не событие, о котором
+       стоит кричать, а провал в том, что страница знает. */
+    gap: {
+        token: "--muted",
+        fallback: "#8a90a6",
+        label: "Нет сигнала",
+        unit: "",
+        striped: true,
+    },
     meal: { token: "--meal", fallback: "#bd8a30", label: "Углеводы", unit: "г" },
     insulin: {
         token: "--insulin",
@@ -383,12 +394,22 @@ function formatAgo(ms) {
 function formatEventAgo(ms) {
     const minutes = Math.round(ms / 60000);
     if (minutes < 1) return "только что";
-    if (minutes < 60) return `${minutes} мин назад`;
+    if (minutes >= 24 * 60) return `${Math.floor(minutes / 60)} ч назад`;
+    return `${formatSpan(ms / 1000)} назад`;
+}
+
+/* Длительность промежутка: «40 мин», «1 ч», «1 ч 40 мин». Отдельно от
+   formatEventAgo потому, что промежуток не всегда отсчитывается от «сейчас» —
+   молчание сенсора посреди ночи кончилось до того, как на него посмотрели, — а
+   набираться оно обязано теми же словами: два формата длительности на одной
+   странице читаются как две разные величины. */
+function formatSpan(seconds) {
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `${minutes} мин`;
 
     const hours = Math.floor(minutes / 60);
     const rest = minutes % 60;
-    if (hours >= 24 || rest === 0) return `${hours} ч назад`;
-    return `${hours} ч ${rest} мин назад`;
+    return rest ? `${hours} ч ${rest} мин` : `${hours} ч`;
 }
 
 function formatDateTime(date) {
@@ -958,7 +979,7 @@ function drawNightSpark(canvas, night, scale) {
 /* Что «видно» на графике, словами: сам холст для скринридера пуст, а
    пересказывать сотни точек бессмысленно — нужен итог. Числа окна — из
    stats, то есть по сырым замерам, а не по нарисованной сводке. */
-function chartDescription(daily, hasData, tail) {
+function chartDescription(daily, hasData, tail, gaps) {
     const period = RANGE_LABELS[activeRange];
     if (!hasData) return `График глюкозы за ${period}: данных нет`;
 
@@ -984,7 +1005,17 @@ function chartDescription(daily, hasData, tail) {
     const forecast = tail
         ? `. Пунктиром — прогноз на ${Math.round((tail.to.t - tail.from.t) / 60)} минут вперёд по текущей скорости`
         : "";
-    return `График глюкозы за ${period}: ${summary}${forecast}`;
+
+    /* Молчание сенсора — тем же правилом: сказано ровно то, что нарисовано.
+       Числа читаются вслух, поэтому промежутки сложены в один итог: список из
+       пяти длительностей подряд на слух не удержать, а вопрос всё равно один
+       — сколько времени окна страница не видела. */
+    const silence = (gaps || []).length
+        ? `. Без сигнала ${formatSpan(gaps.reduce((total, gap) => total + (gap.to - gap.from), 0))}` +
+          (gaps.length > 1 ? ` в ${gaps.length} промежутках` : "")
+        : "";
+
+    return `График глюкозы за ${period}: ${summary}${forecast}${silence}`;
 }
 
 /* Принимает готовые значения в ммоль/л, а не точки: у ломаной это сами замеры,
@@ -1326,10 +1357,10 @@ function forecastTail() {
 }
 
 /* Порядок слоёв — контракт, по которому в каркас вставляются отрисовщики:
-   профиль обычного дня → полоса нормы → сетка → подписи осей → кривая с
-   отсечениями по зонам (или дневные коробки) → одиночные точки → хвост
-   прогноза → дорожки событий → перекрестие. Кто нарисован раньше, тот лежит
-   ниже. */
+   профиль обычного дня → полоса нормы → сетка → подписи осей → полосы молчания
+   сенсора → кривая с отсечениями по зонам (или дневные коробки) → одиночные
+   точки → хвост прогноза → дорожки событий → перекрестие. Кто нарисован
+   раньше, тот лежит ниже. */
 function drawChart() {
     // Снимок прежнего сборщика может не знать окна «48 часов»: страница и
     // данные обновляются не одним щелчком, и минуту-другую после выкладки
@@ -1343,13 +1374,14 @@ function drawChart() {
     const days = daily ? series.days : [];
     const lanes = daily ? [] : eventLanes();
     const tail = daily ? null : forecastTail();
+    const gaps = daily ? [] : seriesGaps(series, points, tail);
 
     // Один предикат «есть ли что рисовать» на оба ранних выхода: у дневного
     // вида points не существует вовсе, и points.length здесь бы падал.
     const hasData = daily ? days.some((day) => day.count > 0) : points.length > 0;
 
     els.chartEmpty.hidden = hasData;
-    els.canvas.setAttribute("aria-label", chartDescription(daily, hasData, tail));
+    els.canvas.setAttribute("aria-label", chartDescription(daily, hasData, tail, gaps));
 
     const canvas = els.canvas;
     // Холст растёт вместе с дорожками. Подписи оси обязаны остаться внутри:
@@ -1423,7 +1455,7 @@ function drawChart() {
         );
 
     const legendItems = [];
-    if (!daily && (lanes.length || runs.length || tail || lowsShown)) {
+    if (!daily && (lanes.length || runs.length || tail || lowsShown || gaps.length)) {
         legendItems.push({ ...SERIES.glucose, line: true });
         // Сразу за глюкозой: хвост — её продолжение, а не отдельная сущность.
         if (tail) {
@@ -1432,6 +1464,11 @@ function drawChart() {
         // И следом — полоса ниже нормы: она про ту же кривую, а не про журнал.
         if (lowsShown) {
             legendItems.push(SERIES.low);
+        }
+        // Молчание сенсора — там же, среди знаков о кривой: узкая полоса
+        // остаётся без подписи, и легенда для неё единственное имя.
+        if (gaps.length) {
+            legendItems.push(SERIES.gap);
         }
         if (runs.length) {
             /* С числом дней, по которым построен коридор. «Обычно» без него —
@@ -1580,6 +1617,19 @@ function drawChart() {
     if (daily) {
         drawDailyBoxes(ctx, days, x, y, padding.left, width - padding.right, boxWidth);
     } else {
+        // До кривой: полоса гасит подложку зон и коридор «обычно», и кривая,
+        // нарисованная раньше, тускнела бы у самого края молчания.
+        drawGaps(
+            ctx,
+            gaps,
+            x,
+            padding.left,
+            width - padding.right,
+            padding.top,
+            padding.top + plotHeight,
+            muted,
+            axisAlpha
+        );
         drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeight);
         if (tail) drawForecast(ctx, tail, x, y, padding.top, padding.top + plotHeight);
         // После кривой: отрезки лежат на линии порога и обязаны быть поверх
@@ -1619,6 +1669,9 @@ function drawChart() {
         },
         laneBoxes,
         tail,
+        // Промежутки молчания — наведению: «Измерение» из точки в получасе от
+        // курсора приписывало бы замер часу, когда сенсора попросту не было.
+        gaps,
         x,
         y,
         startTime,
@@ -1635,8 +1688,8 @@ function drawChart() {
     drawCrosshair(ctx, muted);
 }
 
-/* Тело кривой day- и week-окон: ломаная с отсечениями по зонам.
-   gapSeconds живёт здесь, а не в каркасе: у дневного вида series.step не
+/* Тело кривой day- и week-окон: ломаная с отсечениями по зонам. Порог разрыва
+   спрашивается у ряда, а не у каркаса: у дневного вида series.step не
    существует, NaN в сравнениях давал бы false и молча гасил все разрывы. */
 /* Эпизоды ниже нормы — полосой по дну области графика, с длительностью рядом.
 
@@ -1711,10 +1764,161 @@ function drawLows(ctx, x, left, right, bottom) {
     ctx.restore();
 }
 
+/* Разрыв длиннее трёх шагов ряда означает, что сенсор молчал: один пропуск —
+   обычная задержка выгрузки, три подряд — уже молчание. Порог один на кривую и
+   на полосу «нет сигнала»: разъехавшись, они нарисовали бы разрыв линии без
+   объяснения — или объяснение там, где линия цела. */
+const GAP_STEPS = 3;
+
+function seriesGapSeconds(series) {
+    return series.step * 60 * GAP_STEPS;
+}
+
+/* Промежутки, где сенсор молчал, — те же, по которым рвётся кривая.
+
+   Считает их сборщик, по сырым замерам (_gaps в publish.py): границы корзины
+   прореживания сдвигают края на свой шаг, и один и тот же промежуток на
+   суточной панели назывался бы «1 ч 45 мин», а на двухсуточной — «1 ч 50 мин».
+   Снимок прежнего сборщика их не несёт — тогда они собираются по точкам ряда,
+   с этой самой точностью до корзины: приблизительная полоса лучше, чем
+   необъяснённый разрыв кривой.
+
+   Порог — не серверный, а свой на каждое окно: у двухсуточной панели шаг ряда
+   вдвое крупнее, двадцатиминутный пропуск её кривую не рвёт, и объяснять на
+   ней нечего.
+
+   Последний промежуток — открытый: он кончится, когда сенсор заговорит, и
+   отсчитывается от latest, точного времени последнего замера. Пока рядом
+   нарисован прогноз, молчания нет по определению (хвост живёт только у свежего
+   замера), и полоса, наползающая на пунктир, спорила бы с ним. */
+function seriesGaps(series, points, tail) {
+    if (!HOURLY_RANGES.has(activeRange) || !points.length) return [];
+
+    const gapSeconds = seriesGapSeconds(series);
+    const startTime = snapshot.generated_at - SPAN_SECONDS[activeRange];
+
+    const counted = snapshot.gaps
+        ? snapshot.gaps.map((gap) => ({ from: gap.start, to: gap.end }))
+        : points
+              .slice(1)
+              .map((point, i) => ({ from: points[i][0], to: point[0] }));
+
+    const gaps = counted.filter(
+        (gap) => gap.to - gap.from > gapSeconds && gap.to >= startTime
+    );
+
+    const latest = snapshot.latest ? snapshot.latest.t : points[points.length - 1][0];
+    if (!tail && snapshot.generated_at - latest > gapSeconds) {
+        gaps.push({ from: latest, to: snapshot.generated_at, open: true });
+    }
+
+    return gaps;
+}
+
+// Полоса уже двух пикселей не читается как полоса, а разрыв в четверть часа на
+// двухсуточном окне занимает как раз около того.
+const GAP_MIN_WIDTH = 2;
+
+/* Воздух вокруг подписи. Она набрана поперёк полосы, так что по ширине это
+   зазор до пунктирных границ, а по высоте — до рамки области. */
+const GAP_LABEL_PAD = 4;
+
+// Высота строки 10px моно с запасом: по ней решается, влезла ли подпись в
+// ширину полосы.
+const GAP_LABEL_HEIGHT = 11;
+
+const GAP_LABEL = "нет сигнала";
+
+/* Молчание сенсора — полосой во всю высоту области графика, со словами внутри.
+   Разрыв кривой виден и без неё, но отвечает только на «данных нет»; на «нет
+   сегодня или нет совсем» и «надолго ли» по пустому месту не ответить, а как
+   раз это и спрашивают, глядя на провал в линии.
+
+   Полоса сначала гасит собой подложку зон и коридор «обычно» — цветом панели, —
+   и лишь потом красится серым: иначе «обычно» продолжало бы обещать под ней
+   знание, которого у страницы в эти часы нет. Дорожки событий полоса не
+   трогает: журнал ведёт бот, и съеденное в час молчания сенсора записано
+   ровно так же, как всё остальное.
+
+   Подпись набрана поперёк полосы, снизу вверх. Вдоль не выходит: час молчания
+   на суточном окне — полсотни пикселей, и «нет сигнала» в них не укладывается
+   даже без длительности, а час — это ровно тот разрыв, ради которого полоса и
+   заведена. Поперёк же места хватает почти всегда: высота области графика —
+   три сотни пикселей против сотни, которую занимает вся строка.
+
+   Уступает подпись по частям: в совсем узкой полосе остаётся одна
+   длительность, а когда и та не влезает — полоса молчит, и называет её
+   легенда. */
+function drawGaps(ctx, gaps, x, left, right, top, bottom, muted, axisAlpha) {
+    if (!gaps.length) return;
+
+    const panel = readColor("--panel", "#0d0d14");
+    const middleY = (top + bottom) / 2;
+
+    ctx.save();
+    ctx.font = '10px "JetBrains Mono", monospace';
+    ctx.textAlign = "center";
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = muted;
+
+    for (const gap of gaps) {
+        const from = Math.max(left, x(gap.from));
+        const to = Math.min(right, x(gap.to));
+        if (to <= left || from >= right) continue;
+
+        const width = Math.max(GAP_MIN_WIDTH, to - from);
+
+        ctx.globalAlpha = 0.7;
+        ctx.fillStyle = panel;
+        ctx.fillRect(from, top, width, bottom - top);
+
+        ctx.globalAlpha = 0.1;
+        ctx.fillStyle = muted;
+        ctx.fillRect(from, top, width, bottom - top);
+
+        // Границы — пунктиром, тем же, каким набран прогноз: где именно оборвался
+        // сигнал, известно с точностью до корзины, и сплошная линия обещала бы
+        // засечённый момент.
+        ctx.globalAlpha = 0.4;
+        ctx.setLineDash([3, 3]);
+        for (const edge of [from, from + width]) {
+            // Край окна — не край молчания: у открытого промежутка правой
+            // границы нет, и рисовать её на рамке значит закрыть его.
+            if (edge <= left || edge >= right) continue;
+            ctx.beginPath();
+            ctx.moveTo(Math.round(edge) + 0.5, top);
+            ctx.lineTo(Math.round(edge) + 0.5, bottom);
+            ctx.stroke();
+        }
+        ctx.setLineDash([]);
+
+        // Полоса уже строки подписи немая при любой длительности: текст в ней
+        // лёг бы на обе границы разом.
+        if (width < GAP_LABEL_HEIGHT + GAP_LABEL_PAD * 2) continue;
+
+        const span = formatSpan(gap.to - gap.from);
+        const full = `${GAP_LABEL} · ${span}`;
+        const room = bottom - top - GAP_LABEL_PAD * 2;
+        const text = ctx.measureText(full).width <= room ? full : span;
+        if (ctx.measureText(text).width > room) continue;
+
+        ctx.save();
+        ctx.globalAlpha = axisAlpha;
+        ctx.fillStyle = muted;
+        ctx.textBaseline = "middle";
+        ctx.translate(from + width / 2, middleY);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText(text, 0, 0);
+        ctx.restore();
+    }
+
+    ctx.restore();
+}
+
 function drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeight) {
-    // Разрыв длиннее трёх шагов означает, что сенсор молчал — соединять такие
-    // точки нельзя, иначе пропуск выглядит как ровный тренд.
-    const gapSeconds = series.step * 60 * 3;
+    // Соединять точки через молчание сенсора нельзя: пропуск выглядел бы
+    // ровным трендом. Порог общий с полосой «нет сигнала» — см. GAP_STEPS.
+    const gapSeconds = seriesGapSeconds(series);
 
     const traceSeries = () => {
         ctx.beginPath();
@@ -2023,6 +2227,7 @@ function seriesKey(series) {
         series.line && "legend__key--line",
         series.thick && "legend__key--thick",
         series.band && "legend__key--band",
+        series.striped && "legend__key--striped",
         series.dashed && "legend__key--dashed",
         series.marker && "legend__key--marker",
     ].filter(Boolean);
@@ -2093,6 +2298,13 @@ function tipRow(series, text) {
         key.style.background = "none";
         key.style.border = "1.5px dashed currentColor";
     }
+    // Молчание сенсора — той же полосой с прорехой, что в легенде: в разрыве
+    // подсказка показывает его строку рядом с «Обычно», а цвет у них общий.
+    if (series.striped) {
+        key.style.background =
+            "repeating-linear-gradient(90deg, currentColor 0 2px, transparent 2px 4px)";
+        key.style.opacity = "0.6";
+    }
     // Метка смены ручки — кружком, как в легенде.
     if (series.marker) {
         key.style.borderRadius = "50%";
@@ -2118,8 +2330,17 @@ function showTip(clientX) {
     const tail = geometry.tail;
     const future = tail && hoverTime > tail.from.t;
 
+    /* Внутри молчания сенсора замера нет — и строки о нём тоже. nearestPoint
+       тянется на полчаса в обе стороны, так что без этой развилки край
+       часового разрыва подписывался бы значением, снятым до него. */
+    const gap = (geometry.gaps || []).find(
+        (item) => hoverTime > item.from && hoverTime < item.to
+    );
+
     // Порядок строк зафиксирован: глюкоза → профиль → события.
-    if (point && !future) {
+    if (gap) {
+        rows.push(tipRow(SERIES.gap, `Нет сигнала ${formatSpan(gap.to - gap.from)}`));
+    } else if (point && !future) {
         // «Измерение» у любой точки, свежей и старой: одно слово на всю ось.
         // «Сейчас» у свежей было отвергнуто — две метки для одного ряда
         // читаются как два ряда.

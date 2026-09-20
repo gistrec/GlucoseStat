@@ -52,6 +52,20 @@ An episode ends where the reading comes back over the threshold, and dips
 separated by less than 15 minutes count as one: flapping around the line is one
 low lived through, not five. There is deliberately no minimum duration.
 
+Where the sensor went quiet, the hourly windows draw a grey band instead of
+just breaking the line, labelled "нет сигнала" and how long the silence lasted —
+a sensor change reads as a stated hour and a half rather than a hole the page
+declines to explain. The threshold is the one that breaks the curve: three
+missed readings in a row, since a single miss is an ordinary upload delay. The
+windows themselves are counted by the collector from the raw readings, for the
+same reason the low episodes are — a bucket edge would move the boundary by its
+own step, and one silence would be "1 ч 45 мин" on the daily panel and
+"1 ч 50 мин" on the 48-hour one. A silence still running has no right edge: the
+page draws it from the last reading to the moment of the snapshot, and not at
+all while the forecast tail is there, since that tail only exists beside a fresh
+reading. The weekly and monthly panels get no bands — an hour is three pixels
+wide there, with nothing to write in them.
+
 GMI is the one figure that ignores the selected period: it is always the
 estimated HbA1c over the last **14 days**, the window Bergenstal et al. (2018)
 calibrated the formula on. Tying it to the buttons would put two different

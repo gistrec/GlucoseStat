@@ -11,6 +11,7 @@ import json
 import os
 import tempfile
 from datetime import date, datetime, time, timedelta, timezone
+from itertools import pairwise
 
 from agp import day_profile
 from analysis import analyse
@@ -111,6 +112,18 @@ ANALYSIS_WINDOW = timedelta(days=14)
 # ниже нормы уже стоит в каждом дне.
 LOW_WINDOW = timedelta(days=7)
 
+# А молчание сенсора — за двое суток: полосу «нет сигнала» рисуют только
+# почасовые панели, и на недельной от часового пропуска остаётся три пикселя,
+# в которых нечего подписывать.
+GAP_WINDOW = timedelta(days=2)
+
+# Разрыв, после которого соединять замеры линией уже нельзя. Libre отдаёт точку
+# раз в пять минут: один пропуск — обычная задержка выгрузки, три подряд
+# означают, что сенсора на месте не было. Тем же порогом страница рвёт кривую
+# (GAP_STEPS в app.js), и разъехаться им нельзя: полоса объясняет ровно те
+# разрывы, которые на графике видны.
+SENSOR_SILENCE = timedelta(minutes=15)
+
 
 def _downsample(
     readings: list[tuple[datetime, float]], step_minutes: int, low: int
@@ -145,6 +158,35 @@ def _downsample(
         ]
         for bucket, values in sorted(buckets.items())
     ]
+
+
+def _gaps(readings: list[tuple[datetime, float]], since: datetime) -> list[dict]:
+    """Промежутки, в которые сенсор молчал, как ``[{start, end, minutes}]``.
+
+    По сырым замерам — по той же причине, по какой по ним считаются эпизоды
+    ниже нормы. Край корзины прореживания сдвигает границу на свой шаг, и одно
+    и то же молчание на суточной панели называлось бы «1 ч 45 мин», а на
+    двухсуточной, с её десятиминутным шагом, — «1 ч 50 мин»: два числа про один
+    промежуток, расходящиеся от нажатия кнопки.
+
+    Промежуток, который ещё длится, сюда не попадает: у него нет правого края,
+    и приписать ему конец значило бы объявить сенсор заговорившим. Его
+    дорисовывает страница — от ``latest`` до момента снимка.
+    """
+
+    gaps = []
+    for (left, _), (right, _) in pairwise(readings):
+        if right - left <= SENSOR_SILENCE or right < since:
+            continue
+        gaps.append(
+            {
+                "start": int(left.replace(tzinfo=timezone.utc).timestamp()),
+                "end": int(right.replace(tzinfo=timezone.utc).timestamp()),
+                "minutes": round((right - left).total_seconds() / 60),
+            }
+        )
+
+    return gaps
 
 
 def _stats(readings: list[tuple[datetime, float]]) -> dict | None:
@@ -504,6 +546,9 @@ def build_snapshot(
             [item for item in readings if item[0] >= now - LOW_WINDOW],
             TARGET_LOW_MGDL,
         ),
+        # Молчание сенсора — тоже по сырью и тоже по своему окну: полосу
+        # «нет сигнала» рисуют только почасовые панели.
+        "gaps": _gaps(readings, now - GAP_WINDOW),
         "analysis": analyse(
             meals,
             readings,
