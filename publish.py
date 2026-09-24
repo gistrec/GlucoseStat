@@ -124,6 +124,15 @@ GAP_WINDOW = timedelta(days=2)
 # разрывы, которые на графике видны.
 SENSOR_SILENCE = timedelta(minutes=15)
 
+# Порог пометки «возможный артефакт сенсора». Интерстициальная жидкость
+# сглаживает даже быстрые скачки крови, поэтому 0,6 ммоль/л (10,8 мг/дл) за
+# 2 минуты между соседними замерами — уже не физиология, а либо компрессия
+# (лёг на сенсор, провал и мгновенный отскок), либо шум калибровки в первые
+# сутки нового сенсора. Считается по сырым замерам: усреднение в корзину
+# ``_downsample`` смазывает как раз ту иглу, которую нужно поймать.
+ARTIFACT_DELTA_MGDL = 10.8
+ARTIFACT_MAX_SECONDS = 120
+
 
 def _downsample(
     readings: list[tuple[datetime, float]], step_minutes: int, low: int
@@ -187,6 +196,44 @@ def _gaps(readings: list[tuple[datetime, float]], since: datetime) -> list[dict]
         )
 
     return gaps
+
+
+def _artifacts(readings: list[tuple[datetime, float]], since: datetime) -> list[dict]:
+    """Замеры, чья скорость изменения физиологически недостижима.
+
+    Каждая запись несёт ``dv``/``dsec`` — чем именно скачок нарушил порог, —
+    чтобы подсказка на странице объясняла пометку числом, а не просто словом
+    «шум». Точка публикуется под правым концом скачка: это она, а не левая
+    соседка, воспринимается глазом как игла на кривой.
+
+    Как и ``_gaps``, окно проверяется по правому концу пары, а не по левому:
+    скачок, начавшийся до окна и закончившийся внутри него, обязан остаться
+    виден.
+    """
+
+    artifacts = []
+    for (left_t, left_v), (right_t, right_v) in pairwise(readings):
+        if right_t < since:
+            continue
+
+        delta_seconds = (right_t - left_t).total_seconds()
+        if delta_seconds <= 0 or delta_seconds > ARTIFACT_MAX_SECONDS:
+            continue
+
+        delta_mgdl = right_v - left_v
+        if abs(delta_mgdl) < ARTIFACT_DELTA_MGDL:
+            continue
+
+        artifacts.append(
+            {
+                "t": int(right_t.replace(tzinfo=timezone.utc).timestamp()),
+                "mgdl": round(right_v),
+                "dv": round(delta_mgdl / 18.0, 2),
+                "dsec": round(delta_seconds),
+            }
+        )
+
+    return artifacts
 
 
 def _stats(readings: list[tuple[datetime, float]]) -> dict | None:
@@ -549,6 +596,10 @@ def build_snapshot(
         # Молчание сенсора — тоже по сырью и тоже по своему окну: полосу
         # «нет сигнала» рисуют только почасовые панели.
         "gaps": _gaps(readings, now - GAP_WINDOW),
+        # Окно — суточной панели (RANGES["day"]), а не отдельная константа:
+        # кольца рисует только она, и второго источника правды для этого
+        # окна заводить незачем.
+        "artifacts": _artifacts(readings, now - RANGES["day"][0]),
         "analysis": analyse(
             meals,
             readings,

@@ -21,11 +21,13 @@ import pytest
 from conftest import BASE
 from daytime import _percentile, _weighted_percentile
 from publish import (
+    ARTIFACT_DELTA_MGDL,
     COMPARE_MIN_AVG_MGDL,
     COMPARE_MIN_TIR_PP,
     DAY_MIN_COVERAGE,
     TARGET_HIGH_MGDL,
     TARGET_LOW_MGDL,
+    _artifacts,
     _compare,
     _daily,
     _db_last_success,
@@ -225,6 +227,81 @@ class TestGaps:
         data = readings(120, 130)
 
         assert _gaps(data, self.window()) == []
+
+
+class TestArtifacts:
+    """Пометка «возможный шум сенсора»: что попадает в кольца на графике."""
+
+    def window(self, hours=48):
+        return BASE - timedelta(hours=hours)
+
+    def test_steady_readings_are_not_flagged(self):
+        data = readings(120, 121, 120, 122, 121, step_minutes=1)
+
+        assert _artifacts(data, self.window()) == []
+
+    def test_a_fast_jump_is_flagged(self):
+        # 15 мг/дл за полторы минуты — выше порога (10,8 за ≤120с).
+        data = [(BASE, 120.0), (BASE + timedelta(seconds=90), 135.0)]
+
+        assert _artifacts(data, self.window()) == [
+            {
+                "t": unix(BASE + timedelta(seconds=90)),
+                "mgdl": 135,
+                "dv": 0.83,
+                "dsec": 90,
+            }
+        ]
+
+    def test_the_same_jump_slower_is_not_flagged(self):
+        # Тот же скачок, растянутый за порог по времени, — уже не игла.
+        data = [(BASE, 120.0), (BASE + timedelta(seconds=150), 135.0)]
+
+        assert _artifacts(data, self.window()) == []
+
+    def test_a_small_jump_within_time_is_not_flagged(self):
+        # 10 мг/дл — меньше порога, хоть и быстро.
+        data = [(BASE, 120.0), (BASE + timedelta(seconds=60), 130.0)]
+
+        assert _artifacts(data, self.window()) == []
+
+    def test_exactly_the_time_threshold_still_counts(self):
+        # 120 секунд — ещё внутри порога, не за ним.
+        data = [(BASE, 100.0), (BASE + timedelta(seconds=120), 125.0)]
+
+        assert len(_artifacts(data, self.window())) == 1
+
+    def test_a_compression_low_flags_both_the_drop_and_the_recovery(self):
+        # Провал и мгновенный отскок — классика передавленного сенсора:
+        # обе стороны читаются как игла, не только падение.
+        data = [
+            (BASE, 100.0),
+            (BASE + timedelta(seconds=60), 80.0),
+            (BASE + timedelta(seconds=180), 105.0),
+        ]
+
+        artifacts = _artifacts(data, self.window())
+
+        assert [a["dv"] for a in artifacts] == [-1.11, 1.39]
+
+    def test_an_artifact_before_the_window_is_dropped(self):
+        old = BASE - timedelta(days=5)
+        data = [
+            (old, 100.0),
+            (old + timedelta(seconds=60), 120.0),
+            (BASE, 100.0),
+            (BASE + timedelta(seconds=60), 120.0),
+        ]
+
+        # Пятидневный скачок — за окном; сегодняшний — внутри.
+        assert [a["t"] for a in _artifacts(data, self.window())] == [
+            unix(BASE + timedelta(seconds=60))
+        ]
+
+    def test_delta_threshold_matches_the_published_constant(self):
+        # Порог кратен переведённому в мг/дл 0,6 ммоль/л — тест ловит расхождение,
+        # если константу когда-нибудь подправят и забудут про мгдл-эквивалент.
+        assert ARTIFACT_DELTA_MGDL == pytest.approx(0.6 * 18, abs=0.01)
 
 
 class TestDaily:

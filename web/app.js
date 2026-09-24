@@ -232,6 +232,19 @@ const SERIES = {
         unit: "",
         striped: true,
     },
+    /* Точка, где сенсор скакнул быстрее физиологического предела — компрессия
+       или шум калибровки в первые сутки. Цвет — --low: та же переменная уже
+       красит предупреждения о молчании сенсора и сборщика, и смысл у неё тот
+       же — числу рядом верить меньше обычного. Кольцо, а не заливка: артефакт
+       не отменяет само измерение, он лишь предупреждает о нём. */
+    artifact: {
+        token: "--low",
+        fallback: "#f7b77e",
+        label: "Возможный шум сенсора",
+        unit: "",
+        marker: true,
+        dashed: true,
+    },
     meal: { token: "--meal", fallback: "#bd8a30", label: "Углеводы", unit: "г" },
     insulin: {
         token: "--insulin",
@@ -979,7 +992,7 @@ function drawNightSpark(canvas, night, scale) {
 /* Что «видно» на графике, словами: сам холст для скринридера пуст, а
    пересказывать сотни точек бессмысленно — нужен итог. Числа окна — из
    stats, то есть по сырым замерам, а не по нарисованной сводке. */
-function chartDescription(daily, hasData, tail, gaps) {
+function chartDescription(daily, hasData, tail, gaps, artifacts) {
     const period = RANGE_LABELS[activeRange];
     if (!hasData) return `График глюкозы за ${period}: данных нет`;
 
@@ -1015,7 +1028,14 @@ function chartDescription(daily, hasData, tail, gaps) {
           (gaps.length > 1 ? ` в ${gaps.length} промежутках` : "")
         : "";
 
-    return `График глюкозы за ${period}: ${summary}${forecast}${silence}`;
+    // Кольца — тем же правилом: количеством, не перечислением. Число после
+    // двоеточия, а не перед существительным, — русское склонение числительных
+    // (1 скачок / 2 скачка / 5 скачков) тут не нужно вовсе.
+    const noise = (artifacts || []).length
+        ? `. Возможных скачков шума сенсора: ${artifacts.length}`
+        : "";
+
+    return `График глюкозы за ${period}: ${summary}${forecast}${silence}${noise}`;
 }
 
 /* Принимает готовые значения в ммоль/л, а не точки: у ломаной это сами замеры,
@@ -1375,13 +1395,14 @@ function drawChart() {
     const lanes = daily ? [] : eventLanes();
     const tail = daily ? null : forecastTail();
     const gaps = daily ? [] : seriesGaps(series, points, tail);
+    const artifacts = daily ? [] : seriesArtifacts();
 
     // Один предикат «есть ли что рисовать» на оба ранних выхода: у дневного
     // вида points не существует вовсе, и points.length здесь бы падал.
     const hasData = daily ? days.some((day) => day.count > 0) : points.length > 0;
 
     els.chartEmpty.hidden = hasData;
-    els.canvas.setAttribute("aria-label", chartDescription(daily, hasData, tail, gaps));
+    els.canvas.setAttribute("aria-label", chartDescription(daily, hasData, tail, gaps, artifacts));
 
     const canvas = els.canvas;
     // Холст растёт вместе с дорожками. Подписи оси обязаны остаться внутри:
@@ -1455,7 +1476,7 @@ function drawChart() {
         );
 
     const legendItems = [];
-    if (!daily && (lanes.length || runs.length || tail || lowsShown || gaps.length)) {
+    if (!daily && (lanes.length || runs.length || tail || lowsShown || gaps.length || artifacts.length)) {
         legendItems.push({ ...SERIES.glucose, line: true });
         // Сразу за глюкозой: хвост — её продолжение, а не отдельная сущность.
         if (tail) {
@@ -1469,6 +1490,11 @@ function drawChart() {
         // остаётся без подписи, и легенда для неё единственное имя.
         if (gaps.length) {
             legendItems.push(SERIES.gap);
+        }
+        // Кольца — тоже среди знаков о кривой: то же измерение, только с
+        // оговоркой к числу, а не новый ряд.
+        if (artifacts.length) {
+            legendItems.push(SERIES.artifact);
         }
         if (runs.length) {
             /* С числом дней, по которым построен коридор. «Обычно» без него —
@@ -1635,6 +1661,9 @@ function drawChart() {
         // После кривой: отрезки лежат на линии порога и обязаны быть поверх
         // неё — под кривой их бы наполовину перекрыло ей же.
         drawLows(ctx, x, padding.left, width - padding.right, padding.top + plotHeight);
+        // Кольца — последними из всего, что стоит на кривой: пометка обязана
+        // быть видна поверх любой зоны и поверх отрезка гипогликемии под ней.
+        drawArtifacts(ctx, artifacts, x, y);
     }
 
     // Дорожки событий — под графиком, над подписями оси.
@@ -1672,6 +1701,9 @@ function drawChart() {
         // Промежутки молчания — наведению: «Измерение» из точки в получасе от
         // курсора приписывало бы замер часу, когда сенсора попросту не было.
         gaps,
+        // Кольца — тоже наведению: подсказка обязана назвать причину пометки
+        // рядом со значением, а не заставлять гадать по одному лишь кольцу.
+        artifacts,
         x,
         y,
         startTime,
@@ -1815,6 +1847,17 @@ function seriesGaps(series, points, tail) {
     return gaps;
 }
 
+/* Кольца рисует только суточная панель, не двое суток: снимок публикует
+   их окном RANGES["day"] (см. publish.py), а страница выбирает более узко —
+   решение оставить их редкой деталью суточного вида, не заводить вторую
+   плотность на растянутой вдвое кривой. */
+function seriesArtifacts() {
+    if (activeRange !== "day" || !snapshot.artifacts) return [];
+
+    const startTime = snapshot.generated_at - SPAN_SECONDS[activeRange];
+    return snapshot.artifacts.filter((artifact) => artifact.t >= startTime);
+}
+
 // Полоса уже двух пикселей не читается как полоса, а разрыв в четверть часа на
 // двухсуточном окне занимает как раз около того.
 const GAP_MIN_WIDTH = 2;
@@ -1912,6 +1955,27 @@ function drawGaps(ctx, gaps, x, left, right, top, bottom, muted, axisAlpha) {
         ctx.restore();
     }
 
+    ctx.restore();
+}
+
+/* Пунктирное кольцо поверх кривой — не замена точке, а пометка рядом с ней:
+   значение в базе не менялось, кольцо лишь говорит «этому скачку доверяй
+   меньше обычного». Пунктир, а не заливка, — тем же приёмом, что и полоса
+   молчания сенсора: форма отличает ряд, когда один только цвет на этом не
+   вправе (см. SERIES.artifact). Поверх зон и lows: кольцо обязано быть видно
+   на любом цвете кривой под ним. */
+function drawArtifacts(ctx, artifacts, x, y) {
+    if (!artifacts.length) return;
+
+    ctx.save();
+    ctx.strokeStyle = readColor("--low", "#f7b77e");
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([2.5, 2.5]);
+    for (const artifact of artifacts) {
+        ctx.beginPath();
+        ctx.arc(x(artifact.t), y(toMmol(artifact.mgdl)), 5, 0, Math.PI * 2);
+        ctx.stroke();
+    }
     ctx.restore();
 }
 
@@ -2347,6 +2411,24 @@ function showTip(clientX) {
         rows.push(
             tipRow(SERIES.glucose, `Измерение ${formatMmol(point[1])} ${SERIES.glucose.unit}`)
         );
+
+        // Кольцо — сразу за измерением, которое оно поясняет, а не среди
+        // событий журнала: это оговорка к той же самой точке. Допуск уже, чем
+        // у lane-событий (900с): метка стоит на своём замере, секунда в
+        // секунду с точностью до шага записи, и получасовой люфт nearestPoint
+        // приписал бы её соседней точке через полчаса тишины.
+        const artifact = (geometry.artifacts || []).find(
+            (item) => Math.abs(item.t - point[0]) <= 150
+        );
+        if (artifact) {
+            const direction = artifact.dv > 0 ? "рост" : "падение";
+            rows.push(
+                tipRow(
+                    SERIES.artifact,
+                    `Возможный шум сенсора · ${direction} ${Math.abs(artifact.dv).toFixed(1)} ммоль/л за ${artifact.dsec} с`
+                )
+            );
+        }
     }
 
     if (future && hoverTime <= tail.to.t) {
