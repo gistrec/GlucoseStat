@@ -1973,25 +1973,16 @@ function drawGaps(ctx, gaps, x, left, right, top, bottom, muted, axisAlpha) {
    кривой различим в обеих темах; с дорожкой инсулина не путается — там
    квадраты и столбики, здесь пунктирный круг на самой кривой.
 
-   Двойная обводка — тёмный контур под цветным пунктиром: кольцо обязано
-   быть видно поверх зон и lows под ним, при любой прозрачности и на любой
-   яркости панели. */
+   Одна обводка, без тёмного контура под ней: кольцо и так не заливка,
+   вторая обводка только размывала бы пунктир. */
 function drawArtifacts(ctx, artifacts, x, y) {
     if (!artifacts.length) return;
 
     ctx.save();
-    const panel = readColor("--panel", "#0d0d14");
     const insulin = readColor("--insulin", "#cc4fb0");
     for (const artifact of artifacts) {
         const cx = x(artifact.t);
         const cy = y(toMmol(artifact.mgdl));
-
-        ctx.setLineDash([]);
-        ctx.strokeStyle = panel;
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.arc(cx, cy, 7, 0, Math.PI * 2);
-        ctx.stroke();
 
         ctx.setLineDash([2.5, 2.5]);
         ctx.strokeStyle = insulin;
