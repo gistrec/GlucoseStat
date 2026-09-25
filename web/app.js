@@ -1481,7 +1481,21 @@ function drawChart() {
     const legendItems = [];
     if (!daily && (lanes.length || runs.length || tail || lowsShown || gaps.length || artifacts.length)) {
         legendItems.push({ ...SERIES.glucose, line: true });
-        // Сразу за глюкозой: хвост — её продолжение, а не отдельная сущность.
+        // «Обычно» — сразу за измерением: коридор, с которым его сравнивают,
+        // а не отметка на самой кривой, как всё, что ниже.
+        if (runs.length) {
+            /* С числом дней, по которым построен коридор. «Обычно» без него —
+               обещание без выборки: коридор по семи дням и по четырнадцати
+               выглядит одинаково уверенно, а значит разное. Число публикуется
+               в снимке с самого начала (agp.py) и до сих пор нигде не читалось. */
+            const days = snapshot.profile && snapshot.profile.days;
+            legendItems.push(
+                days
+                    ? { ...SERIES.profile, label: `${SERIES.profile.label}, ${days} дн` }
+                    : SERIES.profile
+            );
+        }
+        // Дальше — хвост: он продолжение измерения, а не отдельная сущность.
         if (tail) {
             legendItems.push(SERIES.forecast);
         }
@@ -1498,18 +1512,6 @@ function drawChart() {
         // оговоркой к числу, а не новый ряд.
         if (artifacts.length) {
             legendItems.push(SERIES.artifact);
-        }
-        if (runs.length) {
-            /* С числом дней, по которым построен коридор. «Обычно» без него —
-               обещание без выборки: коридор по семи дням и по четырнадцати
-               выглядит одинаково уверенно, а значит разное. Число публикуется
-               в снимке с самого начала (agp.py) и до сих пор нигде не читалось. */
-            const days = snapshot.profile && snapshot.profile.days;
-            legendItems.push(
-                days
-                    ? { ...SERIES.profile, label: `${SERIES.profile.label}, ${days} дн` }
-                    : SERIES.profile
-            );
         }
         for (const kind of [SERIES.meal, SERIES.insulin, SERIES.basal]) {
             if (lanes.some((lane) => lane.bars.some((bar) => bar.series === kind))) {
