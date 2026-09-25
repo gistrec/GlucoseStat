@@ -1,9 +1,30 @@
 /* Дашборд читает единственный статический data.json — ни бэкенда, ни запросов
    к Abbott со стороны браузера. */
 
-// Клинический коэффициент пересчёта. Точное значение — 18,016, но и Libre, и
-// приложения используют 18: расхождение (0,01 ммоль/л) меньше шага сенсора.
-const MGDL_PER_MMOL = 18;
+import { state, MEALS_PAGE } from "./js/state.js";
+import { els, readColor, readNumber } from "./js/dom.js";
+import {
+    MGDL_PER_MMOL,
+    TIMEZONE,
+    TIMEZONE_LABEL,
+    displayTimezone,
+    minutesOfDay,
+    toMmol,
+    formatMmol,
+    percent,
+    formatAgo,
+    formatEventAgo,
+    formatSpan,
+    formatDateTime,
+    formatCellDateTime,
+    formatDay,
+    dayOfMonth,
+    sinceLabel,
+    trendArrow,
+    formatAmount,
+    formatDelta,
+    formatDose,
+} from "./js/format.js";
 
 // Насколько свежим считается измерение. Сенсор отдаёт точку раз в 5 минут,
 // graph отстаёт ещё на несколько — 20 минут отделяют «сейчас» от «сенсор снят»
@@ -50,56 +71,6 @@ const FORECAST_MINUTES = 30;
 const SENSOR_MIN_MGDL = 40;
 const SENSOR_MAX_MGDL = 500;
 
-/* Сколько приёмов показывать сразу и сколько добавлять кнопкой. Разбор читают
-   с последнего, и десяти строк хватает на пару дней.
-
-   Кнопка удлиняет не только таблицу: вместе со строками на оверлей приходят их
-   кривые. Иначе за две недели он превращается в заливку, из которой медиана —
-   единственное, ради чего он рисуется, — уже не читается. */
-const MEALS_PAGE = 10;
-
-/* Часовой пояс всех подписей времени — тот же, в котором отвечает бот
-   (DISPLAY_TZ=Europe/Belgrade).
-
-   В data.json время лежит в unix-секундах, и без явной зоны страница читала бы
-   его по часам устройства: один и тот же приём пищи назывался бы 01:43 с
-   ноутбука и 02:43 с телефона, живущего по другой стране. Зона названа вслух в
-   подсказке — иначе выбор остаётся невидимым ровно тогда, когда человек
-   сверяет запись с собственными часами. */
-const TIMEZONE = "Europe/Belgrade";
-const TIMEZONE_LABEL = "Белград";
-
-/* Зона, в которой сборщик нарезал сутки, приходит в снимке; пока снимка нет —
-   или он собран прежним сборщиком — остаётся прибитая константа. Всё, что
-   рисует нарезанные на сервере сутки (подневный вид месяца, профиль обычного
-   дня), берёт зону отсюда: подписывать чужую нарезку по своей зоне значит
-   молча врать на час-два. */
-function displayTimezone() {
-    return (snapshot && snapshot.timezone) || TIMEZONE;
-}
-
-/* Минуты местных суток — для профиля обычного дня. Форматтер один на модуль:
-   Intl.DateTimeFormat дорог в создании, а minutesOfDay зовётся на каждый слот
-   каждой перерисовки. hourCycle: "h23" обязателен: при hour: "2-digit" без
-   него ICU в части локалей отдаёт «24:00», и полуночный слот уезжает за
-   пределы массива. */
-const TZ_MINUTES = new Intl.DateTimeFormat("ru-RU", {
-    timeZone: TIMEZONE,
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-});
-
-function minutesOfDay(seconds) {
-    let hours = 0;
-    let minutes = 0;
-    for (const part of TZ_MINUTES.formatToParts(new Date(seconds * 1000))) {
-        if (part.type === "hour") hours = Number(part.value);
-        if (part.type === "minute") minutes = Number(part.value);
-    }
-    return hours * 60 + minutes;
-}
-
 // Высота холста без дорожек событий — та же, что была до их появления.
 const PLOT_HEIGHT = 340;
 const LANE_HEIGHT = 34;
@@ -122,71 +93,6 @@ const BOX_SHARE = 0.6;
 const BOX_MIN_WIDTH = 3;
 const BOX_MAX_WIDTH = 22;
 const BOX_ALPHA = 0.45;
-
-let snapshot = null;
-let activeRange = "day";
-
-// Раскладка последней отрисовки: по ней работает наведение. Пересчитывать её
-// на каждое движение мыши — значит дублировать всю геометрию и однажды
-// разойтись с тем, что нарисовано.
-let geometry = null;
-let hoverTime = null;
-
-/* Сколько приёмов раскрыто сейчас. Живёт между перерисовками: снимок
-   перечитывается раз в минуту, и сброс к десяти сворачивал бы список под
-   руками у того, кто только что его раскрыл. */
-let mealsShown = MEALS_PAGE;
-
-const els = {
-    now: document.getElementById("now"),
-    nowValue: document.getElementById("now-value"),
-    nowArrow: document.getElementById("now-arrow"),
-    nowMeta: document.getElementById("now-meta"),
-    nowEvents: document.getElementById("now-events"),
-    empty: document.getElementById("empty"),
-    ranges: document.getElementById("ranges"),
-    chart: document.getElementById("chart"),
-    chartEmpty: document.getElementById("chart-empty"),
-    canvas: document.getElementById("canvas"),
-    stats: document.getElementById("stats"),
-    night: document.getElementById("night"),
-    nightNote: document.getElementById("night-note"),
-    nightStats: document.getElementById("night-stats"),
-    nightStrip: document.getElementById("night-strip"),
-    legend: document.getElementById("legend"),
-    tip: document.getElementById("tip"),
-    review: document.getElementById("review"),
-    reviewNote: document.getElementById("review-note"),
-    reviewStats: document.getElementById("review-stats"),
-    mealsMore: document.getElementById("meals-more"),
-    ratio: document.getElementById("ratio"),
-    ratioNote: document.getElementById("ratio-note"),
-    ratioTable: document.getElementById("ratio-table"),
-    ratioSizeTable: document.getElementById("ratio-size-table"),
-    ratioSizeWrap: document.getElementById("ratio-size-wrap"),
-    reviewPanel: document.getElementById("review-panel"),
-    overlay: document.getElementById("overlay"),
-    overlayTip: document.getElementById("overlay-tip"),
-    overlayLegend: document.getElementById("overlay-legend"),
-    meals: document.getElementById("meals"),
-    footUpdated: document.getElementById("foot-updated"),
-    theme: document.getElementById("theme"),
-    themeColor: document.getElementById("theme-color"),
-};
-
-/* Пользовательское свойство приходит сюда невычисленным — как записано в CSS.
-   Значение, которое не является цветом (так было с light-dark()), канвас молча
-   игнорирует и продолжает рисовать предыдущим, то есть чёрным: график исчезал
-   на тёмном фоне, не оставив следа в консоли. Поэтому цвет проверяется, а не
-   берётся на веру. */
-function readColor(name, fallback) {
-    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    return /^(#|rgb|hsl)/.test(value) ? value : fallback;
-}
-
-function readNumber(name, fallback) {
-    return Number(getComputedStyle(document.documentElement).getPropertyValue(name)) || fallback;
-}
 
 /* Ряды графика в одном месте: отсюда берут цвет и холст, и легенда, и
    подсказка — разъехавшись, они перестали бы опознавать одно и то же. */
@@ -305,8 +211,6 @@ const THEMES = [
 // Те же значения, что у --bg в style.css: сюда попадает цвет панели Safari.
 const THEME_BG = { light: "#f4f5f9", dark: "#07070b" };
 
-let theme = "dark";
-
 function systemPrefersDark() {
     return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
@@ -340,8 +244,8 @@ function rememberTheme(id) {
 
 function applyTheme(id) {
     const current = THEMES.find((item) => item.id === id) || THEMES[1];
-    theme = current.id;
-    document.documentElement.dataset.theme = theme;
+    state.theme = current.id;
+    document.documentElement.dataset.theme = state.theme;
 
     const glyph = document.createElement("span");
     glyph.setAttribute("aria-hidden", "true");
@@ -358,141 +262,17 @@ function applyTheme(id) {
     els.theme.setAttribute("aria-label", hint);
     els.theme.title = hint;
 
-    els.themeColor.setAttribute("content", THEME_BG[theme]);
+    els.themeColor.setAttribute("content", THEME_BG[state.theme]);
 
     // Разметка перекрашивается сама, холсты — нет: их цвета прочитаны из
     // CSS-переменных один раз, при отрисовке.
-    if (snapshot && snapshot.latest) {
+    if (state.snapshot && state.snapshot.latest) {
         drawChart();
         renderReview();
         // Холсты ночей тоже перерисовываются: их цвета прочитаны из CSS один
         // раз, а ширина ячейки меняется вместе с шириной окна.
         renderNights();
     }
-}
-
-/* ── Форматирование ────────────────────────────────────────────────── */
-
-function toMmol(mgdl) {
-    return mgdl / MGDL_PER_MMOL;
-}
-
-function formatMmol(mgdl, digits = 1) {
-    return toMmol(mgdl).toLocaleString("ru-RU", {
-        minimumFractionDigits: digits,
-        maximumFractionDigits: digits,
-    });
-}
-
-/* Пробел перед знаком процента по типографике неразрывный: в узкой карточке
-   строка иначе рвётся между числом и знаком, оставляя «%» болтаться отдельно. */
-function percent(value) {
-    return `${value.toLocaleString("ru-RU")} %`;
-}
-
-function formatAgo(ms) {
-    const minutes = Math.round(ms / 60000);
-    if (minutes < 1) return "только что";
-    if (minutes < 60) return `${minutes} мин назад`;
-
-    const hours = Math.round(minutes / 60);
-    if (hours < 24) return `${hours} ч назад`;
-
-    const days = Math.round(hours / 24);
-    return `${days} дн назад`;
-}
-
-/* Возраст записи журнала — с минутами внутри часа. formatAgo округляет до
-   целого часа, а у еды и укола стирает ровно тот десяток минут, ради которого
-   на них и смотрят: успел ли подействовать короткий, много ли осталось от
-   съеденного. За сутками минуты снова не нужны — длинный, поставленный «27 ч
-   назад», просрочен независимо от их числа. */
-function formatEventAgo(ms) {
-    const minutes = Math.round(ms / 60000);
-    if (minutes < 1) return "только что";
-    if (minutes >= 24 * 60) return `${Math.floor(minutes / 60)} ч назад`;
-    return `${formatSpan(ms / 1000)} назад`;
-}
-
-/* Длительность промежутка: «40 мин», «1 ч», «1 ч 40 мин». Отдельно от
-   formatEventAgo потому, что промежуток не всегда отсчитывается от «сейчас» —
-   молчание сенсора посреди ночи кончилось до того, как на него посмотрели, — а
-   набираться оно обязано теми же словами: два формата длительности на одной
-   странице читаются как две разные величины. */
-function formatSpan(seconds) {
-    const minutes = Math.round(seconds / 60);
-    if (minutes < 60) return `${minutes} мин`;
-
-    const hours = Math.floor(minutes / 60);
-    const rest = minutes % 60;
-    return rest ? `${hours} ч ${rest} мин` : `${hours} ч`;
-}
-
-function formatDateTime(date) {
-    return date.toLocaleString("ru-RU", {
-        timeZone: TIMEZONE,
-        day: "numeric",
-        month: "long",
-        hour: "2-digit",
-        minute: "2-digit",
-    });
-}
-
-/* Та же метка для колонки «Когда», но датой-числом.
-
-   Ячейка тесная: семь колонок делят ширину панели, и первой достаётся
-   минимум — «1 сентября в 00:08» складывалось в ней надвое. Числовая форма
-   вдвое короче и, главное, одной ширины во всех строках (tabular-nums на
-   .meals td), так что колонка не дышит при перерисовке раз в минуту.
-
-   Только для таблицы. Во фразах — «Последнее измерение — …» — и в подписях
-   для скринридера остаётся длинная форма: там место есть, а «01.09» читается
-   вслух как «ноль один точка ноль девять». */
-function formatCellDateTime(date) {
-    return date.toLocaleString("ru-RU", {
-        timeZone: TIMEZONE,
-        day: "2-digit",
-        month: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-    });
-}
-
-function formatDay(date) {
-    return date.toLocaleDateString("ru-RU", {
-        timeZone: TIMEZONE,
-        day: "numeric",
-        month: "long",
-    });
-}
-
-/* День месяца в зоне отображения. getDate() читает часы устройства, и в ночь на
-   второе число предлог выбирался бы по чужой дате — «с 2 сентября» вместо «со
-   2 сентября». */
-function dayOfMonth(date) {
-    return Number(
-        date.toLocaleDateString("ru-RU", { timeZone: TIMEZONE, day: "numeric" })
-    );
-}
-
-/* «Со 2 августа», «с 24 августа»: дата старейшего разобранного приёма вместо
-   обещания «за две недели» — лимит кривых в снимке срабатывает раньше
-   двухнедельного окна. Предлог меняется только перед «2», а неразрывные
-   пробелы держат фразу одним куском — см. formatDose. */
-function sinceLabel(date) {
-    const label = formatDay(date).replace(" ", " ");
-    return `${dayOfMonth(date) === 2 ? "со" : "с"} ${label}`;
-}
-
-/* Стрелка тренда по скорости в мг/дл за минуту — те же пороги, по которым
-   рисует стрелку сам Libre. */
-function trendArrow(rate) {
-    if (rate === null || rate === undefined) return "";
-    if (rate >= 2) return "↑";
-    if (rate >= 1) return "↗";
-    if (rate > -1) return "→";
-    if (rate > -2) return "↘";
-    return "↓";
 }
 
 /* Ниже порога — --hypo, а не --low: число в шапке и кривая под ним говорят об
@@ -506,18 +286,18 @@ function trendArrow(rate) {
    Совпав с high, она гасит жёлтую зону, и страница читается по-старому, а не
    рисует NaN-полосы поверх графика. */
 function targetMid() {
-    return snapshot.target.mid ?? snapshot.target.high;
+    return state.snapshot.target.mid ?? state.snapshot.target.high;
 }
 
 function readingColor(mgdl) {
-    if (mgdl < snapshot.target.low) return readColor("--hypo", "#ff5b5b");
-    if (mgdl > snapshot.target.high) return readColor("--high", "#f77e9b");
+    if (mgdl < state.snapshot.target.low) return readColor("--hypo", "#ff5b5b");
+    if (mgdl > state.snapshot.target.high) return readColor("--high", "#f77e9b");
     if (mgdl > targetMid()) return readColor("--hyper", "#ffd166");
     return readColor("--accent", "#7eb8f7");
 }
 
 function zoneColor(mgdl) {
-    const { low, high } = snapshot.target;
+    const { low, high } = state.snapshot.target;
     if (mgdl < low) return "var(--hypo)";
     if (mgdl > high) return "var(--high)";
     if (mgdl > targetMid()) return "var(--hyper)";
@@ -527,7 +307,7 @@ function zoneColor(mgdl) {
 /* ── Текущее значение ──────────────────────────────────────────────── */
 
 function renderNow() {
-    const latest = snapshot.latest;
+    const latest = state.snapshot.latest;
 
     if (!latest) {
         els.empty.textContent =
@@ -581,7 +361,7 @@ const SAME_MEAL_GAP_SEC = 30 * 60;
 
 // Записи в дорожке идут от старых к новым — последняя и есть последняя.
 function lastEvent(lane) {
-    const entries = (snapshot.events || {})[lane] || [];
+    const entries = (state.snapshot.events || {})[lane] || [];
     if (!entries.length) return null;
 
     const [seconds, amount] = entries[entries.length - 1];
@@ -592,7 +372,7 @@ function lastEvent(lane) {
    иначе плашка покажет последнюю добавку («14 г») вместо тарелки, к которой
    она была добавлена. Время — начало приёма, тем же правилом, что в разборе. */
 function lastMeal() {
-    const meals = (snapshot.events || {}).meals || [];
+    const meals = (state.snapshot.events || {}).meals || [];
     if (!meals.length) return null;
 
     let start = meals.length - 1;
@@ -709,14 +489,14 @@ function compareRow(prev, key, formatDelta, formatWas) {
 
     return {
         text: `${arrow} ${formatDelta(Math.abs(metric.delta))}${verdict} · ${
-            PREV_LABELS[activeRange]
+            PREV_LABELS[state.activeRange]
         } ${formatWas(metric.was)}`,
         strong: metric.significant,
     };
 }
 
 function renderStats() {
-    const stats = snapshot.stats[activeRange];
+    const stats = state.snapshot.stats[state.activeRange];
     els.stats.replaceChildren();
 
     if (!stats) {
@@ -753,14 +533,14 @@ function renderStats() {
        null, когда за две недели набралось меньше 70 % измерений — тогда
        карточки просто нет, вместо солидно выглядящей выдумки. На почасовых
        панелях не показываем: они про сегодня и вчера, а GMI — про две недели. */
-    const gmi = snapshot.gmi;
-    if (!HOURLY_RANGES.has(activeRange) && gmi) {
+    const gmi = state.snapshot.gmi;
+    if (!HOURLY_RANGES.has(state.activeRange) && gmi) {
         cards.push(
             statCard("GMI", percent(gmi.value), `расчётный HbA1c за ${gmi.days} дней`)
         );
     }
 
-    cards.push(statCard("Измерений", stats.count.toLocaleString("ru-RU"), RANGE_LABELS[activeRange]));
+    cards.push(statCard("Измерений", stats.count.toLocaleString("ru-RU"), RANGE_LABELS[state.activeRange]));
 
     els.stats.append(...cards);
     els.stats.hidden = false;
@@ -786,7 +566,7 @@ const NIGHT_SPARK_HEIGHT = 44;
 const NIGHT_SPARK_PAD = 10;
 
 function renderNights() {
-    const nights = snapshot.nights;
+    const nights = state.snapshot.nights;
     if (!nights) {
         els.night.hidden = true;
         return;
@@ -871,8 +651,8 @@ function renderNightStrip(nights) {
     // Порог гипогликемии всегда в кадре: линия, ушедшая под него, обязана быть
     // видимой как пересечение, а не как касание нижней рамки.
     const scale = {
-        min: Math.min(...values, snapshot.target.low) - NIGHT_SPARK_PAD,
-        max: Math.max(...values, snapshot.target.low) + NIGHT_SPARK_PAD,
+        min: Math.min(...values, state.snapshot.target.low) - NIGHT_SPARK_PAD,
+        max: Math.max(...values, state.snapshot.target.low) + NIGHT_SPARK_PAD,
     };
 
     els.nightStrip.replaceChildren(
@@ -899,7 +679,7 @@ function nightCell(night, scale) {
             "aria-label",
             `Ночь ${nightLabel(night)}: минимум ${formatMmol(night.min)} ммоль/л` +
                 (night.low_minutes
-                    ? `, ${night.low_minutes} мин ниже ${formatMmol(snapshot.target.low)}`
+                    ? `, ${night.low_minutes} мин ниже ${formatMmol(state.snapshot.target.low)}`
                     : "")
         );
         item.append(canvas);
@@ -933,7 +713,7 @@ function nightCell(night, scale) {
         // строкой — тот самый минимум. Полностью фраза живёт в подсказке и в
         // метке для скринридера, где место есть.
         minutes.textContent = `${night.low_minutes} мин ниже`;
-        minutes.title = `${night.low_minutes} мин ниже ${formatMmol(snapshot.target.low)} ммоль/л`;
+        minutes.title = `${night.low_minutes} мин ниже ${formatMmol(state.snapshot.target.low)} ммоль/л`;
         item.append(minutes);
     }
 
@@ -971,8 +751,8 @@ function drawNightSpark(canvas, night, scale) {
     // маленькая кривая не говорит, высоко она идёт или низко.
     ctx.fillStyle = readColor("--in-range", "#7efcb0");
     ctx.globalAlpha = readNumber("--band-alpha", 0.07);
-    const top = y(Math.min(scale.max, snapshot.target.high));
-    ctx.fillRect(0, top, width, y(Math.max(scale.min, snapshot.target.low)) - top);
+    const top = y(Math.min(scale.max, state.snapshot.target.high));
+    ctx.fillRect(0, top, width, y(Math.max(scale.min, state.snapshot.target.low)) - top);
     ctx.globalAlpha = 1;
 
     ctx.beginPath();
@@ -996,10 +776,10 @@ function drawNightSpark(canvas, night, scale) {
    пересказывать сотни точек бессмысленно — нужен итог. Числа окна — из
    stats, то есть по сырым замерам, а не по нарисованной сводке. */
 function chartDescription(daily, hasData, tail, gaps, artifacts) {
-    const period = RANGE_LABELS[activeRange];
+    const period = RANGE_LABELS[state.activeRange];
     if (!hasData) return `График глюкозы за ${period}: данных нет`;
 
-    const stats = snapshot.stats[activeRange];
+    const stats = state.snapshot.stats[state.activeRange];
     if (!stats) return `График глюкозы за ${period}`;
 
     const summary =
@@ -1057,15 +837,15 @@ function niceScale(values) {
    набирается сотня: они сливаются в сплошную полосу, из которой ничего не
    прочитать. На длинных окнах за события отвечает разбор ниже, а не график. */
 function eventLanes() {
-    if (!HOURLY_RANGES.has(activeRange)) return [];
+    if (!HOURLY_RANGES.has(state.activeRange)) return [];
 
-    const events = snapshot.events || {};
+    const events = state.snapshot.events || {};
 
     /* Снимок несёт события на самое длинное почасовое окно, короткому достаётся
        срез. Резать надо здесь, до масштаба и легенды: вчерашний большой обед
        иначе сжимал бы сегодняшние столбики, а легенда обещала бы ряд без
        единого столбика на холсте. */
-    const since = snapshot.generated_at - SPAN_SECONDS[activeRange];
+    const since = state.snapshot.generated_at - SPAN_SECONDS[state.activeRange];
     const cut = (list) => (list || []).filter(([t]) => t >= since);
 
     const meals = cut(events.meals);
@@ -1234,27 +1014,22 @@ function drawMarks(ctx, marks, box, x) {
     }
 }
 
-function formatAmount(value) {
-    return value.toLocaleString("ru-RU", { maximumFractionDigits: 1 });
-}
-
 /* Привратник профиля — по образцу eventLanes(): null всюду, где рисовать
    нечего или опасно. Коридор, разложенный по одной зоне под кривой,
    подписанной по другой, врёт на час-два молча — это хуже его отсутствия,
    поэтому чужая зона и несходящаяся длина слотов гасят его целиком. */
-let profileTzWarned = false;
 
 function dayProfile() {
-    if (!HOURLY_RANGES.has(activeRange)) return null;
+    if (!HOURLY_RANGES.has(state.activeRange)) return null;
 
-    const profile = snapshot.profile;
+    const profile = state.snapshot.profile;
     if (!profile) return null;
 
     if (profile.tz !== TIMEZONE) {
         // Однократно: предупреждение о конфигурации, а не спам на каждую
         // перерисовку раз в минуту.
-        if (!profileTzWarned) {
-            profileTzWarned = true;
+        if (!state.profileTzWarned) {
+            state.profileTzWarned = true;
             console.warn(
                 `Профиль дня нарезан в зоне ${profile.tz}, страница подписывает время в ${TIMEZONE} — коридор не рисуется.`
             );
@@ -1354,11 +1129,11 @@ function drawDayProfile(ctx, runs, x, y) {
    продолжает штамповаться, точка отходит от края — и тянуть из неё будущее
    значило бы врать дважды. Порог — тот же, каким шапка гасит цвет значения. */
 function forecastTail() {
-    if (!HOURLY_RANGES.has(activeRange)) return null;
+    if (!HOURLY_RANGES.has(state.activeRange)) return null;
 
-    const latest = snapshot.latest;
+    const latest = state.snapshot.latest;
     if (!latest || latest.rate === null || latest.rate === undefined) return null;
-    if ((snapshot.generated_at - latest.t) * 1000 > STALE_AFTER_MS) return null;
+    if ((state.snapshot.generated_at - latest.t) * 1000 > STALE_AFTER_MS) return null;
 
     let minutes = FORECAST_MINUTES;
     if (latest.rate > 0) {
@@ -1389,7 +1164,7 @@ function drawChart() {
     // данные обновляются не одним щелчком, и минуту-другую после выкладки
     // здесь лежит старый data.json. Пустая панель на эту минуту — штатный
     // вид, а не падение на series.kind.
-    const series = snapshot.series[activeRange] || { kind: "points", step: 5, points: [] };
+    const series = state.snapshot.series[state.activeRange] || { kind: "points", step: 5, points: [] };
     // Снимок прежнего сборщика приходит без kind: тогда рисуется прежняя
     // ломаная, ни одной ошибки в консоли.
     const daily = series.kind === "daily";
@@ -1427,7 +1202,7 @@ function drawChart() {
         // Легенда — до выхода: над надписью «данных нет» она не вправе
         // обещать ни одного ряда.
         renderLegend([]);
-        geometry = null;
+        state.geometry = null;
         hideTip();
         return;
     }
@@ -1438,8 +1213,8 @@ function drawChart() {
     const lanesHeight = lanes.length * (LANE_HEIGHT + LANE_GAP);
     const plotHeight = height - padding.top - padding.bottom - lanesHeight;
 
-    const now = snapshot.generated_at;
-    const spanSeconds = SPAN_SECONDS[activeRange];
+    const now = state.snapshot.generated_at;
+    const spanSeconds = SPAN_SECONDS[state.activeRange];
     const startTime = now - spanSeconds;
     // Правый край холста — не «сейчас», когда есть прогноз: будущему нужно
     // место, иначе хвост рисовать некуда. Метки оси при этом остаются на
@@ -1468,13 +1243,13 @@ function drawChart() {
     );
 
     // Состав легенды собирает рисующая ветка — из нарисованного, а не из
-    // snapshot.events: иначе месячное окно обещало бы «Углеводы» на графике
+    // state.snapshot.events: иначе месячное окно обещало бы «Углеводы» на графике
     // без единого столбика, а пустой профиль — коридор, которого нет.
     // Эпизоды, попавшие в окно: легенда называет полосу, только когда она на
     // холсте есть, — по тому же правилу, что и остальные её строки.
     const lowsShown =
         !daily &&
-        (snapshot.lows || []).some(
+        (state.snapshot.lows || []).some(
             (low) => low.end >= startTime && low.start <= endTime
         );
 
@@ -1488,7 +1263,7 @@ function drawChart() {
                обещание без выборки: коридор по семи дням и по четырнадцати
                выглядит одинаково уверенно, а значит разное. Число публикуется
                в снимке с самого начала (agp.py) и до сих пор нигде не читалось. */
-            const days = snapshot.profile && snapshot.profile.days;
+            const days = state.snapshot.profile && state.snapshot.profile.days;
             legendItems.push(
                 days
                     ? { ...SERIES.profile, label: `${SERIES.profile.label}, ${days} дн` }
@@ -1548,9 +1323,9 @@ function drawChart() {
        Зоны режутся по краям панели: при узкой шкале y уходит за холст, и без
        обрезки красное закрашивало бы подписи осей. */
     const plotFloor = padding.top + plotHeight;
-    const yTargetLow = y(toMmol(snapshot.target.low));
+    const yTargetLow = y(toMmol(state.snapshot.target.low));
     const yTargetMid = y(toMmol(targetMid()));
-    const yTargetHigh = y(toMmol(snapshot.target.high));
+    const yTargetHigh = y(toMmol(state.snapshot.target.high));
     const zones = [
         [yTargetMid, yTargetLow, inRange],
         [yTargetHigh, yTargetMid, readColor("--hyper", "#ffd166")],
@@ -1596,7 +1371,7 @@ function drawChart() {
     ctx.textBaseline = "top";
     // На узком холсте пять подписей сливаются в сплошную строку цифр —
     // «04:0610:06». Лучше меньше делений, чем нечитаемые.
-    const ticks = plotWidth < 340 ? 2 : HOURLY_RANGES.has(activeRange) ? 4 : 5;
+    const ticks = plotWidth < 340 ? 2 : HOURLY_RANGES.has(state.activeRange) ? 4 : 5;
     let previousDay = null;
 
     // Дневной вид подписывает ось зоной снимка: его коробки нарезаны на
@@ -1616,7 +1391,7 @@ function drawChart() {
         // Почасовое окно пересекает полночь, и без даты непонятно, «02:35» —
         // это сегодня или вчера. Дата подписывается там, где день меняется,
         // а не у каждой метки: повторять её пять раз незачем.
-        const labels = HOURLY_RANGES.has(activeRange)
+        const labels = HOURLY_RANGES.has(state.activeRange)
             ? [
                   date.toLocaleTimeString("ru-RU", {
                       timeZone: TIMEZONE,
@@ -1626,7 +1401,7 @@ function drawChart() {
               ]
             : [day];
 
-        if (HOURLY_RANGES.has(activeRange) && day !== previousDay) {
+        if (HOURLY_RANGES.has(state.activeRange) && day !== previousDay) {
             labels.push(day);
         }
         previousDay = day;
@@ -1639,7 +1414,7 @@ function drawChart() {
     }
     ctx.globalAlpha = 1;
 
-    // Ширина коробки дня считается один раз и попадает в geometry: отрисовка
+    // Ширина коробки дня считается один раз и попадает в state.geometry: отрисовка
     // и подсветка наведения обязаны сходиться на одном прямоугольнике.
     const boxWidth = daily
         ? Math.min(BOX_MAX_WIDTH, Math.max(BOX_MIN_WIDTH, (x(86400) - x(0)) * BOX_SHARE))
@@ -1686,7 +1461,7 @@ function drawChart() {
     // Геометрия нужна обработчику наведения: пересчитывать её на каждое
     // движение мыши — значит дублировать всю раскладку и однажды разойтись
     // с тем, что нарисовано.
-    geometry = {
+    state.geometry = {
         kind: daily ? "daily" : "points",
         points,
         days,
@@ -1755,7 +1530,7 @@ const LOW_MIN_WIDTH = 3;
 const LOW_LABEL_SPACE = 42;
 
 function drawLows(ctx, x, left, right, bottom) {
-    const lows = snapshot.lows || [];
+    const lows = state.snapshot.lows || [];
     if (!lows.length) return;
 
     // Полтора пикселя от дна: линия толщиной в три, и её нижняя половина
@@ -1829,13 +1604,13 @@ function seriesGapSeconds(series) {
    нарисован прогноз, молчания нет по определению (хвост живёт только у свежего
    замера), и полоса, наползающая на пунктир, спорила бы с ним. */
 function seriesGaps(series, points, tail) {
-    if (!HOURLY_RANGES.has(activeRange) || !points.length) return [];
+    if (!HOURLY_RANGES.has(state.activeRange) || !points.length) return [];
 
     const gapSeconds = seriesGapSeconds(series);
-    const startTime = snapshot.generated_at - SPAN_SECONDS[activeRange];
+    const startTime = state.snapshot.generated_at - SPAN_SECONDS[state.activeRange];
 
-    const counted = snapshot.gaps
-        ? snapshot.gaps.map((gap) => ({ from: gap.start, to: gap.end }))
+    const counted = state.snapshot.gaps
+        ? state.snapshot.gaps.map((gap) => ({ from: gap.start, to: gap.end }))
         : points
               .slice(1)
               .map((point, i) => ({ from: points[i][0], to: point[0] }));
@@ -1844,9 +1619,9 @@ function seriesGaps(series, points, tail) {
         (gap) => gap.to - gap.from > gapSeconds && gap.to >= startTime
     );
 
-    const latest = snapshot.latest ? snapshot.latest.t : points[points.length - 1][0];
-    if (!tail && snapshot.generated_at - latest > gapSeconds) {
-        gaps.push({ from: latest, to: snapshot.generated_at, open: true });
+    const latest = state.snapshot.latest ? state.snapshot.latest.t : points[points.length - 1][0];
+    if (!tail && state.snapshot.generated_at - latest > gapSeconds) {
+        gaps.push({ from: latest, to: state.snapshot.generated_at, open: true });
     }
 
     return gaps;
@@ -1857,10 +1632,10 @@ function seriesGaps(series, points, tail) {
    решение оставить их редкой деталью суточного вида, не заводить вторую
    плотность на растянутой вдвое кривой. */
 function seriesArtifacts() {
-    if (activeRange !== "day" || !snapshot.artifacts) return [];
+    if (state.activeRange !== "day" || !state.snapshot.artifacts) return [];
 
-    const startTime = snapshot.generated_at - SPAN_SECONDS[activeRange];
-    return snapshot.artifacts.filter((artifact) => artifact.t >= startTime);
+    const startTime = state.snapshot.generated_at - SPAN_SECONDS[state.activeRange];
+    return state.snapshot.artifacts.filter((artifact) => artifact.t >= startTime);
 }
 
 // Полоса уже двух пикселей не читается как полоса, а разрыв в четверть часа на
@@ -2034,7 +1809,7 @@ function drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeigh
        Порог берётся из target.low, а не из своей константы: подложка нормы
        нарисована по нему же, и разъехаться им нельзя — красное за пределами
        зелёной полосы читалось бы как ошибка графика. */
-    const hypoTop = y(toMmol(snapshot.target.low));
+    const hypoTop = y(toMmol(state.snapshot.target.low));
     const plotBottom = padding.top + plotHeight;
     if (hypoTop < plotBottom) {
         ctx.save();
@@ -2050,7 +1825,7 @@ function drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeigh
        здесь набирается половина суток, так что это не тревога, а состояние —
        цвет спокойнее красных по краям. Пороги общие с зонами подложки: граница
        цвета кривой и граница зоны обязаны быть одной линией. */
-    const hyperBottom = y(toMmol(snapshot.target.high));
+    const hyperBottom = y(toMmol(state.snapshot.target.high));
     const midTop = y(toMmol(targetMid()));
     if (midTop > hyperBottom) {
         ctx.save();
@@ -2182,9 +1957,9 @@ function dailyBoxWidth(day, days, width) {
    должен выглядеть толще соседей. Обрезанные окном крайние дни уже —
    см. dailyBoxWidth. */
 function drawDailyBoxes(ctx, days, x, y, plotLeft, plotRight, width) {
-    const yLow = y(toMmol(snapshot.target.low));
+    const yLow = y(toMmol(state.snapshot.target.low));
     const yMid = y(toMmol(targetMid()));
-    const yHigh = y(toMmol(snapshot.target.high));
+    const yHigh = y(toMmol(state.snapshot.target.high));
 
     for (const day of days) {
         if (!day.count) continue;
@@ -2244,47 +2019,47 @@ function drawDailyBoxes(ctx, days, x, y, plotLeft, plotRight, width) {
    и кольца — подсветка слота суток: точки, вокруг которой рисовать кольцо,
    там нет. */
 function drawCrosshair(ctx, muted) {
-    if (hoverTime === null || !geometry) return;
+    if (state.hoverTime === null || !state.geometry) return;
 
-    if (geometry.kind === "daily") {
-        const day = geometry.dayAt(hoverTime);
+    if (state.geometry.kind === "daily") {
+        const day = state.geometry.dayAt(state.hoverTime);
         if (!day || !day.count) return;
 
         // Подсветка накрывает и наблюдаемый кусок, и коробку: у обрезанного
         // окном дня кусок — считанные пиксели, а прижатая к рамке коробка
         // стоит рядом с ним, и подсвечивать одно без другого значит
         // подсвечивать не то, на что смотрят.
-        const boxWidth = dailyBoxWidth(day, geometry.days, geometry.boxWidth);
-        const box = dailyBoxSpan(day, geometry.x, geometry.left, geometry.right, boxWidth);
-        const from = Math.min(geometry.x(day.start), box.left);
-        const to = Math.max(geometry.x(day.end), box.right);
+        const boxWidth = dailyBoxWidth(day, state.geometry.days, state.geometry.boxWidth);
+        const box = dailyBoxSpan(day, state.geometry.x, state.geometry.left, state.geometry.right, boxWidth);
+        const from = Math.min(state.geometry.x(day.start), box.left);
+        const to = Math.max(state.geometry.x(day.end), box.right);
 
         ctx.fillStyle = muted;
         ctx.globalAlpha = 0.08;
-        ctx.fillRect(from, geometry.plotTop, to - from, geometry.plotBottom - geometry.plotTop);
+        ctx.fillRect(from, state.geometry.plotTop, to - from, state.geometry.plotBottom - state.geometry.plotTop);
         ctx.globalAlpha = 1;
         return;
     }
 
-    const px = Math.round(geometry.x(hoverTime)) + 0.5;
-    if (px < geometry.left || px > geometry.right) return;
+    const px = Math.round(state.geometry.x(state.hoverTime)) + 0.5;
+    if (px < state.geometry.left || px > state.geometry.right) return;
 
     ctx.strokeStyle = muted;
     ctx.globalAlpha = 0.45;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(px, geometry.plotTop);
-    ctx.lineTo(px, geometry.bottom);
+    ctx.moveTo(px, state.geometry.plotTop);
+    ctx.lineTo(px, state.geometry.bottom);
     ctx.stroke();
     ctx.globalAlpha = 1;
 
-    const point = nearestPoint(hoverTime);
+    const point = nearestPoint(state.hoverTime);
     if (!point) return;
 
     // Кольцо цветом панели: без него точка теряется там, где пересекает
     // собственную линию.
     ctx.beginPath();
-    ctx.arc(geometry.x(point[0]), geometry.y(toMmol(point[1])), 4, 0, Math.PI * 2);
+    ctx.arc(state.geometry.x(point[0]), state.geometry.y(toMmol(point[1])), 4, 0, Math.PI * 2);
     // Тот же цвет, что у линии под точкой: синий кружок посреди красного
     // участка читался бы как «а вот это измерение в норме».
     ctx.fillStyle = readingColor(point[1]);
@@ -2351,10 +2126,10 @@ function renderLegend(items) {
 }
 
 function nearestPoint(t) {
-    if (!geometry || !geometry.points.length) return null;
+    if (!state.geometry || !state.geometry.points.length) return null;
 
     let best = null;
-    for (const point of geometry.points) {
+    for (const point of state.geometry.points) {
         const distance = Math.abs(point[0] - t);
         if (best === null || distance < best[0]) best = [distance, point];
     }
@@ -2399,23 +2174,23 @@ function tipRow(series, text) {
 }
 
 function showTip(clientX) {
-    if (hoverTime === null || !geometry) return hideTip();
-    if (geometry.kind === "daily") return showDayTip(clientX);
+    if (state.hoverTime === null || !state.geometry) return hideTip();
+    if (state.geometry.kind === "daily") return showDayTip(clientX);
 
-    const point = nearestPoint(hoverTime);
+    const point = nearestPoint(state.hoverTime);
     const rows = [];
 
     // Справа от последнего замера строка глюкозы уступает место прогнозу:
     // «Измерение» под курсором в будущем приписывало бы старой точке чужое
     // время.
-    const tail = geometry.tail;
-    const future = tail && hoverTime > tail.from.t;
+    const tail = state.geometry.tail;
+    const future = tail && state.hoverTime > tail.from.t;
 
     /* Внутри молчания сенсора замера нет — и строки о нём тоже. nearestPoint
        тянется на полчаса в обе стороны, так что без этой развилки край
        часового разрыва подписывался бы значением, снятым до него. */
-    const gap = (geometry.gaps || []).find(
-        (item) => hoverTime > item.from && hoverTime < item.to
+    const gap = (state.geometry.gaps || []).find(
+        (item) => state.hoverTime > item.from && state.hoverTime < item.to
     );
 
     // Порядок строк зафиксирован: глюкоза → профиль → кольцо → события.
@@ -2430,8 +2205,8 @@ function showTip(clientX) {
         );
     }
 
-    if (future && hoverTime <= tail.to.t) {
-        const share = (hoverTime - tail.from.t) / (tail.to.t - tail.from.t);
+    if (future && state.hoverTime <= tail.to.t) {
+        const share = (state.hoverTime - tail.from.t) / (tail.to.t - tail.from.t);
         const mgdl = tail.from.mgdl + (tail.to.mgdl - tail.from.mgdl) * share;
         // «≈» — единственная строка подсказки с оговоркой: остальные
         // пересказывают записи, эта — прямую, продлённую в будущее.
@@ -2442,11 +2217,11 @@ function showTip(clientX) {
 
     const profile = dayProfile();
     if (profile) {
-        const idx = Math.floor(minutesOfDay(hoverTime) / profile.slot_min);
+        const idx = Math.floor(minutesOfDay(state.hoverTime) / profile.slot_min);
         const slot = profile.slots[idx];
         // Сверка с нарисованным: пробег из одного слота на холст не попал,
         // и подсказка не вправе говорить «обычно» там, где коридора нет.
-        if (slot && geometry.profileSlots.has(idx)) {
+        if (slot && state.geometry.profileSlots.has(idx)) {
             rows.push(
                 tipRow(
                     SERIES.profile,
@@ -2462,7 +2237,7 @@ function showTip(clientX) {
     // записи, и получасовой люфт nearestPoint приписал бы её соседней точке
     // через полчаса тишины.
     if (point && !future && !gap) {
-        const artifact = (geometry.artifacts || []).find(
+        const artifact = (state.geometry.artifacts || []).find(
             (item) => Math.abs(item.t - point[0]) <= 150
         );
         if (artifact) {
@@ -2478,16 +2253,16 @@ function showTip(clientX) {
 
     // Событие в пределах четверти часа от курсора: столбик и точка кривой
     // почти никогда не совпадают по времени секунда в секунду.
-    for (const box of geometry.laneBoxes) {
+    for (const box of state.geometry.laneBoxes) {
         for (const bar of box.lane.bars) {
-            if (Math.abs(bar.t - hoverTime) <= 900) {
+            if (Math.abs(bar.t - state.hoverTime) <= 900) {
                 rows.push(tipRow(bar.series, `${formatAmount(bar.v)} ${bar.series.unit}`));
             }
         }
         // Метка смены ручки — тем же допуском. Числа у неё нет, строка
         // называет её словами легенды.
         for (const mark of box.lane.marks || []) {
-            if (Math.abs(mark.t - hoverTime) <= 900) {
+            if (Math.abs(mark.t - state.hoverTime) <= 900) {
                 rows.push(tipRow(mark.series, mark.series.label));
             }
         }
@@ -2499,21 +2274,21 @@ function showTip(clientX) {
     time.className = "tip__time";
     // Зона названа здесь, а не у оси: подсказку читают, когда сверяют запись со
     // своими часами, и «02:43» без города в поездке значит два разных момента.
-    time.textContent = `${new Date(hoverTime * 1000).toLocaleTimeString("ru-RU", {
+    time.textContent = `${new Date(state.hoverTime * 1000).toLocaleTimeString("ru-RU", {
         timeZone: TIMEZONE,
         hour: "2-digit",
         minute: "2-digit",
     })}, ${TIMEZONE_LABEL}`;
 
     els.tip.replaceChildren(time, ...rows);
-    placeTip(els.tip, els.chart, els.canvas, geometry.plotTop, clientX);
+    placeTip(els.tip, els.chart, els.canvas, state.geometry.plotTop, clientX);
 }
 
 /* Подсказка дневного вида: не мгновение, а сутки. Медиана с меткой цвета
    зоны, разброс середины, доля времени в диапазоне — те же числа, какими
    день покрашен на холсте, только словами. */
 function showDayTip(clientX) {
-    const day = geometry.dayAt(hoverTime);
+    const day = state.geometry.dayAt(state.hoverTime);
     if (!day || !day.count) return hideTip();
 
     const time = document.createElement("p");
@@ -2573,7 +2348,7 @@ function showDayTip(clientX) {
     }
 
     els.tip.replaceChildren(...rows);
-    placeTip(els.tip, els.chart, els.canvas, geometry.plotTop, clientX);
+    placeTip(els.tip, els.chart, els.canvas, state.geometry.plotTop, clientX);
 }
 
 /* Позиция считается от карточки, а не от холста: у карточки есть внутренний
@@ -2629,29 +2404,8 @@ const OVERLAY_SERIES = {
     },
 };
 
-/* Раскладка последней отрисовки оверлея и минута под указателем — та же пара,
-   что geometry и hoverTime у графика выше, и по той же причине: считать
-   геометрию заново на каждое движение мыши значит однажды разойтись с тем, что
-   нарисовано. Минута, а не момент времени: ось оверлея — время от еды. */
-let overlayGeometry = null;
-let overlayHoverMin = null;
-
-/* Какой приём подсвечен на оверлее. Закреплённый нажатием — состояние покоя,
-   к которому подсветка возвращается; указатель и фокус поверх него только
-   показывают, на что сейчас смотрят. Так строка под курсором всегда означает
-   свою кривую на графике, а не иногда — в зависимости от того, закреплено ли
-   что-то ещё. Приём опознаётся временем: оно уникально и переживает
-   перерисовку таблицы, так что закрепление не слетает от обновления снимка.
-
-   Указатель и фокус держатся порознь и решают последним словом: увести мышь
-   со стола, не погасив кривую, выбранную с клавиатуры, — и наоборот. */
-let hoveredMeal = null;
-let focusedMeal = null;
-let previewMeal = null;
-let pinnedMeal = null;
-
 function pickedMeal() {
-    return previewMeal ?? pinnedMeal;
+    return state.previewMeal ?? state.pinnedMeal;
 }
 
 const OVERLAY_HEIGHT = 240;
@@ -2659,14 +2413,6 @@ const OVERLAY_HEIGHT = 240;
 // Сколько кривых должно накрыть отметку времени, чтобы медиана в ней что-то
 // значила. На двух это просто среднее двух обедов, выданное за общую картину.
 const MEDIAN_MIN_CURVES = 3;
-
-function formatDelta(mgdl) {
-    return toMmol(mgdl).toLocaleString("ru-RU", {
-        minimumFractionDigits: 1,
-        maximumFractionDigits: 1,
-        signDisplay: "exceptZero",
-    });
-}
 
 function medianCurve(curves) {
     const buckets = new Map();
@@ -2718,7 +2464,7 @@ function drawOverlay(analysis) {
 
     // Пустой холст не оставляет за собой раскладку: наведение на него обязано
     // ничего не найти, а не считать по прошлому набору кривых.
-    overlayGeometry = null;
+    state.overlayGeometry = null;
 
     const drawn = analysis.meals.filter((meal) => meal.curve.length > 1);
     if (!drawn.length) return;
@@ -2873,7 +2619,7 @@ function drawOverlay(analysis) {
     if (picked >= 0) legend.push(legendItem(OVERLAY_SERIES.picked));
     els.overlayLegend.replaceChildren(...legend);
 
-    overlayGeometry = {
+    state.overlayGeometry = {
         x,
         y,
         span,
@@ -2915,7 +2661,7 @@ function overlayValueAt(curve, minute) {
    кривые сходятся. */
 function overlayDot(ctx, minute, mgdl, color) {
     ctx.beginPath();
-    ctx.arc(overlayGeometry.x(minute), overlayGeometry.y(toMmol(mgdl)), 4, 0, Math.PI * 2);
+    ctx.arc(state.overlayGeometry.x(minute), state.overlayGeometry.y(toMmol(mgdl)), 4, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.fill();
     ctx.lineWidth = 2;
@@ -2924,35 +2670,35 @@ function overlayDot(ctx, minute, mgdl, color) {
 }
 
 function drawOverlayCursor(ctx) {
-    if (overlayHoverMin === null || !overlayGeometry) return;
+    if (state.overlayHoverMin === null || !state.overlayGeometry) return;
 
-    const px = Math.round(overlayGeometry.x(overlayHoverMin)) + 0.5;
-    if (px < overlayGeometry.left || px > overlayGeometry.right) return;
+    const px = Math.round(state.overlayGeometry.x(state.overlayHoverMin)) + 0.5;
+    if (px < state.overlayGeometry.left || px > state.overlayGeometry.right) return;
 
     ctx.strokeStyle = readColor("--muted", "#8a90a6");
     ctx.globalAlpha = 0.45;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(px, overlayGeometry.plotTop);
-    ctx.lineTo(px, overlayGeometry.plotBottom);
+    ctx.moveTo(px, state.overlayGeometry.plotTop);
+    ctx.lineTo(px, state.overlayGeometry.plotBottom);
     ctx.stroke();
     ctx.globalAlpha = 1;
 
     // Засечки — только у двух названных рядов. У отдельных кривых их нет
     // намеренно: десяток колец на одной вертикали не сообщает ничего, чего не
     // сказала бы строка разброса в подсказке.
-    const median = overlayValueAt(overlayGeometry.median, overlayHoverMin);
+    const median = overlayValueAt(state.overlayGeometry.median, state.overlayHoverMin);
     if (median !== null) {
-        overlayDot(ctx, overlayHoverMin, median, readColor("--accent", "#7eb8f7"));
+        overlayDot(ctx, state.overlayHoverMin, median, readColor("--accent", "#7eb8f7"));
     }
 
-    if (overlayGeometry.picked >= 0) {
+    if (state.overlayGeometry.picked >= 0) {
         const own = overlayValueAt(
-            overlayGeometry.curves[overlayGeometry.picked],
-            overlayHoverMin
+            state.overlayGeometry.curves[state.overlayGeometry.picked],
+            state.overlayHoverMin
         );
         if (own !== null) {
-            overlayDot(ctx, overlayHoverMin, own, readColor("--meal", "#bd8a30"));
+            overlayDot(ctx, state.overlayHoverMin, own, readColor("--meal", "#bd8a30"));
         }
     }
 }
@@ -2972,20 +2718,20 @@ function offsetLabel(minutes) {
    разброс → выбранное. Отдельные кривые названы краями, а не перечислены: их
    числа читаются в таблице, а на холсте они нарисованы ради широты. */
 function showOverlayTip(clientX) {
-    if (overlayHoverMin === null || !overlayGeometry) return hideOverlayTip();
+    if (state.overlayHoverMin === null || !state.overlayGeometry) return hideOverlayTip();
 
     const rows = [];
     const unit = OVERLAY_SERIES.median.unit;
 
-    const median = overlayValueAt(overlayGeometry.median, overlayHoverMin);
+    const median = overlayValueAt(state.overlayGeometry.median, state.overlayHoverMin);
     if (median !== null) {
         rows.push(
             tipRow(OVERLAY_SERIES.median, `Медиана ${formatDelta(median)} ${unit}`)
         );
     }
 
-    const values = overlayGeometry.curves
-        .map((curve) => overlayValueAt(curve, overlayHoverMin))
+    const values = state.overlayGeometry.curves
+        .map((curve) => overlayValueAt(curve, state.overlayHoverMin))
         .filter((value) => value !== null);
 
     if (values.length) {
@@ -2999,10 +2745,10 @@ function showOverlayTip(clientX) {
         );
     }
 
-    if (overlayGeometry.picked >= 0) {
+    if (state.overlayGeometry.picked >= 0) {
         const own = overlayValueAt(
-            overlayGeometry.curves[overlayGeometry.picked],
-            overlayHoverMin
+            state.overlayGeometry.curves[state.overlayGeometry.picked],
+            state.overlayHoverMin
         );
         if (own !== null) {
             rows.push(
@@ -3018,7 +2764,7 @@ function showOverlayTip(clientX) {
 
     const time = document.createElement("p");
     time.className = "tip__time";
-    time.textContent = offsetLabel(overlayHoverMin);
+    time.textContent = offsetLabel(state.overlayHoverMin);
 
     // Счёт кривых — не украшение: он объясняет, почему медианы в этой минуте
     // может не быть вовсе. Молча пропавшая строка читается как «подъёма
@@ -3035,7 +2781,7 @@ function showOverlayTip(clientX) {
         els.overlayTip,
         els.reviewPanel,
         els.overlay,
-        overlayGeometry.plotTop,
+        state.overlayGeometry.plotTop,
         clientX
     );
 }
@@ -3059,24 +2805,6 @@ function outcome(meal, targets) {
     if (meal.from_hypo) return ["flag--ok", "✓ гипогликемия купирована"];
     if (meal.rise <= targets.rise) return ["flag--ok", "✓ в ориентире"];
     return ["flag--over", "↑ подъём выше ориентира"];
-}
-
-/* Болюс еды: доза и её упреждение. Абсолютное время укола не нужно — оно
-   читается из колонки «Когда», а связка «сколько и за сколько до еды» — то,
-   ради чего колонка существует. */
-
-// Укол в пределах пяти минут от еды — «с едой»: журнал ведётся руками, и пара
-// минут в нём — точность записи, а не осмысленное упреждение.
-const DOSE_WITH_MEAL_MIN = 5;
-
-function formatDose(dose) {
-    if (!dose) return "—";
-    // Неразрывные пробелы внутри половин: ячейка может сложиться в две строки
-    // «7,2 ед / за 15 мин до», но не оставить «до» болтаться на своей.
-    const units = `${formatAmount(dose.units)} ед`;
-    if (dose.lead_min > DOSE_WITH_MEAL_MIN) return `${units} за ${dose.lead_min} мин до`;
-    if (dose.lead_min < -DOSE_WITH_MEAL_MIN) return `${units} через ${-dose.lead_min} мин`;
-    return `${units} с едой`;
 }
 
 function textCell(text) {
@@ -3300,20 +3028,20 @@ function renderMeals(analysis) {
 }
 
 function setHovered(t) {
-    hoveredMeal = t;
+    state.hoveredMeal = t;
     // Ушёл указатель — остаётся то, что держит фокус, и наоборот.
-    previewMeal = t ?? focusedMeal;
+    state.previewMeal = t ?? state.focusedMeal;
     refreshPicked();
 }
 
 function setFocused(t) {
-    focusedMeal = t;
-    previewMeal = t ?? hoveredMeal;
+    state.focusedMeal = t;
+    state.previewMeal = t ?? state.hoveredMeal;
     refreshPicked();
 }
 
 function togglePinned(t) {
-    pinnedMeal = pinnedMeal === t ? null : t;
+    state.pinnedMeal = state.pinnedMeal === t ? null : t;
     refreshPicked();
 }
 
@@ -3324,10 +3052,10 @@ function markPicked() {
     for (const row of els.meals.querySelectorAll("tbody tr")) {
         const t = Number(row.dataset.meal);
         row.classList.toggle("is-picked", t === picked);
-        row.classList.toggle("is-pinned", t === pinnedMeal);
+        row.classList.toggle("is-pinned", t === state.pinnedMeal);
 
         const pick = row.querySelector(".meals__pick");
-        if (pick) pick.setAttribute("aria-pressed", String(t === pinnedMeal));
+        if (pick) pick.setAttribute("aria-pressed", String(t === state.pinnedMeal));
     }
 }
 
@@ -3337,7 +3065,7 @@ function refreshPicked() {
 }
 
 /* Перерисовать один холст разбора — тем же набором, что показан сейчас, а не
-   всем разбором: полный уговор — в renderReview. Здесь стоял snapshot.analysis
+   всем разбором: полный уговор — в renderReview. Здесь стоял state.snapshot.analysis
    целиком, и первое же наведение подкладывало на холст кривые приёмов, которых
    нет в списке под ним, вместе с медианой, посчитанной по другому набору.
 
@@ -3348,13 +3076,13 @@ function redrawOverlay() {
     if (visible) drawOverlay(visible);
 }
 
-/* Видимая часть разбора: последние ``mealsShown`` приёмов. Считается в одном
+/* Видимая часть разбора: последние ``state.mealsShown`` приёмов. Считается в одном
    месте — иначе холст и таблица однажды разойдутся в том, что показывают. */
 function visibleMeals() {
-    const analysis = snapshot && snapshot.analysis;
+    const analysis = state.snapshot && state.snapshot.analysis;
     if (!analysis || !analysis.meals.length) return null;
 
-    const shown = analysis.meals.slice(-Math.min(mealsShown, analysis.meals.length));
+    const shown = analysis.meals.slice(-Math.min(state.mealsShown, analysis.meals.length));
     return { ...analysis, meals: shown };
 }
 
@@ -3499,8 +3227,8 @@ function ratioReady(meal) {
         !meal.cut &&
         !meal.hypo &&
         !meal.from_hypo &&
-        meal.baseline >= snapshot.target.low &&
-        meal.baseline <= snapshot.target.high
+        meal.baseline >= state.snapshot.target.low &&
+        meal.baseline <= state.snapshot.target.high
     );
 }
 
@@ -3599,7 +3327,7 @@ function fillRatioTable(table, firstColumn, rows) {
 }
 
 function renderReview() {
-    const analysis = snapshot.analysis;
+    const analysis = state.snapshot.analysis;
 
     // Ни одного разобранного приёма пищи — секции просто нет. Пустая таблица с
     // прочерками сообщает не больше, чем её отсутствие, а места занимает экран.
@@ -3631,9 +3359,9 @@ function renderReview() {
     // оверлее больше не рисуется, и закрепление висело бы ни на чём — ровно как
     // у приёма, уехавшего из снимка.
     const drawable = shown.some(
-        (meal) => meal.t === pinnedMeal && meal.curve.length > 1
+        (meal) => meal.t === state.pinnedMeal && meal.curve.length > 1
     );
-    if (pinnedMeal !== null && !drawable) pinnedMeal = null;
+    if (state.pinnedMeal !== null && !drawable) state.pinnedMeal = null;
 
     // Раскрыть до отрисовки: у скрытой секции холст имеет нулевую ширину, и
     // рисовать в него — значит рисовать в ничто.
@@ -3657,7 +3385,7 @@ function renderReview() {
    пять минут независимо от того, отвечает ли Abbott, поэтому «обновлено
    только что» само по себе ничего не говорит о свежести данных. */
 function renderCollectorState() {
-    const lastSuccess = (snapshot.collector || {}).last_success;
+    const lastSuccess = (state.snapshot.collector || {}).last_success;
 
     if (!lastSuccess) {
         els.footUpdated.textContent = "Сборщик ещё не получал данные";
@@ -3681,13 +3409,12 @@ function renderCollectorState() {
    вслух, а не спамить на каждую перерисовку раз в минуту. Дневной вид при
    этом продолжает рисовать — данные нарезаны честно, просто в другой зоне,
    и подсказка называет её по имени. */
-let timezoneWarned = false;
 
 function render() {
-    if (!timezoneWarned && snapshot.timezone && snapshot.timezone !== TIMEZONE) {
-        timezoneWarned = true;
+    if (!state.timezoneWarned && state.snapshot.timezone && state.snapshot.timezone !== TIMEZONE) {
+        state.timezoneWarned = true;
         console.warn(
-            `Снимок нарезан в зоне ${snapshot.timezone}, страница подписывает время в ${TIMEZONE} — поменяйте DISPLAY_TZ и TIMEZONE вместе.`
+            `Снимок нарезан в зоне ${state.snapshot.timezone}, страница подписывает время в ${TIMEZONE} — поменяйте DISPLAY_TZ и TIMEZONE вместе.`
         );
     }
 
@@ -3702,7 +3429,7 @@ function render() {
     // сборщик, тем более важно.
     renderCollectorState();
 
-    if (!snapshot.latest) return;
+    if (!state.snapshot.latest) return;
 
     els.ranges.hidden = false;
     els.chart.hidden = false;
@@ -3722,7 +3449,7 @@ async function load() {
         // держать его дольше и показывать вчерашний сахар как текущий.
         const response = await fetch("data.json", { cache: "no-store" });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        snapshot = await response.json();
+        state.snapshot = await response.json();
         render();
     } catch (error) {
         els.empty.textContent = "Не удалось загрузить данные. Обновите страницу позже.";
@@ -3735,7 +3462,7 @@ els.ranges.addEventListener("click", (event) => {
     const button = event.target.closest(".ranges__btn");
     if (!button) return;
 
-    activeRange = button.dataset.range;
+    state.activeRange = button.dataset.range;
     for (const item of els.ranges.children) {
         const active = item === button;
         item.classList.toggle("is-active", active);
@@ -3748,7 +3475,7 @@ els.ranges.addEventListener("click", (event) => {
 });
 
 window.addEventListener("resize", () => {
-    if (snapshot && snapshot.latest) {
+    if (state.snapshot && state.snapshot.latest) {
         drawChart();
         renderReview();
         // Холсты ночей тоже перерисовываются: их цвета прочитаны из CSS один
@@ -3758,26 +3485,26 @@ window.addEventListener("resize", () => {
 });
 
 function hoverAt(event) {
-    if (!geometry) return;
+    if (!state.geometry) return;
 
     const rect = els.canvas.getBoundingClientRect();
     const px = event.clientX - rect.left;
-    if (px < geometry.left || px > geometry.right) {
+    if (px < state.geometry.left || px > state.geometry.right) {
         clearHover();
         return;
     }
 
-    const share = (px - geometry.left) / (geometry.right - geometry.left);
-    hoverTime = Math.round(geometry.startTime + share * geometry.spanSeconds);
+    const share = (px - state.geometry.left) / (state.geometry.right - state.geometry.left);
+    state.hoverTime = Math.round(state.geometry.startTime + share * state.geometry.spanSeconds);
     drawChart();
     showTip(event.clientX);
 }
 
 function clearHover() {
-    if (hoverTime === null) return;
-    hoverTime = null;
+    if (state.hoverTime === null) return;
+    state.hoverTime = null;
     hideTip();
-    if (snapshot && snapshot.latest) drawChart();
+    if (state.snapshot && state.snapshot.latest) drawChart();
 }
 
 /* Раскрытие списка. Пока кнопка на месте, фокус остаётся на ней — жать её
@@ -3791,7 +3518,7 @@ function clearHover() {
    выбирал. */
 els.mealsMore.addEventListener("click", (event) => {
     const before = els.meals.querySelectorAll("tbody tr").length;
-    mealsShown += MEALS_PAGE;
+    state.mealsShown += MEALS_PAGE;
     renderReview();
 
     if (!els.mealsMore.hidden || event.detail !== 0) return;
@@ -3820,24 +3547,24 @@ els.canvas.addEventListener("pointercancel", clearHover);
    таблицей: холст тут отвечает на «сколько было в эту минуту», а не на «какой
    это приём» — по десятку сошедшихся кривых ближайшую не выбрать. */
 function overlayHoverAt(event) {
-    if (!overlayGeometry) return;
+    if (!state.overlayGeometry) return;
 
     const rect = els.overlay.getBoundingClientRect();
     const px = event.clientX - rect.left;
-    if (px < overlayGeometry.left || px > overlayGeometry.right) {
+    if (px < state.overlayGeometry.left || px > state.overlayGeometry.right) {
         clearOverlayHover();
         return;
     }
 
-    const share = (px - overlayGeometry.left) / (overlayGeometry.right - overlayGeometry.left);
-    overlayHoverMin = Math.round(share * overlayGeometry.span);
+    const share = (px - state.overlayGeometry.left) / (state.overlayGeometry.right - state.overlayGeometry.left);
+    state.overlayHoverMin = Math.round(share * state.overlayGeometry.span);
     redrawOverlay();
     showOverlayTip(event.clientX);
 }
 
 function clearOverlayHover() {
-    if (overlayHoverMin === null) return;
-    overlayHoverMin = null;
+    if (state.overlayHoverMin === null) return;
+    state.overlayHoverMin = null;
     hideOverlayTip();
     redrawOverlay();
 }
@@ -3849,7 +3576,7 @@ els.overlay.addEventListener("pointerup", clearOverlayHover);
 els.overlay.addEventListener("pointercancel", clearOverlayHover);
 
 els.theme.addEventListener("click", () => {
-    const next = THEMES[(THEMES.findIndex((item) => item.id === theme) + 1) % THEMES.length];
+    const next = THEMES[(THEMES.findIndex((item) => item.id === state.theme) + 1) % THEMES.length];
     applyTheme(next.id);
     rememberTheme(next.id);
 });
