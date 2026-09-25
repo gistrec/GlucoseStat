@@ -2418,7 +2418,7 @@ function showTip(clientX) {
         (item) => hoverTime > item.from && hoverTime < item.to
     );
 
-    // Порядок строк зафиксирован: глюкоза → профиль → события.
+    // Порядок строк зафиксирован: глюкоза → профиль → кольцо → события.
     if (gap) {
         rows.push(tipRow(SERIES.gap, `Нет сигнала ${formatSpan(gap.to - gap.from)}`));
     } else if (point && !future) {
@@ -2428,24 +2428,6 @@ function showTip(clientX) {
         rows.push(
             tipRow(SERIES.glucose, `Измерение ${formatMmol(point[1])} ${SERIES.glucose.unit}`)
         );
-
-        // Кольцо — сразу за измерением, которое оно поясняет, а не среди
-        // событий журнала: это оговорка к той же самой точке. Допуск уже, чем
-        // у lane-событий (900с): метка стоит на своём замере, секунда в
-        // секунду с точностью до шага записи, и получасовой люфт nearestPoint
-        // приписал бы её соседней точке через полчаса тишины.
-        const artifact = (geometry.artifacts || []).find(
-            (item) => Math.abs(item.t - point[0]) <= 150
-        );
-        if (artifact) {
-            const direction = artifact.dv > 0 ? "рост" : "падение";
-            rows.push(
-                tipRow(
-                    SERIES.artifact,
-                    `Возможный шум сенсора · ${direction} ${Math.abs(artifact.dv).toFixed(1)} ммоль/л за ${artifact.dsec} с`
-                )
-            );
-        }
     }
 
     if (future && hoverTime <= tail.to.t) {
@@ -2469,6 +2451,26 @@ function showTip(clientX) {
                 tipRow(
                     SERIES.profile,
                     `Обычно ${formatMmol(slot[1])} · ${formatMmol(slot[0])}–${formatMmol(slot[2])} ${SERIES.profile.unit}`
+                )
+            );
+        }
+    }
+
+    // Кольцо — после «Обычно», перед событиями журнала: оговорка к измерению
+    // выше, а не запись в дорожке. Допуск уже, чем у lane-событий (900с):
+    // метка стоит на своём замере, секунда в секунду с точностью до шага
+    // записи, и получасовой люфт nearestPoint приписал бы её соседней точке
+    // через полчаса тишины.
+    if (point && !future && !gap) {
+        const artifact = (geometry.artifacts || []).find(
+            (item) => Math.abs(item.t - point[0]) <= 150
+        );
+        if (artifact) {
+            const direction = artifact.dv > 0 ? "рост" : "падение";
+            rows.push(
+                tipRow(
+                    SERIES.artifact,
+                    `Возможный шум сенсора · ${direction} ${Math.abs(artifact.dv).toFixed(1)} ммоль/л за ${artifact.dsec} с`
                 )
             );
         }
