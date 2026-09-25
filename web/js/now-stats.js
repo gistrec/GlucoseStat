@@ -134,7 +134,7 @@ function renderNowEvents() {
     els.nowEvents.hidden = rows.length === 0;
 }
 
-function statCard(label, value, hint, compare) {
+export function statCard(label, value, hint, compare) {
     const card = document.createElement("div");
     card.className = "stat";
 
