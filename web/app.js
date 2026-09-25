@@ -3,6 +3,7 @@
 
 import { state, MEALS_PAGE } from "./js/state.js";
 import { els, readColor, readNumber } from "./js/dom.js";
+import { THEMES, THEME_BG, initialTheme, rememberTheme, storedTheme } from "./js/theme.js";
 import {
     MGDL_PER_MMOL,
     TIMEZONE,
@@ -200,47 +201,6 @@ const SERIES = {
 };
 
 /* ── Тема ──────────────────────────────────────────────────────────── */
-
-/* Два состояния. Системную тему кнопка не предлагает — она лишь берётся при
-   первом заходе, пока выбор не сделан. */
-const THEMES = [
-    { id: "light", glyph: "☀", label: "Светлая", next: "тёмную" },
-    { id: "dark", glyph: "☾", label: "Тёмная", next: "светлую" },
-];
-
-// Те же значения, что у --bg в style.css: сюда попадает цвет панели Safari.
-const THEME_BG = { light: "#f4f5f9", dark: "#07070b" };
-
-function systemPrefersDark() {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches;
-}
-
-/* Хранилище недоступно в приватном режиме Safari, и обращение к нему там
-   бросает исключение. Тема — не та вещь, ради которой страница вправе не
-   открыться, поэтому оба обращения обёрнуты. */
-function storedTheme() {
-    try {
-        const saved = localStorage.getItem("theme");
-        return THEMES.some((item) => item.id === saved) ? saved : null;
-    } catch (error) {
-        return null;
-    }
-}
-
-/* Пока выбор не сделан, страница открывается в системной теме: попасть на
-   белый экран ночью только потому, что настройка ещё не тронута, — плохое
-   первое впечатление. После первого нажатия решает кнопка. */
-function initialTheme() {
-    return storedTheme() || (systemPrefersDark() ? "dark" : "light");
-}
-
-function rememberTheme(id) {
-    try {
-        localStorage.setItem("theme", id);
-    } catch (error) {
-        /* Забудется после закрытия вкладки — не повод ломать переключение. */
-    }
-}
 
 function applyTheme(id) {
     const current = THEMES.find((item) => item.id === id) || THEMES[1];
