@@ -141,6 +141,63 @@ def journal_since(start: datetime) -> list[tuple[datetime, str, float | None, fl
     ]
 
 
+def fingersticks_since(start: datetime) -> list[tuple[datetime, float]]:
+    """Замеры глюкометром не раньше ``start``, старые первыми, в мг/дл.
+
+    Отдельным запросом от ``journal_since``, а не пятым полем в его кортеже —
+    по той же причине, по какой отдельно живут ``meal_origins_since``: журнал
+    читают разбор, ночные сводки и дорожки событий, и расширение его кортежа
+    задевало бы всех троих ради ряда, который нужен одному графику.
+
+    Возвращает пустой список, если таблицы или колонки нет: журнал заводит
+    бот, и кривая глюкозы не должна пропадать со страницы оттого, что на той
+    стороне ещё не выложили версию с этой колонкой.
+    """
+
+    try:
+        with session() as db:
+            rows = db.execute(
+                select(journal_entries.c.occurred_at, journal_entries.c.mgdl)
+                .where(journal_entries.c.kind == "fingerstick")
+                .where(journal_entries.c.mgdl.is_not(None))
+                .where(journal_entries.c.occurred_at >= start)
+                .order_by(journal_entries.c.occurred_at)
+            ).all()
+    except SQLAlchemyError as error:
+        log.warning("fingersticks unavailable, publishing without them: %s", error)
+        return []
+
+    return [(row.occurred_at, float(row.mgdl)) for row in rows]
+
+
+def latest_fingerstick() -> tuple[datetime, float] | None:
+    """Самая свежая сверка глюкометром, наивным UTC и в мг/дл. ``None`` — нет.
+
+    Без окна: свежесть — правило тревоги, и живёт она в ``notify`` рядом с
+    порогами, которые эта сверка снимает. Здесь окно было бы вторым числом про
+    то же самое, и однажды разъехалось бы с первым — причём в сторону молчания,
+    которую по логам не видно.
+
+    Одна строка и без фильтра по пользователю, как и весь журнал здесь: сенсор
+    один, и кровь сверяют с ним же.
+    """
+
+    try:
+        with session() as db:
+            row = db.execute(
+                select(journal_entries.c.occurred_at, journal_entries.c.mgdl)
+                .where(journal_entries.c.kind == "fingerstick")
+                .where(journal_entries.c.mgdl.is_not(None))
+                .order_by(journal_entries.c.occurred_at.desc())
+                .limit(1)
+            ).one_or_none()
+    except SQLAlchemyError as error:
+        log.warning("latest fingerstick unavailable, alerting without it: %s", error)
+        return None
+
+    return None if row is None else (row.occurred_at, float(row.mgdl))
+
+
 def meal_origins_since(start: datetime) -> dict[datetime, list[dict]]:
     """Чем подтверждено число углеводов у каждой записи еды, по её метке.
 

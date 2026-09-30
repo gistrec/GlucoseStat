@@ -584,6 +584,7 @@ class TestPublishWindow:
         monkeypatch.setattr("publish.readings_since", spy)
         monkeypatch.setattr("publish.journal_since", lambda since: [])
         monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
+        monkeypatch.setattr("publish.fingersticks_since", lambda since: [])
         monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
 
         publish(path=str(tmp_path / "data.json"), last_success=1.0)
@@ -701,6 +702,55 @@ class TestEvents:
         assert events["meals"] == [[unix(BASE - timedelta(hours=40)), 45.0]]
 
 
+class TestSugars:
+    """Сверки глюкометром — точки поверх кривой, а не ряд и не дорожка.
+
+    В сам ряд сенсора они не подмешиваются: по нему считаются время в
+    диапазоне, AGP и ночные сводки, и смесь крови с межклеточной жидкостью
+    сделала бы все три числа неправдой.
+    """
+
+    def moment(self, seconds_ago: int):
+        return BASE - timedelta(seconds=seconds_ago)
+
+    def test_a_reading_becomes_a_point(self):
+        snapshot = build_snapshot(
+            [], [], BASE, fingersticks=[(self.moment(600), 93.7)]
+        )
+
+        assert snapshot["sugars"] == [{"t": unix(self.moment(600)), "mgdl": 93.7}]
+
+    def test_the_sensor_series_stays_untouched(self):
+        """Главное свойство: сверка нигде не становится замером. Иначе провал,
+        проверенный глюкометром, исчезал бы и из статистики тоже — а он был,
+        просто мерил межклеточную жидкость под прижатым сенсором."""
+
+        readings = [(BASE - timedelta(minutes=step), 60.0) for step in range(30, 0, -1)]
+        snapshot = build_snapshot(
+            readings, [], BASE, fingersticks=[(self.moment(600), 93.7)]
+        )
+
+        assert snapshot["stats"]["day"]["count"] == len(readings)
+        assert snapshot["stats"]["day"]["max"] == 60.0
+        assert all(point[1] == 60 for point in snapshot["series"]["day"]["points"])
+
+    def test_an_older_reading_is_out_of_the_window(self):
+        """Окно то же, что у событий: сверки рисуются на тех же почасовых
+        панелях, и своя константа разъехалась бы с ними при первой правке."""
+
+        snapshot = build_snapshot(
+            [], [], BASE, fingersticks=[(self.moment(3 * 24 * 3600), 93.7)]
+        )
+
+        assert snapshot["sugars"] == []
+
+    def test_no_readings_is_an_empty_list(self):
+        """Не отсутствующий ключ: страница читает ``snapshot.sugars`` и на
+        ``undefined`` падала бы там, где сверок просто нет."""
+
+        assert build_snapshot([], [], BASE)["sugars"] == []
+
+
 class TestJournalAbsent:
     """Дашборд обязан пережить отсутствие журнала.
 
@@ -720,6 +770,23 @@ class TestJournalAbsent:
         monkeypatch.setattr(connection, "_engine", lambda: empty)
 
         assert journal_since(BASE - timedelta(days=1)) == []
+
+    def test_missing_table_yields_no_sugars(self, monkeypatch):
+        """Та же терпимость у сверок, и она нужна ещё и в другом случае:
+        колонка ``mgdl`` появляется отдельным ALTER, и между выкладкой
+        коллектора и этим ALTER запрос обязан вернуть пустоту, а не уронить
+        страницу."""
+
+        from sqlalchemy import create_engine
+
+        from database import connection
+        from database.queries import fingersticks_since, latest_fingerstick
+
+        empty = create_engine("sqlite://")
+        monkeypatch.setattr(connection, "_engine", lambda: empty)
+
+        assert fingersticks_since(BASE - timedelta(days=1)) == []
+        assert latest_fingerstick() is None
 
 
 class TestGmi:
@@ -797,6 +864,7 @@ class TestLastSuccessSource:
         monkeypatch.setattr("publish.readings_since", lambda since: [])
         monkeypatch.setattr("publish.journal_since", lambda since: [])
         monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
+        monkeypatch.setattr("publish.fingersticks_since", lambda since: [])
         monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
 
     def test_the_database_wins_over_the_previous_snapshot(self, tmp_path, monkeypatch):
@@ -871,6 +939,7 @@ class TestPublishCarryForward:
         monkeypatch.setattr("publish.readings_since", lambda since: [])
         monkeypatch.setattr("publish.journal_since", lambda since: [])
         monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
+        monkeypatch.setattr("publish.fingersticks_since", lambda since: [])
         monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
         # Пустая база — то состояние, ради которого наследование и осталось.
         monkeypatch.setattr("publish.read_last_success", lambda: None)
@@ -890,6 +959,7 @@ class TestPublishCarryForward:
         monkeypatch.setattr("publish.readings_since", lambda since: [])
         monkeypatch.setattr("publish.journal_since", lambda since: [])
         monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
+        monkeypatch.setattr("publish.fingersticks_since", lambda since: [])
         monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
         monkeypatch.setattr("publish.read_last_success", lambda: None)
 

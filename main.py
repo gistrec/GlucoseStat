@@ -13,7 +13,12 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 from database.connection import init_schema
-from database.queries import last_readings, store_last_success, store_readings
+from database.queries import (
+    last_readings,
+    latest_fingerstick,
+    store_last_success,
+    store_readings,
+)
 from librelinkup import COOLDOWN_MAX, AuthError, LibreLinkUp, RateLimited
 from notify import Notifier
 from publish import publish
@@ -163,13 +168,24 @@ def run_once(
         latest = []
 
     if notifier:
+        # Сверка глюкометром — своим try и с None по умолчанию: она лежит в
+        # журнале, то есть в MySQL, а тревога от MySQL зависеть не должна. Не
+        # прочитали — значит сверки нет, и тревога поднимается как раньше. Это
+        # безопасная сторона отказа: молчать по причине «не смогли спросить»
+        # нельзя, а лишний звонок будит.
+        try:
+            verified = latest_fingerstick()
+        except Exception:
+            log.exception("failed to read the latest fingerstick")
+            verified = None
+
         # Тревога — по показаниям, только что скачанным у Abbott: гипогликемия,
         # которая уже в руках, не должна молчать из-за недоступной MySQL. Когда
         # опрос не удался или graph пуст, остаётся свежайшая строка базы — её
         # notify отсеет по возрасту, вместо того чтобы поднять тревогу по
         # позавчерашней гипогликемии.
         try:
-            notifier.check(fetched or latest)
+            notifier.check(fetched or latest, verified=verified)
         except Exception:
             log.exception("failed to check the alert thresholds")
 

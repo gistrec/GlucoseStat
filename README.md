@@ -119,6 +119,36 @@ stand somewhere.
 Only the 24- and 48-hour windows show them. A month holds a hundred marks,
 and they merge into a solid band that says nothing.
 
+## Fingersticks
+
+A `fingerstick` entry is a blood reading from a meter, logged in the bot with
+`/sugar 5,2`. It is not a lane and not a series: it measures the same quantity
+as the curve, in the same units, so it sits on the curve itself — a diamond at
+its own value, next to the sensor point it disagrees with. A second scale, or a
+lane of its own below, would break the one thing worth seeing, which is the gap
+between them.
+
+It never joins the sensor series. Time in range, AGP, the night summary and the
+meal review are all computed from the sensor alone: blood and interstitial
+fluid are different measurements, and averaging them would make all four
+numbers quietly untrue.
+
+The colour is zonal — the same `readingColor` the line uses, no sixth hue on
+the canvas. That is what makes the interesting case readable: on a compression
+low the sensor dives into red while the diamond stays blue at 5,3, and the
+disagreement reads before any number does. The hover names both sides and the
+difference, because two shapes five pixels apart cannot be subtracted by eye.
+
+The most recent one also stands as the first row beside the current value —
+`Глюкометр 5,3 · 12 мин назад`, above carbohydrates and insulin. It belongs
+there rather than among the journal rows: it is about the same quantity as the
+big number above it. That row is the point of the whole feature for anyone
+reading the page over the patient's shoulder — from the curve alone, a
+compression low and a real one look identical.
+
+Two days of them, like the other events, and the same two windows: on a month a
+diamond the size of a dip would lie about its own precision.
+
 ## Nights
 
 Night is the one stretch of the day nobody watches. A low at three in the
@@ -247,29 +277,87 @@ Copy `.env.example` to `.env` and fill it in:
 
 ## Alerts
 
-With Pushover configured, every poll checks the newest reading and sends a
-notification when it is low: below 70 mg/dL (3.9 mmol/L) at priority 1, which
-arrives even during quiet hours, and below 55 mg/dL (3.0 mmol/L) at priority 2,
-which Pushover keeps repeating every two minutes until it is acknowledged in
-the app.
+With Pushover configured, every poll checks the newest reading against four
+thresholds, two on each side:
 
-The same low arrives on every poll, so the collector remembers the episode in
-`.alerts.json` — in a file rather than in memory, because pm2 restarts the
+| Reading | Level | Priority |
+|---|---|---|
+| below 55 mg/dL (3,0 mmol/L) | critically low | 2 — repeats every two minutes until acknowledged |
+| below 70 mg/dL (3,9 mmol/L) | low | 1 — sounds during quiet hours |
+| above 180 mg/dL (10,0 mmol/L) | high | 1 |
+| above 288 mg/dL (16,0 mmol/L) | critically high | 2 |
+
+The comparisons are strict on both sides: exactly 3,9 is not yet low and
+exactly 10,0 is not yet high. 180 is not a number of its own — it is
+`TARGET_HIGH_MGDL` from `publish.py`, the line above which the page already
+colours the curve and counts time above target, so the alert fires exactly
+where the page already says "high".
+
+Each level names its own sound, so the direction is audible before the phone is
+out of a pocket: `falling` and `siren` below, `climb` and `spacealarm` above.
+
+The same reading arrives on every poll, so the collector remembers the episode
+in `.alerts.json` — in a file rather than in memory, because pm2 restarts the
 process on any failure and a forgotten episode means the phone buzzes again
 about a low it already reported. Within one episode it repeats at most every
-30 minutes, and it escalates immediately if a low turns critical. The episode
-closes only at 80 mg/dL, ten above the threshold: without that margin a reading
-hovering around 70 would open a new episode — and send a new alert — every
-other poll.
+30 minutes, and it escalates immediately if the level turns critical.
+
+An episode closes only ten past the threshold — at 80 mg/dL coming up, at 170
+coming down. Without that margin a reading hovering around the line would open
+a new episode, and send a new alert, every other poll. The margin is read from
+the side the episode opened on: 175 mg/dL ends a low episode and does not end a
+high one, though it is the same number.
+
+A reversal is a new episode, not a deepening. Coming out of a hypo and
+overshooting into a high is two events, and the second speaks at once instead
+of sitting out the repeat interval left over from the first — and its "high for
+40 minutes" counts from the turn, not from the start of the hypo.
 
 Readings older than 15 minutes never alert. Otherwise a restart would fire an
 alarm over last week's hypo, still sitting in the database as the latest row.
 
+### Silenced by blood
+
+A fingerstick logged in the last 15 minutes and recovered past the margin on
+the side the alert is firing from closes the episode: no alert, and the
+remembered state is cleared. The sensor measures interstitial fluid and lags
+blood — and if you roll onto it in your sleep it draws a low that never
+happened. A drop of blood in range means there is no low, whatever the sensor
+says, and this is the single case where an alert is cancelled by an outside
+fact rather than by another reading.
+
+The side matters, and getting it wrong would be worse than not checking at all:
+16,6 mmol/L in blood is certainly "not low", and a rule that only looked for
+"not low" would let that reading silence the high alert it confirms. So the
+check is directional — 80 mg/dL or above against a low, 170 or below against a
+high, the same `_recovered` the sensor closes episodes with.
+
+Three numbers guard it, and each of them fails toward alerting:
+
+* **80 mg/dL, not 70.** A meter reading 3,9 confirms a low at the line, it does
+  not refute one. It is the same recovery margin the episode already closes at,
+  and 170 mirrors it above.
+* **15 minutes.** Blood moves a couple of mmol/L in that time, after which the
+  check no longer says anything about now. The episode is *closed*, not frozen,
+  so the next poll after the check goes stale speaks up at once instead of
+  sitting out the 30-minute repeat: checked, quiet, asked again a quarter of an
+  hour later.
+* **Absent means alert.** The journal may not exist and MySQL may be down; the
+  lookup has its own `try` and yields `None`, and the alert then behaves
+  exactly as it did before. Staying silent because the collector could not ask
+  is the one failure that must not happen.
+
+A check below the threshold changes nothing — it confirms the low. The level of
+the alert is still decided by the sensor: blood decides whether to speak, not
+how loudly.
+
 Each level names its sound — `falling` for a low, `siren` for a critical one —
 instead of leaving it to whatever default tone the app happens to be set to,
-which also tells the two apart before the phone is out of a pocket. Neither
-gets past an iPhone's mute switch: Pushover holds no critical-alert
-entitlement, so a silenced phone stays silent, priority 2 included.
+which also tells the two apart before the phone is out of a pocket. Both get
+past an iPhone's mute switch: Pushover has held an Apple Critical Alerts
+entitlement since February 2020, though the bypass is a separate toggle per
+priority in the iOS app. Verified live on 14.09.2026 — with Critical Alerts
+enabled for High and Emergency, both ring through silent mode.
 
 This is an addition to the alarms of the Libre app, not a replacement: nothing
 fires while Abbott is unreachable, the sensor is off, or the collector is down.

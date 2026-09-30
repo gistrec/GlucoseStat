@@ -35,6 +35,11 @@ journal_entries = Table(
     Column("kind", String(16), nullable=False),
     Column("carbs_g", Numeric(6, 1)),
     Column("units", Numeric(5, 2)),
+    # Сахар по глюкометру, мг/дл — заполнен только у kind='fingerstick'. В тех
+    # же единицах, что и glucose_readings.mgdl: сверка рисуется на той же
+    # кривой и в том же масштабе, и переводить её отдельно значило бы однажды
+    # перевести дважды.
+    Column("mgdl", Numeric(5, 1)),
     Column("note", Text),
     Column("source", String(32)),
     # Ответ человека боту: насколько он верит числу углеводов, от 1 до 3. Пусто

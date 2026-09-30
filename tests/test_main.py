@@ -76,9 +76,11 @@ class FakeCollector:
 class RecordingNotifier:
     def __init__(self):
         self.seen = []
+        self.verified = []
 
-    def check(self, readings):
+    def check(self, readings, verified=None):
         self.seen.append(list(readings))
+        self.verified.append(verified)
 
 
 class TestRunOnce:
@@ -95,6 +97,7 @@ class TestRunOnce:
         monkeypatch.setattr("main.publish", lambda **kwargs: None)
         monkeypatch.setattr("main.stamp_freshness", lambda readings: None)
         monkeypatch.setattr("main.store_last_success", lambda when: None)
+        monkeypatch.setattr("main.latest_fingerstick", lambda: None)
 
     def test_db_outage_does_not_silence_the_alert(self, monkeypatch):
         def down(*args, **kwargs):
@@ -103,6 +106,9 @@ class TestRunOnce:
         self.quiet(monkeypatch)
         monkeypatch.setattr("main.store_readings", down)
         monkeypatch.setattr("main.last_readings", down)
+        # И сверку тоже: она лежит в той же лежащей базе. Тревога обязана
+        # дойти без неё, а не промолчать из-за того, что спросить не удалось.
+        monkeypatch.setattr("main.latest_fingerstick", down)
 
         low = [(BASE, 50.0)]
         notifier = RecordingNotifier()
@@ -110,6 +116,24 @@ class TestRunOnce:
         run_once(FakeCollector(low), notifier, 300, BACKOFF_MIN, None)
 
         assert notifier.seen == [low]
+        assert notifier.verified == [None]
+
+    def test_a_fingerstick_reaches_the_notifier(self, monkeypatch):
+        """Сверка читается из журнала и доезжает до тревоги. Решает по ней
+        ``notify.decide``, но не получив её, он и решать не станет."""
+
+        blood = (BASE, 95.0)
+        self.quiet(monkeypatch)
+        monkeypatch.setattr("main.store_readings", lambda readings: 0)
+        monkeypatch.setattr("main.last_readings", lambda n: [])
+        monkeypatch.setattr("main.latest_fingerstick", lambda: blood)
+
+        low = [(BASE, 50.0)]
+        notifier = RecordingNotifier()
+
+        run_once(FakeCollector(low), notifier, 300, BACKOFF_MIN, None)
+
+        assert notifier.verified == [blood]
 
     def test_failed_fetch_falls_back_to_the_database(self, monkeypatch):
         # Опрос не удался — тревога идёт по свежайшей строке базы, где

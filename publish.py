@@ -16,6 +16,7 @@ from itertools import pairwise
 from agp import day_profile
 from analysis import analyse
 from database.queries import (
+    fingersticks_since,
     journal_since,
     last_readings,
     meal_origins_since,
@@ -502,6 +503,31 @@ def _events(
     return lanes
 
 
+def _sugars(
+    fingersticks: list[tuple[datetime, float]], since: datetime
+) -> list[dict]:
+    """Замеры глюкометром как ``[{t, mgdl}]`` — точки поверх кривой.
+
+    Не ряд и не дорожка: это та же величина, что у кривой, в тех же единицах и
+    на той же оси, поэтому замер стоит на своём значении рядом с точкой
+    сенсора. Вторая шкала или своя дорожка внизу разорвали бы ровно ту связь,
+    ради которой замер и записывают: видно должно быть расхождение, а не два
+    числа по отдельности.
+
+    В сам ряд сенсора они при этом не подмешиваются: кривую рисует сенсор, и
+    время в диапазоне, AGP и ночные сводки считаются по ней одной.
+    """
+
+    return [
+        {
+            "t": int(moment.replace(tzinfo=timezone.utc).timestamp()),
+            "mgdl": round(mgdl, 1),
+        }
+        for moment, mgdl in fingersticks
+        if moment >= since
+    ]
+
+
 def build_snapshot(
     readings: list[tuple[datetime, float]],
     journal: list[tuple[datetime, str, float | None, float | None]],
@@ -509,6 +535,7 @@ def build_snapshot(
     last_success: float | None = None,
     latest: dict | None = None,
     origins: dict[datetime, list[dict]] | None = None,
+    fingersticks: list[tuple[datetime, float]] | None = None,
 ) -> dict:
     """Assemble the snapshot the page reads. Pure: no database, no clock.
 
@@ -587,6 +614,10 @@ def build_snapshot(
         # «ночная гипогликемия» обязаны означать одно число.
         "nights": night_summary(readings, journal, now, hypo_mgdl=TARGET_LOW_MGDL),
         "events": _events(journal, now - EVENT_WINDOW),
+        # Сверки глюкометром — по тому же окну, что события: рисуются они на тех
+        # же почасовых панелях, и своя константа для того же окна разъехалась бы
+        # с ними при первой же правке.
+        "sugars": _sugars(fingersticks or [], now - EVENT_WINDOW),
         # Эпизоды ниже нормы — тоже по своему окну, и тоже по сырью: прореженная
         # кривая не отвечает ни на «сколько раз», ни на «сколько минут».
         "lows": low_episodes(
@@ -682,6 +713,10 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
         now,
         last_success=last_success,
         origins=meal_origins_since(now - ANALYSIS_WINDOW),
+        # Своим окном, не окном разбора: сверки живут на графике, а не в
+        # разборе приёмов, и тащить их за две недели значило бы возить в
+        # снимке сотню точек, из которых страница покажет две.
+        fingersticks=fingersticks_since(now - EVENT_WINDOW),
         # Не из readings: последнее измерение может быть старше окна графиков,
         # и тогда странице нужно показать «данных нет с такого-то числа».
         # Сорок строк, а не десять: выборка обязана накрыть TREND_WINDOW при

@@ -36,6 +36,11 @@ export const COLUMN_WIDTH = 7;
 // стоит между столбиками и не должна теряться рядом с ними.
 export const MARK_RADIUS = 3.5;
 
+// Полудиагональ ромба сверки. Заметно крупнее кружка смены ручки: тот стоит в
+// пустой дорожке, а ромб спорит за внимание с самой кривой и с кольцом шума
+// вокруг неё — и обязан читаться как отдельная фигура, а не как утолщение линии.
+export const SUGAR_RADIUS = 5;
+
 // Просвет между соседними подписями на дорожке. Впритык поставленные числа
 // читаются как одно: «45» и «60» в паре пикселей друг от друга — это «4560».
 export const LABEL_GAP = 4;
@@ -55,7 +60,7 @@ export const BOX_ALPHA = 0.45;
 /* Что «видно» на графике, словами: сам холст для скринридера пуст, а
    пересказывать сотни точек бессмысленно — нужен итог. Числа окна — из
    stats, то есть по сырым замерам, а не по нарисованной сводке. */
-export function chartDescription(daily, hasData, tail, gaps, artifacts) {
+export function chartDescription(daily, hasData, tail, gaps, artifacts, sugars) {
     const period = RANGE_LABELS[state.activeRange];
     if (!hasData) return `График глюкозы за ${period}: данных нет`;
 
@@ -98,7 +103,16 @@ export function chartDescription(daily, hasData, tail, gaps, artifacts) {
         ? `. Возможных скачков шума сенсора: ${artifacts.length}`
         : "";
 
-    return `График глюкозы за ${period}: ${summary}${forecast}${silence}${noise}`;
+    /* Сверки — не количеством, а значениями: их считанные штуки, и вопрос к
+       ним другой. «Возможных скачков: 3» отвечает на «стоит ли доверять
+       кривой», а сверку читают ради самого числа — сколько было по крови там,
+       где сенсор показал своё. Перечислить три числа на слух можно, и без них
+       строка сказала бы, что сверка есть, не сказав главного. */
+    const verified = (sugars || []).length
+        ? `. По глюкометру: ${sugars.map((sugar) => formatMmol(sugar.mgdl)).join(", ")} ммоль/л`
+        : "";
+
+    return `График глюкозы за ${period}: ${summary}${forecast}${silence}${noise}${verified}`;
 }
 
 /* Принимает готовые значения в ммоль/л, а не точки: у ломаной это сами замеры,
@@ -454,13 +468,17 @@ export function drawChart() {
     const tail = daily ? null : forecastTail();
     const gaps = daily ? [] : seriesGaps(series, points, tail);
     const artifacts = daily ? [] : seriesArtifacts();
+    const sugars = daily ? [] : seriesSugars();
 
     // Один предикат «есть ли что рисовать» на оба ранних выхода: у дневного
     // вида points не существует вовсе, и points.length здесь бы падал.
     const hasData = daily ? days.some((day) => day.count > 0) : points.length > 0;
 
     els.chartEmpty.hidden = hasData;
-    els.canvas.setAttribute("aria-label", chartDescription(daily, hasData, tail, gaps, artifacts));
+    els.canvas.setAttribute(
+        "aria-label",
+        chartDescription(daily, hasData, tail, gaps, artifacts, sugars)
+    );
 
     const canvas = els.canvas;
     // Холст растёт вместе с дорожками. Подписи оси обязаны остаться внутри:
@@ -534,7 +552,10 @@ export function drawChart() {
         );
 
     const legendItems = [];
-    if (!daily && (lanes.length || runs.length || tail || lowsShown || gaps.length || artifacts.length)) {
+    if (
+        !daily &&
+        (lanes.length || runs.length || tail || lowsShown || gaps.length || artifacts.length || sugars.length)
+    ) {
         legendItems.push({ ...SERIES.glucose, line: true });
         // «Обычно» — сразу за измерением: коридор, с которым его сравнивают,
         // а не отметка на самой кривой, как всё, что ниже.
@@ -567,6 +588,12 @@ export function drawChart() {
         // оговоркой к числу, а не новый ряд.
         if (artifacts.length) {
             legendItems.push(SERIES.artifact);
+        }
+        // Сверка — последней из знаков о кривой и перед журналом: она про то же
+        // измерение, но приходит не из журнала событий, а из другого прибора, и
+        // между «шум сенсора» и «углеводы» ей место ровно посередине.
+        if (sugars.length) {
+            legendItems.push(SERIES.sugar);
         }
         for (const kind of [SERIES.meal, SERIES.insulin, SERIES.basal]) {
             if (lanes.some((lane) => lane.bars.some((bar) => bar.series === kind))) {
@@ -724,6 +751,11 @@ export function drawChart() {
         // Кольца — последними из всего, что стоит на кривой: пометка обязана
         // быть видна поверх любой зоны и поверх отрезка гипогликемии под ней.
         drawArtifacts(ctx, artifacts, x, y);
+        // А ромбы — поверх колец: сверка и кольцо встречаются на одном провале
+        // чаще всего (компрессию и помечают, и проверяют глюкометром), и из
+        // двух фигур верхней обязана быть та, которая отвечает на вопрос, а не
+        // та, которая его задаёт.
+        drawSugars(ctx, sugars, x, y);
     }
 
     // Дорожки событий — под графиком, над подписями оси.
@@ -764,6 +796,10 @@ export function drawChart() {
         // Кольца — тоже наведению: подсказка обязана назвать причину пометки
         // рядом со значением, а не заставлять гадать по одному лишь кольцу.
         artifacts,
+        // Сверки — тоже наведению: ромб называет прибор и число, но расхождение
+        // с сенсором считает подсказка, а на глаз его по двум фигурам в пяти
+        // пикселях друг от друга не прочитать.
+        sugars,
         x,
         y,
         startTime,
@@ -918,6 +954,19 @@ export function seriesArtifacts() {
     return state.snapshot.artifacts.filter((artifact) => artifact.t >= startTime);
 }
 
+/* Сверки глюкометром — на обоих почасовых окнах, не только на суточном.
+   Кольца шума страница оставила суточному виду как редкую деталь, но у сверки
+   задача другая: её записывают, чтобы объяснить конкретный провал, и на окне
+   «а что было ровно сутки назад» она обязана стоять рядом с ним. Их считанные
+   штуки в сутки — в полосу они не сливаются. На месячном и недельном окне
+   ромб размером с провал соврал бы о точности, поэтому там их нет вовсе. */
+export function seriesSugars() {
+    if (!HOURLY_RANGES.has(state.activeRange) || !state.snapshot.sugars) return [];
+
+    const startTime = state.snapshot.generated_at - SPAN_SECONDS[state.activeRange];
+    return state.snapshot.sugars.filter((sugar) => sugar.t >= startTime);
+}
+
 // Полоса уже двух пикселей не читается как полоса, а разрыв в четверть часа на
 // двухсуточном окне занимает как раз около того.
 export const GAP_MIN_WIDTH = 2;
@@ -1047,6 +1096,44 @@ export function drawArtifacts(ctx, artifacts, x, y) {
         ctx.beginPath();
         ctx.arc(cx, cy, 7, 0, Math.PI * 2);
         ctx.stroke();
+    }
+    ctx.restore();
+}
+
+/* Ромб на своём значении, с просветом под ним. Просвет — обводка цветом фона
+   панели, а не тёмная линия: сверка садится вплотную к кривой, и без него две
+   фигуры одного зонного цвета слипаются в одно пятно ровно там, где важно
+   видеть, что это два разных измерения.
+
+   Ромб, а не круг: круг на этом холсте уже занят — метка смены ручки и кольцо
+   возможного шума. Форма здесь несёт смысл наравне с цветом, и третий круг
+   заставлял бы различать их одним диаметром.
+
+   Цвет — по зоне, той же ``readingColor``, какой красится кривая: сверка 5,2
+   остаётся синей над красным провалом сенсора, и расхождение видно до того,
+   как навели курсор. */
+export function drawSugars(ctx, sugars, x, y) {
+    if (!sugars.length) return;
+
+    const panel = readColor("--panel", "#0d0d14");
+
+    ctx.save();
+    for (const sugar of sugars) {
+        const cx = x(sugar.t);
+        const cy = y(toMmol(sugar.mgdl));
+
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - SUGAR_RADIUS);
+        ctx.lineTo(cx + SUGAR_RADIUS, cy);
+        ctx.lineTo(cx, cy + SUGAR_RADIUS);
+        ctx.lineTo(cx - SUGAR_RADIUS, cy);
+        ctx.closePath();
+
+        ctx.strokeStyle = panel;
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+        ctx.fillStyle = readingColor(sugar.mgdl);
+        ctx.fill();
     }
     ctx.restore();
 }
@@ -1421,6 +1508,13 @@ export function tipRow(series, text) {
     if (series.marker) {
         key.style.borderRadius = "50%";
     }
+    // А сверка глюкометром — ромбом, тоже как в легенде и как на холсте.
+    // После marker, а не вместо: круглый радиус выше надо переопределить, и
+    // список условий здесь читается порядком, как в CSS.
+    if (series.diamond) {
+        key.style.borderRadius = "2px";
+        key.style.transform = "rotate(45deg) scale(0.82)";
+    }
 
     const label = document.createElement("span");
     label.textContent = text;
@@ -1505,6 +1599,35 @@ export function showTip(clientX) {
                 )
             );
         }
+    }
+
+    /* Сверка глюкометром — после оговорки о шуме и перед журналом, тем же
+       порядком, что в легенде.
+
+       Допуск как у событий дорожек (900 с), а не как у кольца (150 с): кольцо
+       стоит на самом замере сенсора, секунда в секунду, а сверку человек
+       датирует руками — кнопками «±15 мин» под записью в боте. К тому же ромб
+       шириной в десяток пикселей нужно ещё поймать курсором, и получас на
+       суточном окне — это как раз его ширина.
+
+       Расхождение с сенсором считается здесь, а не читается с холста: две
+       фигуры в пяти пикселях друг от друга глазом не вычитаются, а весь смысл
+       записи ровно в этой разнице. Сенсор берётся по времени самой сверки, не
+       по положению курсора: иначе «расхождение» мерялось бы от той точки
+       кривой, на которую случайно навели. */
+    for (const sugar of state.geometry.sugars || []) {
+        if (Math.abs(sugar.t - state.hoverTime) > 900) continue;
+
+        let text = `Глюкометр ${formatMmol(sugar.mgdl)} ${SERIES.sugar.unit}`;
+        const sensor = nearestPoint(sugar.t);
+        if (sensor) {
+            const delta = toMmol(sugar.mgdl) - toMmol(sensor[1]);
+            // Знак ставится явно и у роста: «+1,7» и «1,7» рядом с числом
+            // читаются по-разному, а второе путается с самим значением.
+            const sign = delta > 0 ? "+" : delta < 0 ? "−" : "";
+            text += `, сенсор ${formatMmol(sensor[1])} (${sign}${Math.abs(delta).toFixed(1)})`;
+        }
+        rows.push(tipRow(SERIES.sugar, text));
     }
 
     // Событие в пределах четверти часа от курсора: столбик и точка кривой

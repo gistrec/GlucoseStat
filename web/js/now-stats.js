@@ -61,6 +61,15 @@ export function renderNow() {
    что уже сказано единицей, а колонка узкая. Еда осталась «Углеводами» —
    99,3 г это углеводы, а не вес тарелки, и «Еда» на этом месте врёт. */
 const NOW_EVENTS = [
+    /* Сверка глюкометром — первой строкой, до еды и уколов. Она про ту же
+       величину, что большое число выше, а не про журнал: прочитав «3,1»
+       красным, человек первым делом спрашивает, мерили ли по крови, — и ответ
+       обязан стоять там, где задан вопрос, а не под графиком.
+
+       Ради этого вся затея и нужна: провал бывает компрессионным, и тот, кто
+       смотрит на страницу со стороны, по одной кривой этого не отличит. Строка
+       «Глюкометр 5,2 · 12 мин назад» отличает. */
+    { lane: "sugars", series: SERIES.sugar, label: "Глюкометр", unit: "ммоль/л", format: formatMmol },
     { lane: "meals", series: SERIES.meal, label: "Углеводы", unit: "г" },
     { lane: "bolus", series: SERIES.insulin, label: "Короткий", unit: "ед" },
     { lane: "basal", series: SERIES.basal, label: "Длинный", unit: "ед" },
@@ -77,6 +86,19 @@ function lastEvent(lane) {
 
     const [seconds, amount] = entries[entries.length - 1];
     return { t: seconds, amount };
+}
+
+/* Сверки лежат отдельно от дорожек событий и другой формой — объектами, а не
+   парами: они рисуются на самой кривой, в её единицах и на её оси, а не
+   столбиком в дорожке (см. _sugars в publish.py). Отсюда своя функция вместо
+   ветки в lastEvent: величина остаётся в мг/дл, как в снимке, и переводит её
+   формат строки. */
+function lastSugar() {
+    const sugars = state.snapshot.sugars || [];
+    if (!sugars.length) return null;
+
+    const last = sugars[sugars.length - 1];
+    return { t: last.t, amount: last.mgdl };
 }
 
 /* Приём, записанный в несколько заходов, — одна еда, как и в таблице разбора:
@@ -108,7 +130,10 @@ function nowEventRow(kind, event) {
 
     const value = document.createElement("span");
     value.className = "now__event-value";
-    value.textContent = formatAmount(event.amount);
+    // Формат — у ряда, а не общий: углеводы и единицы округляет formatAmount,
+    // а сахар лежит в мг/дл и читается в ммоль/л теми же десятыми, какими
+    // подписаны число в шапке и кривая под ним.
+    value.textContent = (kind.format || formatAmount)(event.amount);
 
     const unit = document.createElement("span");
     unit.className = "now__event-unit";
@@ -123,9 +148,10 @@ function nowEventRow(kind, event) {
 }
 
 function renderNowEvents() {
+    const LAST = { meals: lastMeal, sugars: lastSugar };
     const rows = NOW_EVENTS.map((kind) => [
         kind,
-        kind.lane === "meals" ? lastMeal() : lastEvent(kind.lane),
+        (LAST[kind.lane] || (() => lastEvent(kind.lane)))(),
     ]).filter(([, event]) => event);
 
     // Строки «Длинный — нет данных» нет: она занимает место, не сообщая

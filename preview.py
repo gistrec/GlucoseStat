@@ -40,6 +40,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(BASE_DIR, "web")
 ASSETS = ("index.html", "app.js", "style.css", "favicon.svg", "apple-touch-icon.png")
 
+#: Каталоги, которые копируются целиком. ``app.js`` — точка входа, а сама
+#: страница живёт в модулях ``web/js/``, и перечислять их поимённо в ASSETS
+#: значило бы заводить второй список файлов: добавленный модуль просто не
+#: доехал бы до превью, страница отдала бы 404 на импорт и осталась бы пустой
+#: ниже шапки — молча, без единой ошибки в выводе снимающей команды.
+ASSET_DIRS = ("js",)
+
 DEFAULT_PORT = 8765
 
 # Распорядок дня, по которому строится синтетика: час, минута, углеводы, единицы.
@@ -204,6 +211,34 @@ def synthetic_snapshot(now: datetime | None = None) -> dict:
 
     journal.sort()
 
+    # Сверки глюкометром: две в окне двух суток, и обе — в тот случай, ради
+    # которого их и записывают.
+    #
+    # Места выбираются по самой кривой, а не по «столько-то часов назад»:
+    # синтетика каждый прогон другая, и фиксированный час однажды попадает на
+    # ровный участок, где обе сверки выглядят одинаково и холст перестаёт
+    # проверять то, ради чего они здесь.
+    #
+    # Первая садится на самый глубокий провал окна и стоит в норме: это и есть
+    # компрессия — сенсор ушёл в красное, потому что на него легли, а кровь
+    # цела. На холсте её видно цветом до всякого числа, синий ромб над красной
+    # линией. Вторая совпадает с кривой на ровном участке: без неё не проверить,
+    # что сошедшаяся сверка не рисуется расхождением.
+    window = [item for item in readings if item[0] >= now - timedelta(days=2)]
+
+    fingersticks = []
+    if window:
+        dip = min(window, key=lambda item: item[1])
+        # 95 мг/дл — 5,3 ммоль/л: заведомо выше границы снятия тревоги (80) и
+        # заведомо в зоне «в диапазоне», то есть ромб точно окажется синим.
+        fingersticks.append((dip[0], 95.0))
+
+        flat = min(window, key=lambda item: abs(item[1] - 140.0))
+        if flat[0] != dip[0]:
+            fingersticks.append((flat[0], round(flat[1] - 2.0, 1)))
+
+    fingersticks.sort()
+
     # Снимок собирает publish, а не этот файл. Своя сборка молча расходилась бы
     # с боевой при каждом новом ключе — так превью и проглядело gmi.
     return build_snapshot(
@@ -212,6 +247,7 @@ def synthetic_snapshot(now: datetime | None = None) -> dict:
         now,
         last_success=now.replace(tzinfo=timezone.utc).timestamp(),
         origins=origins,
+        fingersticks=fingersticks,
     )
 
 
@@ -223,6 +259,11 @@ def build_site(target: str, snapshot: dict) -> None:
         source = os.path.join(WEB_DIR, name)
         if os.path.exists(source):
             shutil.copy(source, os.path.join(target, name))
+
+    for name in ASSET_DIRS:
+        source = os.path.join(WEB_DIR, name)
+        if os.path.isdir(source):
+            shutil.copytree(source, os.path.join(target, name), dirs_exist_ok=True)
 
     with open(os.path.join(target, "data.json"), "w", encoding="utf-8") as handle:
         json.dump(snapshot, handle, separators=(",", ":"), ensure_ascii=False)
