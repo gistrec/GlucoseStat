@@ -64,8 +64,11 @@ class TestStampFreshness:
 class FakeCollector:
     """poll() отдаёт заготовку или бросает её, если это исключение."""
 
-    def __init__(self, result):
+    def __init__(self, result, sensor=None):
         self._result = result
+        # Как у настоящего сборщика: дата установки сенсора лежит на объекте
+        # и остаётся None, пока Abbott её не назвал.
+        self.sensor = sensor
 
     def poll(self):
         if isinstance(self._result, Exception):

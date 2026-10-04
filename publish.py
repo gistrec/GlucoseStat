@@ -21,9 +21,11 @@ from database.queries import (
     last_readings,
     meal_origins_since,
     read_last_success,
+    read_sensor_start,
     readings_since,
 )
 from daytime import DISPLAY_TZ, _covered, _weigh, _weighted_percentile, _zone
+from librelinkup import SENSOR_LIFETIME_DAYS
 from lows import high_episodes, low_episodes
 from nights import night_summary
 
@@ -120,6 +122,12 @@ EPISODE_WINDOW = timedelta(days=7)
 # в которых нечего подписывать.
 GAP_WINDOW = timedelta(days=2)
 
+# Полнота данных считается за неделю — ровно столько живёт половина сенсора,
+# и за этот срок видно, пропадает он системно или один раз не выгрузился.
+# Окно не то же, что у полос на графике (GAP_WINDOW): там вопрос «почему тут
+# дырка в кривой», здесь — «можно ли верить статистике за неделю».
+SENSOR_WINDOW = timedelta(days=7)
+
 # Разрыв, после которого соединять замеры линией уже нельзя. Libre отдаёт точку
 # раз в пять минут: один пропуск — обычная задержка выгрузки, три подряд
 # означают, что сенсора на месте не было. Тем же порогом страница рвёт кривую
@@ -199,6 +207,74 @@ def _gaps(readings: list[tuple[datetime, float]], since: datetime) -> list[dict]
         )
 
     return gaps
+
+
+def _sensor(
+    started: datetime | None, readings: list[tuple[datetime, float]], now: datetime
+) -> dict:
+    """Сенсор: когда надет, когда кончится и сколько данных от него дошло.
+
+    Срок жизни — свойство прибора, а не настройка, поэтому считается здесь, а
+    не на странице: ``ends`` публикуется готовой отметкой, и переписать её под
+    другой сенсор можно будет в одном месте. Сколько дней осталось, страница
+    считает сама — по своим часам, иначе число протухало бы между перестройками
+    снимка и к утру показывало бы вчерашнее.
+
+    ``started`` приходит из базы, куда его кладёт сборщик (см. ``store_sensor_
+    start``). Его может не быть: у рендерера на реплике таблицы может не быть
+    вовсе, а Abbott присылает блок сенсора не в каждом ответе. Тогда половина
+    карточки про срок молчит, а половина про полноту данных остаётся — она
+    считается по самим показаниям и ни от чего внешнего не зависит.
+
+    Полнота — доля окна, покрытая показаниями. Не доля ожидаемых замеров:
+    шаг выгрузки у Libre плавает между минутой и пятью, и «пришло 1823 из
+    2016» говорило бы больше о частоте опроса, чем о том, были ли данные.
+    """
+
+    window_start = now - SENSOR_WINDOW
+    silence = SENSOR_SILENCE.total_seconds()
+
+    # Промежутки, в которые данных не было: между замерами, до первого замера
+    # и после последнего. Последние два — такие же дыры, как середина: окно
+    # недели не становится полным оттого, что сенсор молчит прямо сейчас.
+    quiet: list[tuple[datetime, datetime]] = []
+    for (left, _), (right, _) in pairwise(readings):
+        if (right - left).total_seconds() > silence:
+            quiet.append((left, right))
+
+    if readings:
+        if readings[0][0] > window_start:
+            quiet.append((window_start, readings[0][0]))
+        if (now - readings[-1][0]).total_seconds() > silence:
+            quiet.append((readings[-1][0], now))
+    else:
+        quiet.append((window_start, now))
+
+    # Каждый промежуток обрезается окном: молчание, начавшееся девять дней
+    # назад, портит полноту недели ровно на ту часть, что попала в неделю.
+    silent_seconds = 0.0
+    count = 0
+    for left, right in quiet:
+        overlap = (min(right, now) - max(left, window_start)).total_seconds()
+        if overlap <= silence:
+            continue
+        silent_seconds += overlap
+        count += 1
+
+    total = SENSOR_WINDOW.total_seconds()
+    ends = started + timedelta(days=SENSOR_LIFETIME_DAYS) if started else None
+
+    return {
+        "started": int(started.replace(tzinfo=timezone.utc).timestamp())
+        if started
+        else None,
+        "ends": int(ends.replace(tzinfo=timezone.utc).timestamp()) if ends else None,
+        "lifetime_days": SENSOR_LIFETIME_DAYS,
+        "window_days": SENSOR_WINDOW.days,
+        "coverage": round(100 * (1 - silent_seconds / total), 1),
+        "quiet": count,
+        "quiet_minutes": round(silent_seconds / 60),
+    }
 
 
 def _artifacts(readings: list[tuple[datetime, float]], since: datetime) -> list[dict]:
@@ -538,6 +614,7 @@ def build_snapshot(
     latest: dict | None = None,
     origins: dict[datetime, list[dict]] | None = None,
     fingersticks: list[tuple[datetime, float]] | None = None,
+    sensor_started: datetime | None = None,
 ) -> dict:
     """Assemble the snapshot the page reads. Pure: no database, no clock.
 
@@ -634,6 +711,10 @@ def build_snapshot(
         # Молчание сенсора — тоже по сырью и тоже по своему окну: полосу
         # «нет сигнала» рисуют только почасовые панели.
         "gaps": _gaps(readings, now - GAP_WINDOW),
+        # Сам сенсор: сколько ему осталось и сколько данных от него дошло.
+        # Отметка установки приходит снаружи, как и last_success: снимок
+        # собирается без базы, иначе его не собрал бы preview.py.
+        "sensor": _sensor(sensor_started, readings, now),
         # Окно — суточной панели (RANGES["day"]), а не отдельная константа:
         # кольца рисует только она, и второго источника правды для этого
         # окна заводить незачем.
@@ -730,6 +811,9 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
         # минутном опросе, иначе точки старше 15 минут в ней нет, rate выходит
         # null — и страница молча гасит прогноз со стрелкой тренда.
         latest=_trend(last_readings(40)),
+        # Отметку пишет сборщик; на рендерере она приезжает репликацией. Нет
+        # её — карточка сенсора покажет только полноту данных.
+        sensor_started=read_sensor_start(),
     )
 
     directory = os.path.dirname(os.path.abspath(path))

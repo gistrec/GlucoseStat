@@ -248,6 +248,10 @@ def synthetic_snapshot(now: datetime | None = None) -> dict:
         last_success=now.replace(tzinfo=timezone.utc).timestamp(),
         origins=origins,
         fingersticks=fingersticks,
+        # Сенсор на девятые сутки: срок ещё не кончился, но полоса уже
+        # заметно прошла — состояние, в котором карточку видно чаще всего.
+        # Без этого превью показывало бы только «срок неизвестен».
+        sensor_started=now - timedelta(days=9),
     )
 
 

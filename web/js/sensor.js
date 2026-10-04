@@ -1,0 +1,149 @@
+import { state } from "./state.js";
+import { els } from "./dom.js";
+import { formatShortDay, formatSpan, percent, plural } from "./format.js";
+
+/* Карточка сенсора: сколько ему осталось и сколько данных от него дошло.
+
+   Две половины отвечают на два вопроса одного дня. Левая — «когда заказывать
+   следующий»: срок Libre 3 кончается на четырнадцатые сутки, и узнать об этом
+   от приложения в момент, когда сенсор уже замолчал, значит остаться без
+   данных на те сутки, пока едет новый. Правая — «можно ли верить числам
+   выше»: доля времени в целевом диапазоне, посчитанная по неделе с дырой в
+   сутки, выглядит ровно так же солидно, как честная.
+
+   Обе половины — про измерение, а не про сахар, поэтому стоят отдельной
+   секцией, а не плиткой среди статистики: там все числа отвечают на «что с
+   глюкозой», и «осталось 5 дней» читалось бы как ещё одно такое число.
+
+   Название прибора написано здесь, а не приходит из снимка: в ответе Abbott
+   рядом с датой установки лежит серийный номер, а страница публичная — см.
+   README. Модель и так названа в шапке страницы. */
+const SENSOR_NAME = "FreeStyle Libre 3";
+
+// За сколько дней до конца срок перестаёт быть справкой и становится
+// предупреждением. Сутки: столько едет замена, если заказать сегодня.
+const WARN_DAYS = 1;
+
+export function renderSensor() {
+    const sensor = state.snapshot.sensor;
+    if (!sensor) {
+        els.sensor.hidden = true;
+        return;
+    }
+
+    els.sensorCard.replaceChildren(lifeHalf(sensor), dataHalf(sensor));
+    els.sensor.hidden = false;
+}
+
+/* Левая половина: срок. Дни считаются по часам браузера, а не приходят из
+   снимка готовым числом: снимок перестраивается раз в минуту, но между двумя
+   перестройками страница живёт сама, и «осталось 0 дней», посчитанное вчера,
+   к утру было бы просто неправдой. */
+function lifeHalf(sensor) {
+    const half = document.createElement("div");
+    half.className = "sensor__half";
+
+    if (!sensor.started || !sensor.ends) {
+        // Дату установки знает только Abbott, и присылает он её не всегда.
+        // Пустая половина честнее выдуманной: полнота данных рядом считается
+        // по самим показаниям и остаётся верной.
+        half.append(
+            label(`Сенсор ${SENSOR_NAME}`),
+            value("Срок неизвестен", "muted"),
+            hint("Сборщик ещё не видел даты установки")
+        );
+        return half;
+    }
+
+    const ends = new Date(sensor.ends * 1000);
+    const started = new Date(sensor.started * 1000);
+    const leftMs = ends.getTime() - Date.now();
+    const days = Math.floor(leftMs / 86400000);
+    const expiring = leftMs <= 0 || days <= WARN_DAYS;
+
+    half.append(
+        label(`Сенсор ${SENSOR_NAME}`, `поставлен ${formatShortDay(started)}`),
+        value(leftText(leftMs, days, ends), expiring ? "warn" : null),
+        bar(sensor, started, ends, expiring)
+    );
+    return half;
+}
+
+/* Фраза о сроке. Три разных состояния, и каждое читается само по себе:
+   «0 дней осталось» в последние часы звучит как «уже всё», хотя сенсор ещё
+   работает, а у просроченного числа дней нет вовсе — есть дата. */
+function leftText(leftMs, days, ends) {
+    if (leftMs <= 0) return `Срок вышел ${formatShortDay(ends)}`;
+    if (days < 1) return `Осталось ${formatSpan(leftMs / 1000)}`;
+    return `${days} ${plural(days, "день", "дня", "дней")} осталось, до ${formatShortDay(ends)}`;
+}
+
+/* Полоса прожитого срока. Она дублирует число слева — и в этом смысл: число
+   отвечает на «сколько осталось», полоса на «много это или мало», а вместе
+   они отвечают без арифметики в уме. */
+function bar(sensor, started, ends, expiring) {
+    const track = document.createElement("div");
+    track.className = "sensor__track";
+
+    const total = ends.getTime() - started.getTime();
+    const lived = Math.min(Math.max(Date.now() - started.getTime(), 0), total);
+
+    const fill = document.createElement("div");
+    fill.className = expiring ? "sensor__fill sensor__fill--warn" : "sensor__fill";
+    fill.style.width = `${(100 * lived) / total}%`;
+
+    // Полоса — картинка числа, стоящего рядом, и для скринридера это повтор.
+    track.setAttribute("aria-hidden", "true");
+    track.append(fill);
+    return track;
+}
+
+/* Правая половина: полнота данных. Процент — главное число, разрывы под ним
+   объясняют, из чего он сложился: 97 % одной сутками длящейся дырой и 97 %
+   десятком пятиминутных — разные недели. */
+function dataHalf(sensor) {
+    const half = document.createElement("div");
+    half.className = "sensor__half";
+
+    half.append(
+        label(`Полнота данных за ${sensor.window_days} ${plural(sensor.window_days, "день", "дня", "дней")}`),
+        value(percent(sensor.coverage))
+    );
+
+    half.append(
+        hint(
+            sensor.quiet
+                ? `${sensor.quiet} ${plural(sensor.quiet, "разрыв", "разрыва", "разрывов")}, всего ${formatSpan(sensor.quiet_minutes * 60)}`
+                : "Без разрывов"
+        )
+    );
+    return half;
+}
+
+function label(text, aside) {
+    const element = document.createElement("p");
+    element.className = "sensor__label";
+    element.textContent = text;
+
+    if (aside) {
+        const extra = document.createElement("span");
+        extra.className = "sensor__aside";
+        extra.textContent = aside;
+        element.append(extra);
+    }
+    return element;
+}
+
+function value(text, kind) {
+    const element = document.createElement("p");
+    element.className = kind ? `sensor__value sensor__value--${kind}` : "sensor__value";
+    element.textContent = text;
+    return element;
+}
+
+function hint(text) {
+    const element = document.createElement("p");
+    element.className = "sensor__hint";
+    element.textContent = text;
+    return element;
+}

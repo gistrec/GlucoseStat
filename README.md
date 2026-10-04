@@ -72,6 +72,23 @@ all while the forecast tail is there, since that tail only exists beside a fresh
 reading. The weekly and monthly panels get no bands — an hour is three pixels
 wide there, with nothing to write in them.
 
+Below the statistics sits the sensor itself: how many days it has left, and how
+much of the last week it actually covered. The first is the question the page
+can answer before the app does — a Libre 3 lasts 14 days, and learning that from
+a sensor that has already stopped costs the day it takes a replacement to
+arrive. The activation moment comes from LibreLinkUp, in the same `graph`
+response as the readings, and the collector stores it in `collector_state` so
+the renderer on the replica publishes the same date; the days left are counted
+in the browser, since a number baked into a snapshot would be yesterday's by
+morning. The serial number sitting next to it in Abbott's payload is dropped
+where it is parsed. Abbott does not always send the block — then the card says
+the date is unknown rather than guessing one. The second half, data completeness,
+is counted from the readings alone: time in range over a week with a day-long
+hole in it looks exactly as solid as the honest kind, and the card is where the
+page admits the difference. Silence before the first reading and silence still
+running both count — a week does not become complete because the sensor is quiet
+right now.
+
 GMI is the one figure that ignores the selected period: it is always the
 estimated HbA1c over the last **14 days**, the window Bergenstal et al. (2018)
 calibrated the formula on. Tying it to the buttons would put two different

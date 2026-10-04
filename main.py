@@ -18,8 +18,9 @@ from database.queries import (
     latest_fingerstick,
     store_last_success,
     store_readings,
+    store_sensor_start,
 )
-from librelinkup import COOLDOWN_MAX, AuthError, LibreLinkUp, RateLimited
+from librelinkup import COOLDOWN_MAX, AuthError, LibreLinkUp, RateLimited, Sensor
 from notify import Notifier
 from publish import publish
 
@@ -95,6 +96,12 @@ class Collector:
         # а последним элементом обязан быть свежайший замер — по нему
         # поднимается тревога.
         return sorted((item.timestamp, item.mgdl) for item in readings)
+
+    @property
+    def sensor(self) -> Sensor | None:
+        """Сенсор из последнего ответа, если Abbott назвал дату установки."""
+
+        return self._client.sensor
 
 
 def stamp_freshness(
@@ -193,6 +200,17 @@ def run_once(
         stamp_freshness(latest)
     except Exception:
         log.exception("failed to stamp the freshness file")
+
+    # Дата установки сенсора — своим try и после показаний: страница без неё
+    # теряет одну карточку, а показания важнее. Пишется на каждом удачном
+    # опросе, как и отметка успеха: отслеживать «менялось ли» в памяти процесса
+    # значило бы потерять смену сенсора, случившуюся при перезапуске.
+    sensor = collector.sensor
+    if sensor is not None:
+        try:
+            store_sensor_start(sensor.started)
+        except Exception:
+            log.exception("failed to store the sensor start")
 
     # Своим try, а не внутри опроса: упавшая запись не должна выглядеть
     # неудачным опросом и включать backoff.

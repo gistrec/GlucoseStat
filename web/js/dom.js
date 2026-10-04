@@ -10,6 +10,8 @@ export const els = {
     chartEmpty: document.getElementById("chart-empty"),
     canvas: document.getElementById("canvas"),
     stats: document.getElementById("stats"),
+    sensor: document.getElementById("sensor"),
+    sensorCard: document.getElementById("sensor-card"),
     night: document.getElementById("night"),
     nightNote: document.getElementById("night-note"),
     nightStats: document.getElementById("night-stats"),

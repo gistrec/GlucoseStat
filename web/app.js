@@ -5,6 +5,7 @@ import { state, MEALS_PAGE } from "./js/state.js";
 import { els } from "./js/dom.js";
 import { THEMES, THEME_BG, initialTheme, rememberTheme, storedTheme } from "./js/theme.js";
 import { renderNow, renderStats } from "./js/now-stats.js";
+import { renderSensor } from "./js/sensor.js";
 import { renderNights } from "./js/nights.js";
 import { drawChart, hoverAt, clearHover } from "./js/chart.js";
 import { renderReview, overlayHoverAt, clearOverlayHover } from "./js/meals.js";
@@ -107,6 +108,9 @@ function render() {
     els.chart.hidden = false;
     drawChart();
     renderStats();
+    // Сразу под статистикой: срок сенсора и полнота данных от выбранного окна
+    // не зависят — это про сам прибор, а не про период.
+    renderSensor();
     // Ночи не зависят от выбранного окна графика: у них своё, названное в их
     // же подписи, — тот же уговор, что у разбора приёмов ниже.
     renderNights();

@@ -44,10 +44,10 @@ def store_readings(readings: list[tuple[datetime, float]]) -> int:
         return result.rowcount
 
 
-def store_last_success(when: datetime) -> None:
-    """Запомнить, когда сборщик последний раз достучался до LibreLinkUp."""
+def _store_mark(name: str, when: datetime) -> None:
+    """Записать отметку сборщика под именем ``name``."""
 
-    statement = insert(CollectorState).values(name="last_success", occurred_at=when)
+    statement = insert(CollectorState).values(name=name, occurred_at=when)
     statement = statement.on_duplicate_key_update(
         occurred_at=statement.inserted.occurred_at
     )
@@ -57,21 +57,48 @@ def store_last_success(when: datetime) -> None:
         db.commit()
 
 
-def read_last_success() -> datetime | None:
+def _read_mark(name: str) -> datetime | None:
     """Отметка сборщика, или None, если сказать нечего."""
 
     try:
         with session() as db:
             return db.execute(
-                select(CollectorState.occurred_at).where(
-                    CollectorState.name == "last_success"
-                )
+                select(CollectorState.occurred_at).where(CollectorState.name == name)
             ).scalar_one_or_none()
     except ProgrammingError:
         # Таблицы ещё нет: её создаёт init_schema() сборщика, а рендерер на
         # реплике и не может — там запись запрещена. Пусть публикация
         # наследует отметку из прежнего снимка, как делала до этой таблицы.
         return None
+
+
+def store_last_success(when: datetime) -> None:
+    """Запомнить, когда сборщик последний раз достучался до LibreLinkUp."""
+
+    _store_mark("last_success", when)
+
+
+def read_last_success() -> datetime | None:
+    """Отметка сборщика, или None, если сказать нечего."""
+
+    return _read_mark("last_success")
+
+
+# Сенсор и его дата установки — тоже состояние сборщика, а не отдельная
+# таблица: это одна отметка времени, которую пишет один процесс и читают
+# рендереры. Своя таблица ради одной строки потребовала бы миграции на обеих
+# машинах, а разницы в смысле между ней и «когда сборщик последний раз
+# достучался» нет никакой.
+def store_sensor_start(when: datetime) -> None:
+    """Запомнить, когда был установлен сенсор, передающий сейчас."""
+
+    _store_mark("sensor_started", when)
+
+
+def read_sensor_start() -> datetime | None:
+    """Момент установки сенсора, или None, если сборщик его не знает."""
+
+    return _read_mark("sensor_started")
 
 
 def readings_since(start: datetime) -> list[tuple[datetime, float]]:

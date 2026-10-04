@@ -16,7 +16,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 
@@ -72,10 +72,73 @@ class Reading:
     mgdl: float
 
 
+@dataclass(frozen=True)
+class Sensor:
+    """Когда надет сенсор, который сейчас передаёт.
+
+    Только момент установки. Серийный номер и идентификатор прибора лежат
+    в том же ответе и сюда не переносятся: они ничего не объясняют на
+    странице, а страница публичная.
+    """
+
+    started: datetime
+
+
+# Сколько сенсор живёт. Libre 3 — четырнадцать суток, и это свойство прибора,
+# а не настройка: Abbott сообщает момент установки, но не срок. Константа
+# одна на сборщик и на страницу — срок считает сборщик.
+SENSOR_LIFETIME_DAYS = 14
+
+# Самый старый момент установки, которому мы верим. Поле `a` приходит из
+# ответа Abbott, и подставленный в него мусор (ноль, миллисекунды вместо
+# секунд, дата из будущего) иначе превратился бы на странице в «осталось
+# −19000 дней». Вдвое больше срока жизни: сенсор, доживший до конца, ещё
+# сутки числится установленным, пока его не сняли.
+SENSOR_MAX_AGE_DAYS = SENSOR_LIFETIME_DAYS * 2
+
+
 def _parse_timestamp(value: str) -> datetime:
     """Parse Abbott's ``8/22/2026 12:32:02 AM`` into a naive datetime."""
 
     return datetime.strptime(value, "%m/%d/%Y %I:%M:%S %p")
+
+
+def _parse_sensor(raw: dict | None, now: datetime) -> Sensor | None:
+    """Момент установки из блока ``sensor`` ответа ``graph``.
+
+    Поле там одно на всю затею — ``a``, epoch в секундах. Остальное в блоке
+    либо идентифицирует прибор, либо описывает его состояние, и ни того ни
+    другого странице знать незачем.
+
+    ``None`` вместо исключения на любую неожиданность: срок жизни сенсора —
+    украшение страницы, и сборщик, падающий из-за формы необязательного поля,
+    стоил бы всех показаний разом. Отличить «поля нет» от «поле странное»
+    можно по журналу — вызывающий пишет туда предупреждение.
+    """
+
+    if not isinstance(raw, dict):
+        return None
+
+    activated = raw.get("a")
+    if not isinstance(activated, (int, float)) or isinstance(activated, bool):
+        return None
+
+    try:
+        # Наивный UTC, как timestamp у показаний: в MySQL эта отметка ляжет
+        # в тот же DATETIME без зоны, и смешивать два вида времени в одной
+        # базе значило бы однажды вычесть одно из другого.
+        started = datetime.fromtimestamp(float(activated), timezone.utc).replace(
+            tzinfo=None
+        )
+    except (OverflowError, OSError, ValueError):
+        return None
+
+    # Будущее и древность — одинаково не наши числа: и то и другое означает,
+    # что в `a` не epoch в секундах, а что-то ещё.
+    if started > now or (now - started).days > SENSOR_MAX_AGE_DAYS:
+        return None
+
+    return Sensor(started=started)
 
 
 class LibreLinkUp:
@@ -93,6 +156,14 @@ class LibreLinkUp:
         self._account_id_hash: str | None = None
         self._patient_id: str | None = None
         self._token_path = token_path
+        # Последний виденный сенсор. Живёт на клиенте, а не возвращается из
+        # readings(): показания нужны каждому вызывающему, а дата установки —
+        # одному, и второй элемент кортежа пришлось бы разбирать всем.
+        self.sensor: Sensor | None = None
+        # Жалуемся на отсутствующую дату один раз на процесс, а не раз в
+        # минуту: это не сбой, а свойство ответа, и в журнале оно должно
+        # прозвучать так же — однажды.
+        self._sensor_warned = False
 
     @property
     def region(self) -> str:
@@ -302,6 +373,27 @@ class LibreLinkUp:
 
         connection = data.get("connection") or {}
         entries = list(data.get("graphData") or [])
+
+        # Дата установки сенсора — из того же ответа, что и показания: своего
+        # запроса ради неё не делаем, лишний вызов к Abbott стоит дороже, чем
+        # строка на странице. Прошлое значение не затираем, если в этот раз
+        # его не оказалось: сенсор не переставал быть надетым оттого, что
+        # Abbott не положил блок в один ответ из ста.
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        sensor = _parse_sensor(connection.get("sensor"), now)
+        if sensor:
+            self.sensor = sensor
+        elif not self._sensor_warned:
+            self._sensor_warned = True
+            # Без значений: в блоке лежит серийный номер, а журнал читают
+            # глазами и пересылают. Имён полей хватает, чтобы понять, что
+            # Abbott переименовал или убрал.
+            raw = connection.get("sensor")
+            log.warning(
+                "LibreLinkUp did not report a usable sensor activation; "
+                "sensor block fields: %s",
+                sorted(raw) if isinstance(raw, dict) else type(raw).__name__,
+            )
 
         # graphData отстаёт от сенсора на несколько минут, а свежее значение
         # лежит отдельно — без него страница всегда показывала бы прошлое.

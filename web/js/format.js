@@ -131,6 +131,29 @@ export function formatCellDateTime(date) {
     });
 }
 
+/* Дата без года и без месяца словом: «20.09». Для карточки сенсора, где дат
+   две — поставлен и кончится — и стоят они в строке с числом дней: «20 сентября»
+   рядом с «5 дней осталось» растягивает строку втрое, а год в сроке, который
+   меряется двумя неделями, не значит ничего. */
+export function formatShortDay(date) {
+    return date.toLocaleDateString("ru-RU", {
+        timeZone: TIMEZONE,
+        day: "2-digit",
+        month: "2-digit",
+    });
+}
+
+/* Русское склонение при числе: 1 день, 2 дня, 5 дней. Нужно ровно там, где
+   число приходит из данных и может оказаться любым, — «осталось 1 дней»
+   выдаёт шаблон сильнее, чем любая опечатка. */
+export function plural(count, one, few, many) {
+    const abs = Math.abs(count) % 100;
+    const last = abs % 10;
+    if (abs > 10 && abs < 20) return many;
+    if (last > 1 && last < 5) return few;
+    return last === 1 ? one : many;
+}
+
 export function formatDay(date) {
     return date.toLocaleDateString("ru-RU", {
         timeZone: TIMEZONE,

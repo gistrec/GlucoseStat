@@ -929,6 +929,89 @@ body {
     padding: 16px;
 }
 
+/* ── Сенсор ────────────────────────────────────────────────────────── */
+
+/* Одна карточка в две колонки, а не две плитки: срок прибора и полнота его
+   данных — два ответа про одно и то же устройство, и порознь они встали бы
+   в общий ряд статистики, где все числа про сахар. Левая половина шире:
+   в ней полоса, которой нужна длина, чтобы что-то значить. */
+.sensor {
+    display: grid;
+    gap: 16px 32px;
+    background: var(--panel);
+    border: 1px solid var(--panel-chrome);
+    border-radius: var(--radius);
+    padding: 16px;
+}
+
+@media (min-width: 640px) {
+    .sensor {
+        grid-template-columns: 2fr 1fr;
+    }
+}
+
+.sensor__label {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: baseline;
+    justify-content: space-between;
+    margin: 0 0 8px;
+    font-size: 0.82rem;
+    color: var(--muted);
+}
+
+/* Дата установки — справа и тише названия: её читают один раз, когда
+   считают дни сами, а не каждый раз, когда смотрят на карточку. */
+.sensor__aside {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.78rem;
+    color: var(--muted);
+    opacity: 0.75;
+}
+
+.sensor__value {
+    margin: 0;
+    font-size: 1.5rem;
+    font-family: "JetBrains Mono", monospace;
+    color: var(--fg);
+}
+
+/* Тем же оранжевым, каким шапка говорит «сенсор не передаёт данные», а
+   подвал — «сборщик молчит»: это один и тот же разряд новостей — не про
+   сахар, а про то, что измерять скоро станет нечем. */
+.sensor__value--warn {
+    color: var(--low);
+}
+
+.sensor__value--muted {
+    color: var(--muted);
+}
+
+.sensor__hint {
+    margin: 8px 0 0;
+    font-size: 0.82rem;
+    color: var(--muted);
+}
+
+.sensor__track {
+    margin-top: 12px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--panel-chrome);
+    overflow: hidden;
+}
+
+.sensor__fill {
+    height: 100%;
+    border-radius: 3px;
+    background: var(--accent);
+}
+
+.sensor__fill--warn {
+    background: var(--low);
+}
+
 /* ── Ночи ──────────────────────────────────────────────────────────── */
 
 /* Семь-восемь маленьких кривых в ряд, по одной на ночь. Ячейки равной ширины,
