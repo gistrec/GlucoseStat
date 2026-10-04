@@ -13,6 +13,7 @@ import {
     formatAmount,
     formatDelta,
     formatDose,
+    plural,
 } from "./format.js";
 
 /* ── Разбор приёмов пищи ───────────────────────────────────────────── */
@@ -50,7 +51,56 @@ export function pickedMeal() {
     return state.previewMeal ?? state.pinnedMeal;
 }
 
+/* Группы приёмов для фильтра над оверлеем.
+
+   Фильтр подсвечивает, а не отсеивает: невыбранные кривые бледнеют, но
+   остаются на холсте — и остаются в таблице под ним. Это тот же уговор, что
+   между таблицей и оверлеем вообще: на графике не лежит ничего, чего нет в
+   списке. Заодно видно, чем выбранная группа отличается от остальных, — а
+   ради этого сравнения фильтр и нужен.
+
+   Группы не пересекаются, и числа на кнопках складываются в «Все». Приём без
+   болюса в углеводную корзину не попадает: подъём после 30 г без укола и
+   после 30 г с уколом — это два разных ответа на вопрос «что делает еда», и
+   смешать их в одной кривой значит не ответить ни на один. Поэтому первая
+   кнопка — «Без болюса», а корзины по углеводам делят то, что осталось.
+
+   Границы — 40 и 70 граммов. Это не круглые числа ради круглых: 40 г примерно
+   соответствует дозе в 3 единицы на обычном коэффициенте, а 70 — пяти, то есть
+   это «перекус», «еда» и «много». */
+export const MEAL_FILTERS = [
+    { key: "all", label: "Все" },
+    { key: "nobolus", label: "Без болюса" },
+    { key: "small", label: "До 40 г" },
+    { key: "medium", label: "40–70 г" },
+    { key: "large", label: "70 г и больше" },
+];
+
+export function mealGroup(meal) {
+    if (!meal.dose || !meal.dose.units) return "nobolus";
+    if (meal.carbs < 40) return "small";
+    if (meal.carbs <= 70) return "medium";
+    return "large";
+}
+
+export function inFilter(meal, key = state.mealFilter) {
+    return key === "all" || mealGroup(meal) === key;
+}
+
+/* Приёмы, у которых есть что рисовать. Точка — не кривая: окно, в котором
+   сенсор отдал один замер, не говорит ни о форме подъёма, ни о его высоте.
+   Один набор на холст, на кнопки фильтра и на подпись под ними — считать его
+   трижды значит однажды насчитать три разных числа. */
+export function drawnMeals(analysis) {
+    return analysis.meals.filter((meal) => meal.curve.length > 1);
+}
+
 export const OVERLAY_HEIGHT = 240;
+
+// Насколько бледнеют кривые вне выбранной группы. Не ноль: группу не с чем
+// сравнивать, если остального на холсте нет, — а сравнение и есть работа
+// фильтра. Ниже этого разброс перестаёт читаться вовсе.
+export const FADED_ALPHA = 0.08;
 
 // Сколько кривых должно накрыть отметку времени, чтобы медиана в ней что-то
 // значила. На двух это просто среднее двух обедов, выданное за общую картину.
@@ -108,7 +158,7 @@ export function drawOverlay(analysis) {
     // ничего не найти, а не считать по прошлому набору кривых.
     state.overlayGeometry = null;
 
-    const drawn = analysis.meals.filter((meal) => meal.curve.length > 1);
+    const drawn = drawnMeals(analysis);
     if (!drawn.length) return;
 
     /* Кривые приводятся к уровню в момент еды. В абсолютных значениях медиана
@@ -190,14 +240,28 @@ export function drawOverlay(analysis) {
     // Отдельные кривые — тонкие и приглушённые: они дают разброс и форму, а
     // числа читаются в таблице. Когда одна выбрана, остальные отступают, но не
     // исчезают: ниже 0.2 разброс перестаёт читаться, а он и есть их работа.
+    // Кривые выбранной группы остаются как были, остальные уходят в фон —
+    // настолько, чтобы читался разброс, и не настолько, чтобы спорить с
+    // группой за внимание.
+    const inGroup = drawn.map((meal) => inFilter(meal));
+    // Пока выбраны все, кривые приглушены как были: их много, и в полную силу
+    // они сливаются в заливку. Выбранная группа — другое дело: в ней бывает
+    // одна кривая, и той же бледностью она терялась бы среди погашенных,
+    // то есть кнопка не показывала бы ровно то, ради чего её нажали.
+    const filtered = state.mealFilter !== "all";
+    const ownAlpha = filtered ? (picked >= 0 ? 0.4 : 0.55) : picked >= 0 ? 0.2 : 0.3;
+
     ctx.lineWidth = 1;
-    ctx.globalAlpha = picked >= 0 ? 0.2 : 0.3;
     curves.forEach((curve, index) => {
-        if (index !== picked) stroke(curve);
+        if (index === picked) return;
+        ctx.globalAlpha = inGroup[index] ? ownAlpha : FADED_ALPHA;
+        stroke(curve);
     });
     ctx.globalAlpha = 1;
 
-    const median = medianCurve(curves);
+    // Медиана — по выбранной группе: иначе кнопка меняла бы бледность кривых,
+    // а линия, по которой их и читают, оставалась бы про всех сразу.
+    const median = medianCurve(curves.filter((_, index) => inGroup[index]));
     if (median.length > 1) {
         ctx.strokeStyle = accent;
         ctx.lineWidth = 2;
@@ -248,14 +312,38 @@ export function drawOverlay(analysis) {
     // Что именно выделено, из картинки не прочитать — говорим словами: иначе
     // кнопка сообщает «нажато», а чем это кончилось на холсте, неизвестно.
     const pickedAt = picked >= 0 ? formatDateTime(new Date(drawn[picked].t * 1000)) : null;
+    const group = MEAL_FILTERS.find((item) => item.key === state.mealFilter);
     canvas.setAttribute(
         "aria-label",
         `Отклонение глюкозы от уровня в момент еды после ${drawn.length} приёмов пищи. ` +
+            // Фильтр ничего не убирает с холста, поэтому и здесь он не меняет
+            // число приёмов, а называется отдельной фразой — как подсветка,
+            // которой он и является.
+            (state.mealFilter === "all"
+                ? ""
+                : `Подсвечена группа «${group.label}», ${inGroup.filter(Boolean).length} из них. `) +
             (pickedAt ? `Выделен приём ${pickedAt}. ` : "") +
             "Все значения перечислены в таблице ниже."
     );
 
-    const legend = [legendItem(OVERLAY_SERIES.single), legendItem(OVERLAY_SERIES.median)];
+    const legend = [legendItem(OVERLAY_SERIES.single)];
+
+    /* Медиана в легенде — только когда она нарисована. В группе из одного-двух
+       приёмов её нет вовсе (MEDIAN_MIN_CURVES), и строка легенды обещала бы
+       синюю линию, которой на холсте не найти.
+
+       Имя группы — там же: иначе «Медиана» означает то одно, то другое в
+       зависимости от нажатой кнопки, а легенда на то и легенда, чтобы
+       называть нарисованное однозначно. */
+    if (median.length > 1) {
+        legend.push(
+            legendItem(
+                state.mealFilter === "all"
+                    ? OVERLAY_SERIES.median
+                    : { ...OVERLAY_SERIES.median, label: `Медиана группы «${group.label}»` }
+            )
+        );
+    }
     // Ряд появляется только когда есть что называть: пустая строка легенды
     // обещала бы линию, которой на холсте нет.
     if (picked >= 0) legend.push(legendItem(OVERLAY_SERIES.picked));
@@ -968,6 +1056,103 @@ export function fillRatioTable(table, firstColumn, rows) {
     table.replaceChildren(...(caption ? [caption] : []), head, body);
 }
 
+/* Ряд кнопок над оверлеем и строка под ним.
+
+   Число на кнопке — не украшение: «40–70 г» без него обещает группу, в
+   которой может не оказаться ни одного приёма, и нажавший узнаёт об этом по
+   пустому холсту. С числом видно заранее, есть ли там что сравнивать.
+
+   Пустая группа кнопку не теряет, а гасит: ряд, у которого кнопки то
+   появляются, то исчезают при каждом обновлении снимка, перестаёт быть
+   местом, куда можно не глядя ткнуть второй раз. */
+export function renderMealFilters(analysis) {
+    const drawn = drawnMeals(analysis);
+    const counts = new Map(MEAL_FILTERS.map((item) => [item.key, 0]));
+    for (const meal of drawn) {
+        counts.set("all", counts.get("all") + 1);
+        counts.set(mealGroup(meal), counts.get(mealGroup(meal)) + 1);
+    }
+
+    // Выбранная группа могла опустеть: окно разбора движется, и приём,
+    // который её держал, уезжает из снимка. Молча показывать при этом пустой
+    // холст нельзя — возвращаемся ко всем.
+    if (!counts.get(state.mealFilter)) state.mealFilter = "all";
+
+    els.mealFilters.replaceChildren(
+        ...MEAL_FILTERS.map((item) => filterButton(item, counts.get(item.key)))
+    );
+    els.mealFilters.hidden = drawn.length < 2;
+    els.mealFilterNote.textContent = filterSummary(drawn);
+}
+
+function filterButton(item, count) {
+    const button = document.createElement("button");
+    const active = item.key === state.mealFilter;
+
+    button.type = "button";
+    button.className = active ? "filters__btn is-active" : "filters__btn";
+    button.dataset.filter = item.key;
+    button.disabled = count === 0;
+    // Подсветка говорит о выборе только глазами; aria-pressed — всем
+    // остальным. Тот же уговор, что у кнопок периода над графиком.
+    button.setAttribute("aria-pressed", String(active));
+    button.append(item.label);
+
+    const number = document.createElement("span");
+    number.className = "filters__count";
+    number.textContent = String(count);
+    button.append(number);
+    return button;
+}
+
+/* Что именно выбрано, словами и числами. Холст отвечает на «какой формы
+   подъём», а на «высокий ли он» — нет: глаз неплохо сравнивает две кривые
+   рядом и плохо считает по ним медиану. */
+function filterSummary(drawn) {
+    const group = drawn.filter((meal) => inFilter(meal));
+    if (!group.length) return "";
+
+    const label = `${group.length} ${plural(group.length, "приём", "приёма", "приёмов")}`;
+    const rises = group.map((meal) => meal.rise).filter((rise) => rise !== null);
+    if (!rises.length) return `${label}: подъём ни у одного не посчитан`;
+
+    rises.sort((a, b) => a - b);
+    const middle = rises.length >> 1;
+    const median =
+        rises.length % 2 ? rises[middle] : (rises[middle - 1] + rises[middle]) / 2;
+
+    /* «Медиана подъёма», а не просто «медиана»: синяя линия на холсте — тоже
+       медиана, но другая. Там середина кривых поминутно, здесь середина их
+       вершин, и одно число из второго набора не лежит на первой линии. Два
+       разных ответа под одним словом в одной карточке читались бы как один.
+
+       У единственного приёма медианы нет — есть его подъём. */
+    const summary =
+        rises.length === 1
+            ? `подъём ${formatDelta(median)}`
+            : `медиана подъёма ${formatDelta(median)}`;
+
+    const over = rises.filter((rise) => rise > state.snapshot.analysis.targets.rise).length;
+    const verdict =
+        over === rises.length
+            ? rises.length === 1
+                ? "ориентир превышен"
+                : "ориентир превышен во всех"
+            : over
+              ? `ориентир превышен в ${over} из ${rises.length}`
+              : rises.length === 1
+                ? "ориентир не превышен"
+                : "ориентир не превышен ни разу";
+
+    return `${label}: ${summary}, ${verdict}`;
+}
+
+export function setMealFilter(key) {
+    if (state.mealFilter === key) return;
+    state.mealFilter = key;
+    renderReview();
+}
+
 export function renderReview() {
     const analysis = state.snapshot.analysis;
 
@@ -1011,6 +1196,9 @@ export function renderReview() {
 
     renderReviewStats(analysis);
     renderRatio(analysis);
+    // До холста: ряд кнопок может сбросить выбор опустевшей группы, и рисовать
+    // оверлей до этого значило бы один кадр подсвечивать пустоту.
+    renderMealFilters(visible);
     drawOverlay(visible);
     renderMeals(visible);
 

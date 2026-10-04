@@ -235,6 +235,22 @@ overlaid on the moment of eating, normalised to that level — in absolute value
 the median comes out nearly flat, because lunch starts from one level and dinner
 from another, and the two cancel exactly the rise the chart exists to show.
 
+Above the curves sits a row of groups: all, no bolus, under 40 g, 40 to 70,
+70 and over. They do not overlap and their counts add up to the total, because a
+meal without a shot is not put in a carb bucket — the rise after 30 g with
+insulin and after 30 g without are two answers to different questions, and
+averaging them answers neither. Picking a group highlights it rather than
+filtering it out: the other curves fade but stay, since a group is worth
+nothing to look at without the rest to compare it against, and the table below
+keeps showing the same meals as the canvas above it, which it has always done.
+The median line is recomputed over the group — a button that changed only how
+pale the curves were, while the line everyone actually reads stayed about
+everybody, would be a button that lies. In a group of one or two there is no
+median at all (three curves is the minimum for it to mean anything), so the
+legend drops the line instead of promising one. Under the canvas a line says
+what the group came to: how many meals, the median of their peak rises, and how
+many of them cleared the target.
+
 Each meal also shows its bolus: the units and how far ahead of the meal the shot
 went in. A shot belongs to a meal when it lands within half an hour of it, and
 to that meal alone — a dose between two meals is credited to the nearer one. A

@@ -929,6 +929,75 @@ body {
     padding: 16px;
 }
 
+/* ── Фильтр кривых приёмов ─────────────────────────────────────────── */
+
+/* Таблетки, а не ряд кнопок во всю ширину, как над графиком: там четыре
+   периода делят экран поровну и образуют переключатель, здесь у кнопок
+   разная длина подписи и разный вес — «Все» и «70 г и больше» одной ширины
+   врали бы, что это равные варианты. Перенос по словам: на телефоне пять
+   таблеток в строку не влезают, а горизонтальная прокрутка внутри карточки
+   прячет последнюю группу от того, кто о ней не знает. */
+.filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.filters__btn {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 7px 14px;
+    background: var(--panel);
+    border: 1px solid var(--panel-chrome);
+    border-radius: 999px;
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.filters__btn:hover:not(:disabled) {
+    color: var(--fg);
+}
+
+.filters__btn.is-active {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+/* Пустая группа остаётся в ряду, но гаснет: кнопки, исчезающие при каждом
+   обновлении снимка, лишают ряд постоянства — второй раз туда уже не ткнёшь
+   не глядя. */
+.filters__btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+/* Число — тем же моноширинным, что и все числа на странице, и тише подписи:
+   оно уточняет группу, а не называет её. */
+.filters__count {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.78rem;
+    opacity: 0.7;
+}
+
+/* Подпись под холстом, отделённая от него чертой: это вывод о нарисованном,
+   а не ещё одна его часть. */
+.filters__note {
+    margin: 12px 0 0;
+    padding-top: 12px;
+    border-top: 1px solid var(--panel-chrome);
+    font-size: 0.82rem;
+    color: var(--muted);
+}
+
+.filters__note:empty {
+    display: none;
+}
+
 /* ── Сенсор ────────────────────────────────────────────────────────── */
 
 /* Одна карточка в две колонки, а не две плитки: срок прибора и полнота его

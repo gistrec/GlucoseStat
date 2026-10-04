@@ -28,6 +28,8 @@ export const els = {
     ratioSizeTable: document.getElementById("ratio-size-table"),
     ratioSizeWrap: document.getElementById("ratio-size-wrap"),
     reviewPanel: document.getElementById("review-panel"),
+    mealFilters: document.getElementById("meal-filters"),
+    mealFilterNote: document.getElementById("meal-filter-note"),
     overlay: document.getElementById("overlay"),
     overlayTip: document.getElementById("overlay-tip"),
     overlayLegend: document.getElementById("overlay-legend"),

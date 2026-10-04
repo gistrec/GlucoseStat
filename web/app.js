@@ -8,7 +8,7 @@ import { renderNow, renderStats } from "./js/now-stats.js";
 import { renderSensor } from "./js/sensor.js";
 import { renderNights } from "./js/nights.js";
 import { drawChart, hoverAt, clearHover } from "./js/chart.js";
-import { renderReview, overlayHoverAt, clearOverlayHover } from "./js/meals.js";
+import { renderReview, setMealFilter, overlayHoverAt, clearOverlayHover } from "./js/meals.js";
 import { TIMEZONE, formatAgo, formatDateTime } from "./js/format.js";
 
 const RELOAD_INTERVAL_MS = 60 * 1000;
@@ -179,6 +179,14 @@ els.mealsMore.addEventListener("click", (event) => {
     const added = [...els.meals.querySelectorAll("tbody tr")].slice(before);
     const pick = added.map((row) => row.querySelector(".meals__pick")).find(Boolean);
     if (pick) pick.focus({ preventScroll: true });
+});
+
+/* Кнопки групп. Делегированием, а не обработчиком на каждой: ряд
+   перерисовывается при каждом обновлении снимка, и слушатели на кнопках
+   пришлось бы вешать заново раз в минуту. */
+els.mealFilters.addEventListener("click", (event) => {
+    const button = event.target.closest(".filters__btn");
+    if (button) setMealFilter(button.dataset.filter);
 });
 
 /* pointer, а не mouse: тем же обработчиком обслуживается касание, и на телефоне

@@ -50,6 +50,12 @@ export const state = {
     previewMeal: null,
     pinnedMeal: null,
 
+    /* Какая группа приёмов подсвечена на оверлее: ключ из MEAL_FILTERS или
+       "all". Живёт между перерисовками по той же причине, что mealsShown:
+       страница перечитывает снимок раз в минуту, и сброс к «всем» гасил бы
+       выбор под руками у того, кто только что его сделал. */
+    mealFilter: "all",
+
     profileTzWarned: false,
     timezoneWarned: false,
 
