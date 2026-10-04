@@ -22,7 +22,7 @@ export function renderNow() {
 
     if (!latest) {
         els.empty.textContent =
-            "Данных пока нет. Как только сенсор начнёт передавать показания в LibreLinkUp, они появятся здесь.";
+            "Данных пока нет. Появятся, как только сенсор начнёт передавать в LibreLinkUp.";
         els.empty.hidden = false;
         return;
     }
