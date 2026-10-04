@@ -8,7 +8,7 @@ long-lived process: it never exits on a transient failure, it backs off.
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 
@@ -18,6 +18,7 @@ from database.queries import (
     latest_fingerstick,
     store_last_success,
     store_readings,
+    store_sensor_end,
     store_sensor_start,
 )
 from librelinkup import COOLDOWN_MAX, AuthError, LibreLinkUp, RateLimited, Sensor
@@ -209,6 +210,10 @@ def run_once(
     if sensor is not None:
         try:
             store_sensor_start(sensor.started)
+            # Конец срока считает сборщик: модель прибора видна только ему,
+            # а рендереру на реплике достаётся готовая дата — иначе срок
+            # пришлось бы знать обеим машинам, и разошлись бы они молча.
+            store_sensor_end(sensor.started + timedelta(days=sensor.lifetime_days))
         except Exception:
             log.exception("failed to store the sensor start")
 

@@ -21,11 +21,12 @@ from database.queries import (
     last_readings,
     meal_origins_since,
     read_last_success,
+    read_sensor_end,
     read_sensor_start,
     readings_since,
 )
 from daytime import DISPLAY_TZ, _covered, _weigh, _weighted_percentile, _zone
-from librelinkup import SENSOR_LIFETIME_DAYS
+from librelinkup import SENSOR_LIFETIME_FALLBACK_DAYS
 from lows import high_episodes, low_episodes
 from nights import night_summary
 
@@ -210,21 +211,29 @@ def _gaps(readings: list[tuple[datetime, float]], since: datetime) -> list[dict]
 
 
 def _sensor(
-    started: datetime | None, readings: list[tuple[datetime, float]], now: datetime
+    started: datetime | None,
+    ends: datetime | None,
+    readings: list[tuple[datetime, float]],
+    now: datetime,
 ) -> dict:
     """Сенсор: когда надет, когда кончится и сколько данных от него дошло.
 
-    Срок жизни — свойство прибора, а не настройка, поэтому считается здесь, а
-    не на странице: ``ends`` публикуется готовой отметкой, и переписать её под
-    другой сенсор можно будет в одном месте. Сколько дней осталось, страница
-    считает сама — по своим часам, иначе число протухало бы между перестройками
-    снимка и к утру показывало бы вчерашнее.
+    Обе отметки приходят из базы, куда их кладёт сборщик: срок жизни зависит
+    от модели прибора, а модель видна только тому, кто разговаривает с Abbott
+    (см. ``SENSOR_MODELS``). Здесь конец срока уже посчитан, и дело страницы —
+    сказать, сколько до него осталось; считает она это сама, по своим часам,
+    иначе число протухало бы между перестройками снимка и к утру показывало бы
+    вчерашнее.
 
-    ``started`` приходит из базы, куда его кладёт сборщик (см. ``store_sensor_
-    start``). Его может не быть: у рендерера на реплике таблицы может не быть
-    вовсе, а Abbott присылает блок сенсора не в каждом ответе. Тогда половина
-    карточки про срок молчит, а половина про полноту данных остаётся — она
-    считается по самим показаниям и ни от чего внешнего не зависит.
+    Отметок может не быть: у рендерера на реплике таблицы может не быть вовсе,
+    а Abbott присылает блок сенсора не в каждом ответе. Тогда половина карточки
+    про срок молчит, а половина про полноту данных остаётся — она считается по
+    самим показаниям и ни от чего внешнего не зависит.
+
+    Конца срока может не быть и при известном начале — так выглядит отметка,
+    записанная прежним сборщиком, который срока ещё не считал. Тогда он
+    достраивается запасным сроком: карточка с датой на сутки точнее, чем
+    карточка без даты.
 
     Полнота — доля окна, покрытая показаниями. Не доля ожидаемых замеров:
     шаг выгрузки у Libre плавает между минутой и пятью, и «пришло 1823 из
@@ -262,14 +271,20 @@ def _sensor(
         count += 1
 
     total = SENSOR_WINDOW.total_seconds()
-    ends = started + timedelta(days=SENSOR_LIFETIME_DAYS) if started else None
+    if started and not ends:
+        ends = started + timedelta(days=SENSOR_LIFETIME_FALLBACK_DAYS)
 
     return {
         "started": int(started.replace(tzinfo=timezone.utc).timestamp())
         if started
         else None,
-        "ends": int(ends.replace(tzinfo=timezone.utc).timestamp()) if ends else None,
-        "lifetime_days": SENSOR_LIFETIME_DAYS,
+        "ends": int(ends.replace(tzinfo=timezone.utc).timestamp())
+        if started and ends
+        else None,
+        # Срок — не константа страницы, а разница между двумя отметками: у
+        # разных моделей он разный, и назвать его числом здесь значит однажды
+        # разойтись с датой, которая стоит рядом.
+        "lifetime_days": (ends - started).days if started and ends else None,
         "window_days": SENSOR_WINDOW.days,
         "coverage": round(100 * (1 - silent_seconds / total), 1),
         "quiet": count,
@@ -615,6 +630,7 @@ def build_snapshot(
     origins: dict[datetime, list[dict]] | None = None,
     fingersticks: list[tuple[datetime, float]] | None = None,
     sensor_started: datetime | None = None,
+    sensor_ends: datetime | None = None,
 ) -> dict:
     """Assemble the snapshot the page reads. Pure: no database, no clock.
 
@@ -714,7 +730,7 @@ def build_snapshot(
         # Сам сенсор: сколько ему осталось и сколько данных от него дошло.
         # Отметка установки приходит снаружи, как и last_success: снимок
         # собирается без базы, иначе его не собрал бы preview.py.
-        "sensor": _sensor(sensor_started, readings, now),
+        "sensor": _sensor(sensor_started, sensor_ends, readings, now),
         # Окно — суточной панели (RANGES["day"]), а не отдельная константа:
         # кольца рисует только она, и второго источника правды для этого
         # окна заводить незачем.
@@ -814,6 +830,7 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
         # Отметку пишет сборщик; на рендерере она приезжает репликацией. Нет
         # её — карточка сенсора покажет только полноту данных.
         sensor_started=read_sensor_start(),
+        sensor_ends=read_sensor_end(),
     )
 
     directory = os.path.dirname(os.path.abspath(path))

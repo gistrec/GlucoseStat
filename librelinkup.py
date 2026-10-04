@@ -74,27 +74,42 @@ class Reading:
 
 @dataclass(frozen=True)
 class Sensor:
-    """Когда надет сенсор, который сейчас передаёт.
+    """Когда надет сенсор, который сейчас передаёт, и сколько ему отведено.
 
-    Только момент установки. Серийный номер и идентификатор прибора лежат
-    в том же ответе и сюда не переносятся: они ничего не объясняют на
-    странице, а страница публичная.
+    Серийный номер и идентификатор прибора лежат в том же ответе и сюда не
+    переносятся: они ничего не объясняют на странице, а страница публичная.
+    ``kind`` — не идентификатор, а номер модели (поле ``pt``), и нужен он
+    ровно затем, чтобы узнать срок.
     """
 
     started: datetime
+    kind: int | None
+    lifetime_days: int
 
 
-# Сколько сенсор живёт. Libre 3 — четырнадцать суток, и это свойство прибора,
-# а не настройка: Abbott сообщает момент установки, но не срок. Константа
-# одна на сборщик и на страницу — срок считает сборщик.
-SENSOR_LIFETIME_DAYS = 14
+# Сколько живёт сенсор, по номеру модели из ответа Abbott (поле ``pt``).
+#
+# Срока в ответе нет — ни в днях, ни датой: Abbott сообщает, когда сенсор
+# поставлен, а сколько он проработает, знает только сам прибор. Поэтому
+# единственное, что можно «вытащить», — номер модели, и перевести его в дни
+# таблицей. Таблица пустая не из лени: нумерацию Abbott нигде не публикует, а
+# вписать в неё угаданное число значит повторить ту же ошибку, из-за которой
+# страница две недели уверенно звала Libre 3 Pro просто Libre 3. Номер,
+# который приходит на самом деле, сборщик пишет в журнал (см. readings) —
+# по нему строку сюда и добавят.
+SENSOR_MODELS: dict[int, int] = {}
+
+# Срок для модели, которой нет в таблице. Пятнадцать суток — Libre 3 Pro,
+# прибор владельца этой страницы; четырнадцать, стоявшие тут раньше, —
+# обычный Libre 3, и для Pro они обрывали карточку на сутки раньше срока.
+SENSOR_LIFETIME_FALLBACK_DAYS = 15
 
 # Самый старый момент установки, которому мы верим. Поле `a` приходит из
 # ответа Abbott, и подставленный в него мусор (ноль, миллисекунды вместо
 # секунд, дата из будущего) иначе превратился бы на странице в «осталось
 # −19000 дней». Вдвое больше срока жизни: сенсор, доживший до конца, ещё
 # сутки числится установленным, пока его не сняли.
-SENSOR_MAX_AGE_DAYS = SENSOR_LIFETIME_DAYS * 2
+SENSOR_MAX_AGE_DAYS = SENSOR_LIFETIME_FALLBACK_DAYS * 2
 
 
 def _parse_timestamp(value: str) -> datetime:
@@ -138,7 +153,15 @@ def _parse_sensor(raw: dict | None, now: datetime) -> Sensor | None:
     if started > now or (now - started).days > SENSOR_MAX_AGE_DAYS:
         return None
 
-    return Sensor(started=started)
+    kind = raw.get("pt")
+    if not isinstance(kind, int) or isinstance(kind, bool):
+        kind = None
+
+    return Sensor(
+        started=started,
+        kind=kind,
+        lifetime_days=SENSOR_MODELS.get(kind, SENSOR_LIFETIME_FALLBACK_DAYS),
+    )
 
 
 class LibreLinkUp:
@@ -382,6 +405,19 @@ class LibreLinkUp:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         sensor = _parse_sensor(connection.get("sensor"), now)
         if sensor:
+            if not self._sensor_warned:
+                self._sensor_warned = True
+                # Номер модели и выбранный по нему срок — один раз на процесс.
+                # Это и есть ответ на «а можно ли узнать срок у Abbott»: пока
+                # номера нет в SENSOR_MODELS, срок берётся запасной, и видно
+                # это только здесь.
+                log.info(
+                    "sensor activated %s, product type %s, lifetime %d days%s",
+                    sensor.started,
+                    sensor.kind,
+                    sensor.lifetime_days,
+                    "" if sensor.kind in SENSOR_MODELS else " (fallback)",
+                )
             self.sensor = sensor
         elif not self._sensor_warned:
             self._sensor_warned = True

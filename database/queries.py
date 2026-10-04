@@ -101,6 +101,21 @@ def read_sensor_start() -> datetime | None:
     return _read_mark("sensor_started")
 
 
+# Конец срока хранится отметкой времени, а не сроком в днях: в этой таблице
+# один столбец, и он DATETIME. Считает его сборщик — только он видит модель
+# прибора; рендереру на реплике остаётся прочитать готовую дату.
+def store_sensor_end(when: datetime) -> None:
+    """Запомнить, когда у сенсора кончается срок."""
+
+    _store_mark("sensor_ends", when)
+
+
+def read_sensor_end() -> datetime | None:
+    """Конец срока сенсора, или None, пока сборщик его не записал."""
+
+    return _read_mark("sensor_ends")
+
+
 def readings_since(start: datetime) -> list[tuple[datetime, float]]:
     """Return readings at or after ``start``, oldest first."""
 

@@ -74,15 +74,25 @@ wide there, with nothing to write in them.
 
 Below the statistics sits the sensor itself: how many days it has left, and how
 much of the last week it actually covered. The first is the question the page
-can answer before the app does — a Libre 3 lasts 14 days, and learning that from
-a sensor that has already stopped costs the day it takes a replacement to
+can answer before the app does — a sensor lasts two to three weeks, and learning
+that from one that has already stopped costs the day it takes a replacement to
 arrive. The activation moment comes from LibreLinkUp, in the same `graph`
-response as the readings, and the collector stores it in `collector_state` so
-the renderer on the replica publishes the same date; the days left are counted
-in the browser, since a number baked into a snapshot would be yesterday's by
-morning. The serial number sitting next to it in Abbott's payload is dropped
-where it is parsed. Abbott does not always send the block — then the card says
-the date is unknown rather than guessing one. The second half, data completeness,
+response as the readings; the lifetime does not, and cannot: Abbott reports when
+a sensor was applied, never how long it will run. What the payload does carry is
+a product-type number, and `SENSOR_MODELS` is where that number turns into days.
+The table is empty on purpose — Abbott publishes no such numbering, and a guess
+in it would repeat the bug that made this card call a Libre 3 Pro a plain Libre 3
+and end its life a day early. The collector logs the number it actually sees,
+once per process, which is how a row gets added; until then the lifetime is the
+fallback constant. The collector stores both the start and the computed end in
+`collector_state`, so the renderer on the replica publishes the same dates
+without needing to know the model; the days left are counted in the browser,
+since a number baked into a snapshot would be yesterday's by morning. The serial
+number sitting next to all this in Abbott's payload is dropped where it is
+parsed, and the card names no model at all — the one in the page header is
+written by a human, where it reads as a claim rather than as data. Abbott does
+not always send the block — then the card says the date is unknown rather than
+guessing one. The second half, data completeness,
 is counted from the readings alone: time in range over a week with a day-long
 hole in it looks exactly as solid as the honest kind, and the card is where the
 page admits the difference. Silence before the first reading and silence still
