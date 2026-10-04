@@ -24,7 +24,7 @@ from database.queries import (
     readings_since,
 )
 from daytime import DISPLAY_TZ, _covered, _weigh, _weighted_percentile, _zone
-from lows import low_episodes
+from lows import high_episodes, low_episodes
 from nights import night_summary
 
 
@@ -108,10 +108,12 @@ PEN_KINDS = {"pen_bolus": "bolus", "pen_basal": "basal"}
 # слишком мало, чтобы медиана подъёма что-то значила.
 ANALYSIS_WINDOW = timedelta(days=14)
 
-# Эпизоды ниже нормы считаются за неделю — самое широкое окно, на котором
+# Эпизоды вне нормы считаются за неделю — самое широкое окно, на котором
 # рисуется кривая: у месяца своя форма, подневные коробки, и там доля времени
-# ниже нормы уже стоит в каждом дне.
-LOW_WINDOW = timedelta(days=7)
+# вне нормы уже стоит в каждом дне. Окно одно на оба порога: полосы рисуются
+# на одной панели, и разная глубина памяти у верхней и нижней значила бы, что
+# на левом краю кривой подъёмы ещё помечены, а провалы уже нет.
+EPISODE_WINDOW = timedelta(days=7)
 
 # А молчание сенсора — за двое суток: полосу «нет сигнала» рисуют только
 # почасовые панели, и на недельной от часового пропуска остаётся три пикселя,
@@ -588,6 +590,10 @@ def build_snapshot(
         if kind == "bolus" and units is not None
     ]
 
+    # Срез под обе полосы эпизодов — один: нарезать его дважды значило бы
+    # пройти недельное сырьё лишний раз ради того же списка.
+    episode_readings = [item for item in readings if item[0] >= now - EPISODE_WINDOW]
+
     return {
         "generated_at": int(now.replace(tzinfo=timezone.utc).timestamp()),
         "collector": {
@@ -618,12 +624,13 @@ def build_snapshot(
         # же почасовых панелях, и своя константа для того же окна разъехалась бы
         # с ними при первой же правке.
         "sugars": _sugars(fingersticks or [], now - EVENT_WINDOW),
-        # Эпизоды ниже нормы — тоже по своему окну, и тоже по сырью: прореженная
+        # Эпизоды вне нормы — тоже по своему окну, и тоже по сырью: прореженная
         # кривая не отвечает ни на «сколько раз», ни на «сколько минут».
-        "lows": low_episodes(
-            [item for item in readings if item[0] >= now - LOW_WINDOW],
-            TARGET_LOW_MGDL,
-        ),
+        # Порог каждой полосы — тот же, которым красится кривая и подложка зон:
+        # своя константа однажды разошлась бы с ними, и полоса появлялась бы
+        # там, где график ещё зелёный.
+        "lows": low_episodes(episode_readings, TARGET_LOW_MGDL),
+        "highs": high_episodes(episode_readings, TARGET_HIGH_MGDL),
         # Молчание сенсора — тоже по сырью и тоже по своему окну: полосу
         # «нет сигнала» рисуют только почасовые панели.
         "gaps": _gaps(readings, now - GAP_WINDOW),

@@ -545,16 +545,25 @@ export function drawChart() {
     // без единого столбика, а пустой профиль — коридор, которого нет.
     // Эпизоды, попавшие в окно: легенда называет полосу, только когда она на
     // холсте есть, — по тому же правилу, что и остальные её строки.
-    const lowsShown =
+    const inWindow = (episodes) =>
         !daily &&
-        (state.snapshot.lows || []).some(
-            (low) => low.end >= startTime && low.start <= endTime
+        (episodes || []).some(
+            (episode) => episode.end >= startTime && episode.start <= endTime
         );
+    const lowsShown = inWindow(state.snapshot.lows);
+    const highsShown = inWindow(state.snapshot.highs);
 
     const legendItems = [];
     if (
         !daily &&
-        (lanes.length || runs.length || tail || lowsShown || gaps.length || artifacts.length || sugars.length)
+        (lanes.length ||
+            runs.length ||
+            tail ||
+            lowsShown ||
+            highsShown ||
+            gaps.length ||
+            artifacts.length ||
+            sugars.length)
     ) {
         legendItems.push({ ...SERIES.glucose, line: true });
         // «Обычно» — сразу за измерением: коридор, с которым его сравнивают,
@@ -575,9 +584,14 @@ export function drawChart() {
         if (tail) {
             legendItems.push(SERIES.forecast);
         }
-        // И следом — полоса ниже нормы: она про ту же кривую, а не про журнал.
+        // И следом — полосы вне нормы: они про ту же кривую, а не про журнал.
+        // Снизу вверх, в порядке самих полос на холсте: легенда перечисляет их
+        // так же, как их видно.
         if (lowsShown) {
             legendItems.push(SERIES.low);
+        }
+        if (highsShown) {
+            legendItems.push(SERIES.high);
         }
         // Молчание сенсора — там же, среди знаков о кривой: узкая полоса
         // остаётся без подписи, и легенда для неё единственное имя.
@@ -745,9 +759,11 @@ export function drawChart() {
         );
         drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeight);
         if (tail) drawForecast(ctx, tail, x, y, padding.top, padding.top + plotHeight);
-        // После кривой: отрезки лежат на линии порога и обязаны быть поверх
-        // неё — под кривой их бы наполовину перекрыло ей же.
+        // После кривой: у края области она проходит по тем же пикселям —
+        // высокий сахар жмётся к верхней рамке весь подъём, — и под кривой
+        // отрезок наполовину перекрыло бы ей же.
         drawLows(ctx, x, padding.left, width - padding.right, padding.top + plotHeight);
+        drawHighs(ctx, x, padding.left, width - padding.right, padding.top);
         // Кольца — последними из всего, что стоит на кривой: пометка обязана
         // быть видна поверх любой зоны и поверх отрезка гипогликемии под ней.
         drawArtifacts(ctx, artifacts, x, y);
@@ -819,19 +835,25 @@ export function drawChart() {
 /* Тело кривой day- и week-окон: ломаная с отсечениями по зонам. Порог разрыва
    спрашивается у ряда, а не у каркаса: у дневного вида series.step не
    существует, NaN в сравнениях давал бы false и молча гасил все разрывы. */
-/* Эпизоды ниже нормы — полосой по дну области графика, с длительностью рядом.
+/* Эпизоды вне нормы — полосами по краям области графика, с длительностью рядом.
 
-   Кривая и без них краснеет ниже 3,9, но отвечает она только на «было или не
-   было». «Сколько раз» по ней не прочитать — два провала подряд сливаются в
-   один росчерк, — а «сколько минут» не прочитать тем более: у недельной панели
-   минута занимает четверть пикселя. Числа приходят из снимка посчитанными по
-   сырым замерам (_lows в publish.py), поэтому отрезок не зависит от того, что
-   уцелело при прореживании.
+   Кривая и без них краснеет ниже 3,9 и выше 10, но отвечает она только на
+   «было или не было». «Сколько раз» по ней не прочитать — два провала подряд
+   сливаются в один росчерк, — а «сколько минут» не прочитать тем более: у
+   недельной панели минута занимает четверть пикселя. Числа приходят из снимка
+   посчитанными по сырым замерам (lows.py), поэтому отрезок не зависит от того,
+   что уцелело при прореживании.
 
-   По дну, а не по самой линии порога: там отрезок ложился ровно поперёк
-   провала кривой, и два разных знака — «вот где кривая ушла вниз» и «вот
-   сколько это длилось» — сливались в одну неразборчивую фигуру. Внизу полоса
-   читается как отрезок времени, чем она и является.
+   По краю области, а не по самой линии порога: там отрезок ложился ровно
+   поперёк провала кривой, и два разных знака — «вот где кривая ушла вниз» и
+   «вот сколько это длилось» — сливались в одну неразборчивую фигуру. У края
+   полоса читается как отрезок времени, чем она и является.
+
+   Провалы по дну, подъёмы по верху — каждая полоса с той стороны, куда уходила
+   кривая. Так их не спутать между собой, даже когда подписи у обеих сняты
+   теснотой, и остаётся место сказать разное одним приёмом: внизу редкие
+   короткие отрезки, вверху длинные и частые — это и есть разница между
+   гипогликемией и подъёмом после еды.
 
    Минимальная ширина отрезка — три пикселя: двухминутный провал на недельном
    окне тоньше волоса, и без неё самый короткий эпизод был бы виден хуже всех,
@@ -846,28 +868,55 @@ export const LOW_MIN_WIDTH = 3;
 export const LOW_LABEL_SPACE = 42;
 
 export function drawLows(ctx, x, left, right, bottom) {
-    const lows = state.snapshot.lows || [];
-    if (!lows.length) return;
-
     // Полтора пикселя от дна: линия толщиной в три, и её нижняя половина
     // иначе срезалась бы краем области.
-    const py = bottom - 2;
-    const color = readColor("--hypo", "#ff5b5b");
+    drawEpisodes(
+        ctx,
+        state.snapshot.lows || [],
+        x,
+        left,
+        right,
+        bottom - 2,
+        readColor("--hypo", "#ff5b5b"),
+        false
+    );
+}
+
+/* Та же полоса у верхнего края. Эпизодов выше цели обычно вдесятеро больше,
+   чем провалов, и тем дороже, что она не новый знак, а зеркало уже знакомого:
+   прочитав нижнюю однажды, верхнюю читать не учатся заново. */
+export function drawHighs(ctx, x, left, right, top) {
+    drawEpisodes(
+        ctx,
+        state.snapshot.highs || [],
+        x,
+        left,
+        right,
+        top + 2,
+        readColor("--high", "#f77e9b"),
+        true
+    );
+}
+
+function drawEpisodes(ctx, episodes, x, left, right, py, color, atTop) {
+    if (!episodes.length) return;
 
     ctx.save();
     ctx.font = '10px "JetBrains Mono", monospace';
     ctx.textAlign = "left";
-    ctx.textBaseline = "bottom";
+    // Подпись уходит внутрь области: у верхней полосы вверх некуда, там рамка
+    // и легенда, а у нижней — подписи оси времени.
+    ctx.textBaseline = atTop ? "top" : "bottom";
     ctx.lineCap = "round";
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
     ctx.lineWidth = 3;
 
-    const visible = lows
-        .map((low) => ({
-            low,
-            from: Math.max(left, x(low.start)),
-            to: Math.min(right, x(low.end)),
+    const visible = episodes
+        .map((episode) => ({
+            episode,
+            from: Math.max(left, x(episode.start)),
+            to: Math.min(right, x(episode.end)),
         }))
         .filter((item) => item.to >= left && item.from <= right);
 
@@ -885,7 +934,7 @@ export function drawLows(ctx, x, left, right, bottom) {
         const next = visible[index + 1];
         const room = Math.min(right, next ? next.from : right) - end;
         if (room >= LOW_LABEL_SPACE) {
-            ctx.fillText(`${item.low.minutes} мин`, end + 4, py - 1);
+            ctx.fillText(`${item.episode.minutes} мин`, end + 4, py + (atTop ? 1 : -1));
         }
     }
 

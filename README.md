@@ -43,14 +43,20 @@ and disappears; the curve would show calm where there was a low. The error is
 pushed to the safe side on purpose, and only downwards: highs last hours and
 land in a bucket whole, so peaks are still averaged.
 
-The same window also carries the low episodes themselves, counted from the raw
-readings: start, end, depth and duration, drawn as red segments along the 3.9
-line with the duration beside them. The curve alone answers "was there a low";
-it cannot answer "how many" — two dips in neighbouring buckets look like one —
-or "for how long", since a minute is a quarter of a pixel on the weekly panel.
-An episode ends where the reading comes back over the threshold, and dips
+The same window also carries the out-of-range episodes themselves, counted from
+the raw readings: start, end, how far past the threshold, and duration. They are
+drawn as segments along the edges of the plot with the duration beside them —
+lows red along the floor, highs along the ceiling, each on the side the curve
+left towards. Not along the threshold line itself: there the segment lay across
+the dip and the two marks, "here is where it went" and "here is how long it
+lasted", merged into one unreadable figure. The curve alone answers "was there a
+low"; it cannot answer "how many" — two dips in neighbouring buckets look like
+one — or "for how long", since a minute is a quarter of a pixel on the weekly
+panel. An episode ends where the reading comes back over the threshold, and ones
 separated by less than 15 minutes count as one: flapping around the line is one
-low lived through, not five. There is deliberately no minimum duration.
+low lived through, not five. There is deliberately no minimum duration. Both
+thresholds are the ones the curve and the zone bands are already painted by
+(`lows.py`), so a band can never appear where the graph still looks green.
 
 Where the sensor went quiet, the hourly windows draw a grey band instead of
 just breaking the line, labelled "нет сигнала" and how long the silence lasted —

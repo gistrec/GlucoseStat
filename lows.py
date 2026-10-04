@@ -1,14 +1,19 @@
-"""Эпизоды ниже нормы: когда, как долго, как глубоко.
+"""Эпизоды вне нормы: когда, как долго, как далеко за порогом.
 
 Отдельным модулем, а не функцией внутри ``publish``, потому что считают их
-двое: сам снимок — чтобы нарисовать полосу под кривой, — и ночная сводка,
-которой нужны минуты внутри каждой ночи. Держать эту арифметику у одного из
-них значило бы либо завести круг из импортов, либо посчитать эпизоды дважды
-разными способами, и однажды разойтись в ответе на «сколько их было».
+двое: сам снимок — чтобы нарисовать полосы над кривой и под ней, — и ночная
+сводка, которой нужны минуты внутри каждой ночи. Держать эту арифметику у
+одного из них значило бы либо завести круг из импортов, либо посчитать эпизоды
+дважды разными способами, и однажды разойтись в ответе на «сколько их было».
 
 Считается по сырым замерам. Прореженная кривая на такие вопросы не отвечает:
 два провала в соседних корзинах выглядят на ней одним, а минута на недельной
 панели занимает четверть пикселя.
+
+Низ и верх считает один и тот же проход: правила у них общие — границы по
+пересечению порога, склейка дребезга, минимальная длительность, — и разойтись
+им нельзя. Разное только направление сравнения и крайнее значение внутри
+эпизода: у провала это дно, у подъёма — вершина.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -25,14 +30,42 @@ LOW_GAP = timedelta(minutes=15)
 def low_episodes(readings: list[tuple[datetime, float]], low: int) -> list[dict]:
     """Список эпизодов ниже ``low`` в порядке времени.
 
-    Длительность — от первого замера ниже порога до первого замера выше него,
-    а не до последнего низкого: сенсор отдаёт точку раз в минуту-пять, и без
-    правого края одиночный провал получал бы нулевую длину.
+    Крайнее значение эпизода — ``min``, дно провала.
     """
+
+    return _episodes(readings, low, below=True)
+
+
+def high_episodes(readings: list[tuple[datetime, float]], high: int) -> list[dict]:
+    """Список эпизодов выше ``high`` в порядке времени.
+
+    Зеркально ``low_episodes``, вплоть до пятнадцатиминутной склейки: подъём,
+    на полчаса заглянувший под порог и вернувшийся, — один эпизод, а не два.
+    Крайнее значение здесь ``max``, вершина подъёма.
+    """
+
+    return _episodes(readings, high, below=False)
+
+
+def _episodes(
+    readings: list[tuple[datetime, float]], threshold: int, *, below: bool
+) -> list[dict]:
+    """Эпизоды по одну сторону ``threshold``.
+
+    Длительность — от первого замера за порогом до первого замера обратно за
+    ним, а не до последнего крайнего: сенсор отдаёт точку раз в минуту-пять, и
+    без правого края одиночный выброс получал бы нулевую длину.
+    """
+
+    def outside(mgdl: float) -> bool:
+        return mgdl < threshold if below else mgdl > threshold
+
+    peak_key = "min" if below else "max"
+    peak = min if below else max
 
     episodes: list[dict] = []
     current: list[tuple[datetime, float]] = []
-    left: datetime | None = None
+    inside: datetime | None = None
 
     def close(right: datetime | None) -> None:
         if not current:
@@ -42,23 +75,23 @@ def low_episodes(readings: list[tuple[datetime, float]], low: int) -> list[dict]
             {
                 "start": int(start.replace(tzinfo=timezone.utc).timestamp()),
                 "end": int(finish.replace(tzinfo=timezone.utc).timestamp()),
-                "min": round(min(mgdl for _, mgdl in current)),
+                peak_key: round(peak(mgdl for _, mgdl in current)),
                 "minutes": max(1, round((finish - start).total_seconds() / 60)),
             }
         )
         current.clear()
 
     for moment, mgdl in readings:
-        if mgdl < low:
-            # Левый край — предыдущий замер над порогом: пересечение случилось
-            # между ними, и относить его целиком к первому низкому замеру
-            # значило бы терять до пяти минут эпизода.
-            if not current and left is not None:
-                current.append((left, float(low)))
+        if outside(mgdl):
+            # Левый край — предыдущий замер по эту сторону порога: пересечение
+            # случилось между ними, и относить его целиком к первому замеру за
+            # порогом значило бы терять до пяти минут эпизода.
+            if not current and inside is not None:
+                current.append((inside, float(threshold)))
             current.append((moment, mgdl))
         else:
             close(moment)
-            left = moment
+            inside = moment
     close(None)
 
     if not episodes:
@@ -70,7 +103,7 @@ def low_episodes(readings: list[tuple[datetime, float]], low: int) -> list[dict]
         previous = merged[-1]
         if episode["start"] - previous["end"] <= LOW_GAP.total_seconds():
             previous["end"] = episode["end"]
-            previous["min"] = min(previous["min"], episode["min"])
+            previous[peak_key] = peak(previous[peak_key], episode[peak_key])
             previous["minutes"] = max(
                 1, round((previous["end"] - previous["start"]) / 60)
             )

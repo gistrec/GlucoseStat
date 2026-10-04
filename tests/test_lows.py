@@ -1,11 +1,11 @@
-"""Эпизоды ниже нормы: границы, склейка, длительность."""
+"""Эпизоды вне нормы: границы, склейка, длительность."""
 
 from datetime import timedelta, timezone
 
 from conftest import BASE
 
-from lows import low_episodes
-from publish import TARGET_LOW_MGDL
+from lows import high_episodes, low_episodes
+from publish import TARGET_HIGH_MGDL, TARGET_LOW_MGDL
 
 
 def readings(*values, step_minutes=5, start=BASE):
@@ -76,3 +76,50 @@ class TestLows:
         episode = low_episodes(data, TARGET_LOW_MGDL)[0]
 
         assert episode["end"] == unix(BASE + timedelta(minutes=10))
+
+
+class TestHighs:
+    """Эпизоды выше цели: то же самое, зеркально порогу."""
+
+    def test_a_window_inside_the_range_has_no_episodes(self):
+        assert high_episodes(readings(100, 110, 120), TARGET_HIGH_MGDL) == []
+
+    def test_one_rise_is_one_episode_with_its_peak(self):
+        data = readings(120, 210, 260, 150, step_minutes=5)
+
+        episodes = high_episodes(data, TARGET_HIGH_MGDL)
+
+        assert len(episodes) == 1
+        assert episodes[0]["max"] == 260
+
+    def test_the_episode_spans_the_crossings_not_the_high_readings(self):
+        data = readings(120, 220, 150, step_minutes=5)
+
+        episode = high_episodes(data, TARGET_HIGH_MGDL)[0]
+
+        assert episode["minutes"] == 10
+
+    def test_flapping_around_the_threshold_is_one_episode(self):
+        # Тот же пятнадцатиминутный зазор, что и внизу: спуск под порог на пару
+        # замеров — это середина одного подъёма, а не два разных.
+        data = readings(120, 200, 175, 190, 178, 210, 120, step_minutes=1)
+
+        episodes = high_episodes(data, TARGET_HIGH_MGDL)
+
+        assert len(episodes) == 1
+        assert episodes[0]["max"] == 210
+
+    def test_rises_far_apart_stay_separate(self):
+        data = readings(120, 200, 120) + readings(
+            120, 240, 120, start=BASE + timedelta(hours=3)
+        )
+
+        episodes = high_episodes(data, TARGET_HIGH_MGDL)
+
+        assert [item["max"] for item in episodes] == [200, 240]
+
+    def test_a_reading_on_the_threshold_is_not_an_episode(self):
+        # Порог — граница целевого диапазона, и 180 в него ещё входит: полоса,
+        # появившаяся там, где кривая ещё жёлтая, означала бы, что страница
+        # считает цель по-разному в двух местах.
+        assert high_episodes(readings(120, 180, 120), TARGET_HIGH_MGDL) == []
