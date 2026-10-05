@@ -25,6 +25,7 @@ from publish import (
     COMPARE_MIN_AVG_MGDL,
     COMPARE_MIN_TIR_PP,
     DAY_MIN_COVERAGE,
+    FORECAST_MAX_AGE,
     TARGET_HIGH_MGDL,
     TARGET_LOW_MGDL,
     _artifacts,
@@ -33,6 +34,7 @@ from publish import (
     _db_last_success,
     _downsample,
     _events,
+    _forecast,
     _gaps,
     _gmi,
     _stats,
@@ -588,6 +590,7 @@ class TestPublishWindow:
         monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
         monkeypatch.setattr("publish.read_sensor_start", lambda: None)
         monkeypatch.setattr("publish.read_sensor_end", lambda: None)
+        monkeypatch.setattr("publish.latest_forecast", list)
 
         publish(path=str(tmp_path / "data.json"), last_success=1.0)
 
@@ -870,6 +873,7 @@ class TestLastSuccessSource:
         monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
         monkeypatch.setattr("publish.read_sensor_start", lambda: None)
         monkeypatch.setattr("publish.read_sensor_end", lambda: None)
+        monkeypatch.setattr("publish.latest_forecast", list)
 
     def test_the_database_wins_over_the_previous_snapshot(self, tmp_path, monkeypatch):
         path = tmp_path / "data.json"
@@ -947,6 +951,7 @@ class TestPublishCarryForward:
         monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
         monkeypatch.setattr("publish.read_sensor_start", lambda: None)
         monkeypatch.setattr("publish.read_sensor_end", lambda: None)
+        monkeypatch.setattr("publish.latest_forecast", list)
         # Пустая база — то состояние, ради которого наследование и осталось.
         monkeypatch.setattr("publish.read_last_success", lambda: None)
 
@@ -969,6 +974,7 @@ class TestPublishCarryForward:
         monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
         monkeypatch.setattr("publish.read_sensor_start", lambda: None)
         monkeypatch.setattr("publish.read_sensor_end", lambda: None)
+        monkeypatch.setattr("publish.latest_forecast", list)
         monkeypatch.setattr("publish.read_last_success", lambda: None)
 
         # Каталог на месте файла: переименовать в него нельзя, и publish
@@ -1028,3 +1034,45 @@ class TestStandaloneEntryPoint:
         )
 
         assert "MYSQL_USER, MYSQL_PASSWORD" not in result.stderr
+
+
+class TestForecast:
+    def rows(self, made_at):
+        return [(made_at, 30, 131.4, "hgb_ctx"), (made_at, 60, 142.6, "hgb_ctx")]
+
+    def test_fresh_rows_become_absolute_points(self):
+        made_at = BASE
+        snapshot = _forecast(self.rows(made_at), BASE + timedelta(minutes=3))
+        assert snapshot["made_at"] == unix(made_at)
+        assert snapshot["model"] == "hgb_ctx"
+        # Горизонты сложены со своей точкой здесь, а не на странице; мг/дл
+        # округлены до целого, как у кривой.
+        assert snapshot["points"] == [
+            [unix(made_at + timedelta(minutes=30)), 131],
+            [unix(made_at + timedelta(minutes=60)), 143],
+        ]
+
+    def test_points_follow_horizon_order_whatever_the_row_order(self):
+        made_at = BASE
+        rows = list(reversed(self.rows(made_at)))
+        points = _forecast(rows, BASE)["points"]
+        assert [t for t, _ in points] == sorted(t for t, _ in points)
+
+    def test_a_stale_forecast_is_not_published(self):
+        # Старше порога — ключа нет вовсе, и страница рисует линейный хвост:
+        # пометка «устарел» обязывала бы страницу её читать, а отсутствие — нет.
+        made_at = BASE
+        assert _forecast(self.rows(made_at), BASE + FORECAST_MAX_AGE + timedelta(seconds=1)) is None
+        assert _forecast(self.rows(made_at), BASE + FORECAST_MAX_AGE) is not None
+
+    def test_no_rows_means_no_forecast(self):
+        assert _forecast([], BASE) is None
+
+    def test_snapshot_carries_the_key_either_way(self):
+        now = BASE + timedelta(hours=1)
+        without = build_snapshot(readings(120, 130), [], now)
+        assert without["forecast"] is None
+        with_rows = build_snapshot(
+            readings(120, 130), [], now, forecast_rows=self.rows(now - timedelta(minutes=2))
+        )
+        assert with_rows["forecast"]["points"][0][1] == 131

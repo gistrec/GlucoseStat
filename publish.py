@@ -19,6 +19,7 @@ from database.queries import (
     fingersticks_since,
     journal_since,
     last_readings,
+    latest_forecast,
     meal_origins_since,
     read_last_success,
     read_sensor_end,
@@ -530,6 +531,41 @@ def _compare(stats: dict, previous: dict | None, span: timedelta) -> dict:
     }
 
 
+#: Насколько прогноз может отстать от «сейчас» и остаться в снимке. Та же
+#: мера, которой страница гасит значение в шапке (STALE_AFTER_MS): прогноз,
+#: считанный от точки, которой уже нет на правом краю, — хвост у чужой кривой.
+FORECAST_MAX_AGE = timedelta(minutes=20)
+
+
+def _forecast(
+    rows: list[tuple[datetime, int, float, str]], now: datetime
+) -> dict | None:
+    """Хвост модели для страницы: от какой точки, какая модель, куда ведёт.
+
+    Точки — абсолютное время и мг/дл, как у кривой: странице не нужно
+    складывать горизонты самой. Устаревший прогноз не публикуется вовсе, а не
+    помечается: страница, увидев ключ, нарисует хвост, и единственный способ
+    ей этого не позволить — ключа не дать.
+    """
+
+    if not rows:
+        return None
+    made_at = rows[0][0]
+    if now - made_at > FORECAST_MAX_AGE:
+        return None
+    return {
+        "made_at": int(made_at.replace(tzinfo=timezone.utc).timestamp()),
+        "model": rows[0][3],
+        "points": [
+            [
+                int((made_at + timedelta(minutes=horizon)).replace(tzinfo=timezone.utc).timestamp()),
+                round(mgdl),
+            ]
+            for _, horizon, mgdl, _ in sorted(rows, key=lambda row: row[1])
+        ],
+    }
+
+
 def _trend(readings: list[tuple[datetime, float]]) -> dict | None:
     """Latest reading plus its rate of change in mg/dL per minute."""
 
@@ -631,6 +667,7 @@ def build_snapshot(
     fingersticks: list[tuple[datetime, float]] | None = None,
     sensor_started: datetime | None = None,
     sensor_ends: datetime | None = None,
+    forecast_rows: list[tuple[datetime, int, float, str]] | None = None,
 ) -> dict:
     """Assemble the snapshot the page reads. Pure: no database, no clock.
 
@@ -701,6 +738,9 @@ def build_snapshot(
         # своей константой и по этому ключу может её сверить, а не верить.
         "timezone": DISPLAY_TZ,
         "latest": latest if latest is not None else _trend(readings),
+        # Хвост модели. None — и страница рисует линейный, как прежде: ключ
+        # отсутствует ровно тогда, когда рисовать по модели нечестно.
+        "forecast": _forecast(forecast_rows or [], now),
         "series": series,
         "stats": stats,
         # Своё окно, не выбранное на странице — см. GMI_WINDOW.
@@ -831,6 +871,9 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
         # её — карточка сенсора покажет только полноту данных.
         sensor_started=read_sensor_start(),
         sensor_ends=read_sensor_end(),
+        # Бот пишет прогноз на каждую точку; нет таблицы или строк — пусто, и
+        # хвост остаётся линейным.
+        forecast_rows=latest_forecast(),
     )
 
     directory = os.path.dirname(os.path.abspath(path))

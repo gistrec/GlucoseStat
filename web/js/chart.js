@@ -15,11 +15,18 @@ import {
     formatAmount,
 } from "./format.js";
 
-/* Горизонт пунктирного прогноза. Линейное продолжение по 15-минутной скорости
-   честно на полчаса — дальше еда и инсулин ломают прямую раньше, чем она
-   успевает сбыться. Скорость — та же latest.rate, по которой рисуется стрелка
-   тренда: две подписи одного числа не вправе разойтись. */
+/* Горизонт линейного прогноза. Продолжение по 15-минутной скорости честно
+   на полчаса — дальше еда и инсулин ломают прямую раньше, чем она успевает
+   сбыться. Скорость — та же latest.rate, по которой рисуется стрелка тренда:
+   две подписи одного числа не вправе разойтись. Хвост модели горизонтом не
+   ограничен: его точки приходят в снимке как есть (forecast.points). */
 export const FORECAST_MINUTES = 30;
+
+/* Насколько точка, от которой модель считала прогноз, может отстать от
+   последнего замера. Бот считает от точки пятиминутной сетки раз в минуту,
+   так что обычно отставание — минуты; дальше четверти часа это уже прогноз
+   про другую кривую — тот же порог, которым датасет режет дыры. */
+export const MODEL_MAX_LAG_S = 15 * 60;
 
 /* Шкала сенсора: значений за её пределами Libre не отдаёт, и хвост, ушедший
    ниже 40 мг/дл, обещал бы замер, которого не может быть. На границе шкалы
@@ -84,7 +91,8 @@ export function chartDescription(daily, hasData, tail, gaps, artifacts, sugars) 
     // а обещать прогноз, которого на холсте нет, подпись не вправе — отсюда
     // фраза только при нарисованном хвосте.
     const forecast = tail
-        ? `. Пунктиром — прогноз на ${Math.round((tail.to.t - tail.from.t) / 60)} минут вперёд по текущей скорости`
+        ? `. Пунктиром — прогноз на ${Math.round((tail.to.t - tail.from.t) / 60)} минут вперёд ` +
+          (tail.model ? "по модели, с учётом еды и инсулина" : "по текущей скорости")
         : "";
 
     /* Молчание сенсора — тем же правилом: сказано ровно то, что нарисовано.
@@ -421,13 +429,49 @@ export function drawDayProfile(ctx, runs, x, y) {
    где рисовать нечего или нечестно. Свежесть меряется от правого края холста
    (generated_at), а не от часов устройства: пока Abbott молчит, снимок
    продолжает штамповаться, точка отходит от края — и тянуть из неё будущее
-   значило бы врать дважды. Порог — тот же, каким шапка гасит цвет значения. */
+   значило бы врать дважды. Порог — тот же, каким шапка гасит цвет значения.
+
+   Хвост один: модельный, когда бот его посчитал и он свежий, иначе линейный.
+   Форма у обоих общая — from, points (по порядку), to (последняя точка) и
+   model (имя или null), — чтобы отрисовка, подсказка и легенда не знали,
+   откуда хвост взялся. */
 export function forecastTail() {
     if (!HOURLY_RANGES.has(state.activeRange)) return null;
 
     const latest = state.snapshot.latest;
-    if (!latest || latest.rate === null || latest.rate === undefined) return null;
+    if (!latest) return null;
     if ((state.snapshot.generated_at - latest.t) * 1000 > STALE_AFTER_MS) return null;
+
+    return modelTail(latest) || linearTail(latest);
+}
+
+/* Хвост модели из снимка (publish._forecast): абсолютные точки в мг/дл,
+   считанные ботом от точки made_at. Точки позади последнего замера
+   отбрасываются — хвост начинается от него, а не от точки сетки, — и прогноз
+   за шкалой сенсора прижимается к ней, как и линейный. */
+export function modelTail(latest) {
+    const forecast = state.snapshot.forecast;
+    if (!forecast || !Array.isArray(forecast.points) || !forecast.points.length) return null;
+    if (forecast.made_at > latest.t || latest.t - forecast.made_at > MODEL_MAX_LAG_S) return null;
+
+    const points = forecast.points
+        .filter(([t]) => t > latest.t)
+        .map(([t, mgdl]) => ({
+            t,
+            mgdl: Math.min(SENSOR_MAX_MGDL, Math.max(SENSOR_MIN_MGDL, mgdl)),
+        }));
+    if (!points.length) return null;
+
+    return {
+        from: { t: latest.t, mgdl: latest.mgdl },
+        points,
+        to: points[points.length - 1],
+        model: forecast.model || "model",
+    };
+}
+
+export function linearTail(latest) {
+    if (latest.rate === null || latest.rate === undefined) return null;
 
     let minutes = FORECAST_MINUTES;
     if (latest.rate > 0) {
@@ -439,13 +483,42 @@ export function forecastTail() {
     // Хвост короче минуты не читается — это уже не прогноз, а заусенец.
     if (minutes < 1) return null;
 
-    return {
-        from: { t: latest.t, mgdl: latest.mgdl },
-        to: {
-            t: latest.t + Math.round(minutes * 60),
-            mgdl: latest.mgdl + latest.rate * minutes,
-        },
+    const to = {
+        t: latest.t + Math.round(minutes * 60),
+        mgdl: latest.mgdl + latest.rate * minutes,
     };
+    return { from: { t: latest.t, mgdl: latest.mgdl }, points: [to], to, model: null };
+}
+
+/* Линейный хвост рядом с модельным — только как предупреждение о падении.
+   На своих данных модель сглаживает редкие провалы к среднему и за полчаса
+   до гипогликемии не называет её ни разу, а линейное продолжение ловит две
+   трети из них (docs/research/glucose-forecast-2026-10.md в GlucoseBot). Так
+   что когда прямая уходит под порог, а модель — нет, прямая остаётся на
+   холсте, цветом «ниже нормы». Когда модель и сама ведёт под порог, второй
+   хвост лишний: предупреждение уже на месте. */
+export function fallTail(latest, tail) {
+    if (!tail || !tail.model) return null;
+    const linear = linearTail(latest);
+    if (!linear) return null;
+    const low = state.snapshot.target ? state.snapshot.target.low : 70;
+    if (linear.to.mgdl > low) return null;
+    if (tail.points.some((point) => point.mgdl <= low)) return null;
+    return linear;
+}
+
+/* Значение хвоста в момент t — по отрезкам, не по хорде from–to: у модельного
+   хвоста точек две, и между ними он ломаная. */
+export function tailValueAt(tail, t) {
+    let previous = tail.from;
+    for (const point of tail.points) {
+        if (t <= point.t) {
+            const share = point.t === previous.t ? 1 : (t - previous.t) / (point.t - previous.t);
+            return previous.mgdl + (point.mgdl - previous.mgdl) * share;
+        }
+        previous = point;
+    }
+    return null;
 }
 
 /* Порядок слоёв — контракт, по которому в каркас вставляются отрисовщики:
@@ -466,6 +539,7 @@ export function drawChart() {
     const days = daily ? series.days : [];
     const lanes = daily ? [] : eventLanes();
     const tail = daily ? null : forecastTail();
+    const fall = tail ? fallTail(state.snapshot.latest, tail) : null;
     const gaps = daily ? [] : seriesGaps(series, points, tail);
     const artifacts = daily ? [] : seriesArtifacts();
     const sugars = daily ? [] : seriesSugars();
@@ -517,7 +591,7 @@ export function drawChart() {
     // Правый край холста — не «сейчас», когда есть прогноз: будущему нужно
     // место, иначе хвост рисовать некуда. Метки оси при этом остаются на
     // долях самого окна — «сейчас» просто отходит от рамки на ширину хвоста.
-    const endTime = tail ? Math.max(now, tail.to.t) : now;
+    const endTime = tail ? Math.max(now, tail.to.t, fall ? fall.to.t : 0) : now;
 
     // Профиль обычного дня — до масштаба: края его коридора участвуют в
     // niceScale наравне с кривой, иначе коридор упирался бы в рамку.
@@ -536,7 +610,8 @@ export function drawChart() {
                   ...runs.flatMap((run) => run.flatMap((slot) => [toMmol(slot.p25), toMmol(slot.p75)])),
                   // Конец хвоста — в кадре наравне с кривой: обрезанный рамкой
                   // прогноз читался бы как «дальше неизвестно», а не «выше».
-                  ...(tail ? [toMmol(tail.to.mgdl)] : []),
+                  ...(tail ? tail.points.map((point) => toMmol(point.mgdl)) : []),
+                  ...(fall ? [toMmol(fall.to.mgdl)] : []),
               ]
     );
 
@@ -582,7 +657,10 @@ export function drawChart() {
         }
         // Дальше — хвост: он продолжение измерения, а не отдельная сущность.
         if (tail) {
-            legendItems.push(SERIES.forecast);
+            legendItems.push(tail.model ? SERIES.forecastModel : SERIES.forecast);
+        }
+        if (fall) {
+            legendItems.push(SERIES.fall);
         }
         // И следом — полосы вне нормы: они про ту же кривую, а не про журнал.
         // Снизу вверх, в порядке самих полос на холсте: легенда перечисляет их
@@ -758,6 +836,9 @@ export function drawChart() {
             axisAlpha
         );
         drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeight);
+        // Предупреждение — под хвостом модели: там, где они расходятся, видно
+        // обоих, а где сходятся, верхним остаётся прогноз.
+        if (fall) drawFall(ctx, fall, x, y);
         if (tail) drawForecast(ctx, tail, x, y, padding.top, padding.top + plotHeight);
         // После кривой: у края области она проходит по тем же пикселям —
         // высокий сахар жмётся к верхней рамке весь подъём, — и под кривой
@@ -806,6 +887,7 @@ export function drawChart() {
         },
         laneBoxes,
         tail,
+        fall,
         // Промежутки молчания — наведению: «Измерение» из точки в получасе от
         // курсора приписывало бы замер часу, когда сенсора попросту не было.
         gaps,
@@ -1306,9 +1388,24 @@ export function drawForecast(ctx, tail, x, y, plotTop, plotBottom) {
     ctx.setLineDash([3, 3]);
     ctx.beginPath();
     ctx.moveTo(x(tail.from.t), y(toMmol(tail.from.mgdl)));
-    ctx.lineTo(endX, endY);
+    // Ломаная по точкам хвоста: у линейного она одна, у модели — полчаса и час.
+    for (const point of tail.points) {
+        ctx.lineTo(x(point.t), y(toMmol(point.mgdl)));
+    }
     ctx.stroke();
     ctx.setLineDash([]);
+
+    // Промежуточные точки — кольцом поменьше: где модель видит кривую через
+    // полчаса, по дороге к часу. Без числа — оно у конца, а два числа на
+    // пятнадцати пикселях легли бы друг на друга.
+    ctx.fillStyle = readColor("--panel", "#0d0d14");
+    for (const point of tail.points.slice(0, -1)) {
+        ctx.beginPath();
+        ctx.arc(x(point.t), y(toMmol(point.mgdl)), 2.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+    }
 
     ctx.beginPath();
     ctx.arc(endX, endY, 3.5, 0, Math.PI * 2);
@@ -1342,6 +1439,32 @@ export function drawForecast(ctx, tail, x, y, plotTop, plotBottom) {
     ctx.strokeText(text, endX - 1, labelY);
     ctx.fillStyle = color;
     ctx.fillText(text, endX - 1, labelY);
+}
+
+/* Предупреждение о падении: линейный хвост тоньше модельного, тем же штрихом,
+   цветом «ниже нормы», с кольцом на конце и без числа — число в подсказке.
+   Подпись рядом с подписью модели легла бы на неё: оба конца у правого края. */
+export function drawFall(ctx, fall, x, y) {
+    const color = readColor("--hypo", "#ff5b5b");
+    const endX = x(fall.to.t);
+    const endY = y(toMmol(fall.to.mgdl));
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = "butt";
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(x(fall.from.t), y(toMmol(fall.from.mgdl)));
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.beginPath();
+    ctx.arc(endX, endY, 3, 0, Math.PI * 2);
+    ctx.fillStyle = readColor("--panel", "#0d0d14");
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
 }
 
 /* Горизонталь коробки дня: середина наблюдаемого куска, прижатая к рамке.
@@ -1605,12 +1728,22 @@ export function showTip(clientX) {
     }
 
     if (future && state.hoverTime <= tail.to.t) {
-        const share = (state.hoverTime - tail.from.t) / (tail.to.t - tail.from.t);
-        const mgdl = tail.from.mgdl + (tail.to.mgdl - tail.from.mgdl) * share;
-        // «≈» — единственная строка подсказки с оговоркой: остальные
-        // пересказывают записи, эта — прямую, продлённую в будущее.
+        const mgdl = tailValueAt(tail, state.hoverTime);
+        // «≈» — строка подсказки с оговоркой: остальные пересказывают
+        // записи, эта — линию, продлённую в будущее.
+        const kind = tail.model ? SERIES.forecastModel : SERIES.forecast;
+        rows.push(tipRow(kind, `${kind.label} ≈ ${formatMmol(mgdl)} ${kind.unit}`));
+    }
+
+    // Предупреждение о падении — своей строкой и своим цветом: это не второй
+    // прогноз, а то, куда ведёт текущая скорость, если ничего не менять.
+    const fall = state.geometry.fall;
+    if (fall && state.hoverTime > fall.from.t && state.hoverTime <= fall.to.t) {
         rows.push(
-            tipRow(SERIES.forecast, `Прогноз ≈ ${formatMmol(mgdl)} ${SERIES.forecast.unit}`)
+            tipRow(
+                SERIES.fall,
+                `По скорости ≈ ${formatMmol(tailValueAt(fall, state.hoverTime))} ${SERIES.fall.unit}`
+            )
         );
     }
 

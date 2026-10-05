@@ -82,9 +82,13 @@ A day that is not whole carries a grey dash under its box, and the tooltip names
 
 ### Forecast
 
-On the hourly windows the curve continues past "now" as a dashed 30-minute forecast. It is a linear extension of the same 15-minute rate that draws the trend arrow, so the two can never disagree.
+On the hourly windows the curve continues past "now" as a dashed forecast. When [GlucoseBot](https://github.com/gistrec/GlucoseBot) has written one, it is the model's: gradient boosting over the last hour of the curve, the insulin and carbohydrates still active from the journal, and the hour of day, retrained nightly on everything the journal holds and written to `glucose_forecasts` on every new reading (`ml/live.py` there). The snapshot carries it as `forecast`, with absolute points at thirty and sixty minutes; the page draws it as one dashed line through both, a small ring at the half hour and the value at the end. On its own data it beats the straight line after meals, where the straight line is worst (1.29 against 1.71 mmol/L RMSE at thirty minutes over six weeks).
 
-It is capped at half an hour because food and insulin break the straight line sooner than it comes true. It disappears entirely while the latest reading is stale: extending a curve that stopped moving would be lying twice.
+Without a forecast, or with one computed from a reading more than fifteen minutes behind the latest, the tail is the old one: a linear extension of the same 15-minute rate that draws the trend arrow, capped at half an hour because food and insulin break the straight line sooner than it comes true.
+
+The straight line does not vanish altogether. A sharp fall is the one thing it reads better than the model, which smooths rare dips toward the mean and did not call a single low half an hour ahead on the same data, while the line caught two thirds of them. So when the linear extension crosses the low threshold within its half hour and the model's tail does not, the line stays on the canvas in the low colour, thinner and without a number: a warning, not a second forecast.
+
+Both disappear while the latest reading is stale: extending a curve that stopped moving would be lying twice.
 
 ### Thinned readings
 

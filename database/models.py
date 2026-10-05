@@ -65,6 +65,22 @@ meal_estimates = Table(
     Column("spread_g", Numeric(6, 1)),
 )
 
+# Прогноз модели — тоже боту: он учит её на журнале и кривой (ml/live.py) и
+# пишет сюда на каждую новую точку. Страница читает последнюю и рисует хвост
+# вместо линейного продолжения по скорости. Та же оговорка, что у журнала:
+# таблицы может не быть, и снимок обязан собраться без неё.
+glucose_forecasts = Table(
+    "glucose_forecasts",
+    journal_metadata,
+    # Точка кривой, от которой считан прогноз. Наивный UTC, как timestamp.
+    Column("made_at", DateTime, primary_key=True),
+    Column("horizon_min", Integer, primary_key=True),
+    # мг/дл, как и glucose_readings: переводит страница, тем же делителем.
+    Column("mgdl", Float, nullable=False),
+    Column("model", String(32), nullable=False),
+    Column("created_at", DateTime, nullable=False),
+)
+
 
 class CollectorState(Base):
     """Состояние сборщика, видимое рендереру на другой машине.

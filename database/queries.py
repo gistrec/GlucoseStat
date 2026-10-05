@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.exc import ProgrammingError, SQLAlchemyError
 
@@ -11,6 +11,7 @@ from .connection import session
 from .models import (
     CollectorState,
     GlucoseReading,
+    glucose_forecasts,
     journal_entries,
     meal_confirmations,
     meal_estimates,
@@ -179,6 +180,41 @@ def journal_since(start: datetime) -> list[tuple[datetime, str, float | None, fl
             None if row.carbs_g is None else float(row.carbs_g),
             None if row.units is None else float(row.units),
         )
+        for row in rows
+    ]
+
+
+def latest_forecast() -> list[tuple[datetime, int, float, str]]:
+    """Прогноз от самой свежей точки: (made_at, horizon_min, mgdl, model).
+
+    Пустой список, если таблицы нет или бот ещё ничего не посчитал — тогда
+    страница рисует прежний линейный хвост. Свежесть здесь не проверяется:
+    решает ``publish._forecast``, у которого есть «сейчас».
+    """
+
+    try:
+        with session() as db:
+            newest = db.execute(
+                select(func.max(glucose_forecasts.c.made_at))
+            ).scalar_one()
+            if newest is None:
+                return []
+            rows = db.execute(
+                select(
+                    glucose_forecasts.c.made_at,
+                    glucose_forecasts.c.horizon_min,
+                    glucose_forecasts.c.mgdl,
+                    glucose_forecasts.c.model,
+                )
+                .where(glucose_forecasts.c.made_at == newest)
+                .order_by(glucose_forecasts.c.horizon_min)
+            ).all()
+    except SQLAlchemyError as error:
+        log.warning("forecast unavailable, publishing without it: %s", error)
+        return []
+
+    return [
+        (row.made_at, int(row.horizon_min), float(row.mgdl), str(row.model))
         for row in rows
     ]
 
