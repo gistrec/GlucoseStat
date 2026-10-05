@@ -124,7 +124,7 @@ The activation moment comes from LibreLinkUp, in the same `graph` response as th
 
 The table is empty on purpose. Abbott publishes no such numbering, and a guess in it would repeat the bug that made this card call a Libre 3 Pro a plain Libre 3 and end its life a day early. The collector logs the number it actually sees, once per process, which is how a row gets added; until then the lifetime is the fallback constant.
 
-The collector stores both the start and the computed end in `collector_state`, so the renderer on the replica publishes the same dates without needing to know the model. The days left are counted in the browser, since a number baked into a snapshot would be yesterday's by morning.
+The collector stores both the start and the computed end in `collector_state`, so a renderer on a read replica would publish the same dates without needing to know the model. The days left are counted in the browser, since a number baked into a snapshot would be yesterday's by morning.
 
 The serial number sitting next to all this in Abbott's payload is dropped where it is parsed. The card names no model at all: the one in the page header is written by a human, where it reads as a claim rather than as data. Abbott does not always send the block; then the card says the date is unknown rather than guessing one.
 
@@ -326,9 +326,11 @@ The collector is a singleton for three separate reasons, any one of which is eno
 * LibreLinkUp hands out one session per account, so two logins evict each other;
 * `.alerts.json` is per-process, so two copies would each alert about the same low.
 
-The renderer is not. A second host with a read replica can rebuild the snapshot from its own copy of the data and serve its own `web/data.json`, which is how the page is served from inside Russia, where the Finnish origin is throttled. That host runs no collector; it renders on a one-minute cron and nothing else.
+The renderer is not. A second host with a read replica can rebuild the snapshot from its own copy of the data and serve its own `web/data.json`.
 
-This is why `last_success`, the moment the collector last reached LibreLinkUp, lives in the `collector_state` table rather than only in the collector's memory. A renderer on another machine has no memory to inherit it from, and without it the page there could never say "the numbers stopped moving". Nothing else tells fresh glucose from yesterday's.
+Production does not do that. One host runs the collector and serves the page; visitors from Russia, where the Finnish origin is throttled, reach it through a proxy on a Russian host over WireGuard, so there is one `data.json` and one place to deploy.
+
+This is why `last_success`, the moment the collector last reached LibreLinkUp, lives in the `collector_state` table rather than only in the collector's memory. A renderer on another machine would have no memory to inherit it from, and without it the page there could never say "the numbers stopped moving". Nothing else tells fresh glucose from yesterday's.
 
 ## Notes
 
