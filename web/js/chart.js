@@ -1742,7 +1742,7 @@ export function showTip(clientX) {
         rows.push(
             tipRow(
                 SERIES.fall,
-                `По скорости ≈ ${formatMmol(tailValueAt(fall, state.hoverTime))} ${SERIES.fall.unit}`
+                `По тренду ≈ ${formatMmol(tailValueAt(fall, state.hoverTime))} ${SERIES.fall.unit}`
             )
         );
     }

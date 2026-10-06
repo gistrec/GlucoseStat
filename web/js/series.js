@@ -40,7 +40,7 @@ export const SERIES = {
     fall: {
         token: "--hypo",
         fallback: "#ff5b5b",
-        label: "По скорости: к гипо",
+        label: "Падение по тренду",
         unit: "ммоль/л",
         line: true,
         dashed: true,
