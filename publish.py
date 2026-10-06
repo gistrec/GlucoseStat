@@ -13,6 +13,7 @@ import tempfile
 from datetime import date, datetime, time, timedelta, timezone
 from itertools import pairwise
 
+from active import active_now
 from agp import day_profile
 from analysis import analyse
 from database.queries import (
@@ -741,6 +742,11 @@ def build_snapshot(
         # Хвост модели. None — и страница рисует линейный, как прежде: ключ
         # отсутствует ровно тогда, когда рисовать по модели нечестно.
         "forecast": _forecast(forecast_rows or [], now),
+        # Остаток короткого инсулина и углеводов — те же IOB и COB, что видит
+        # модель прогноза (кривые в active.py). По всему журналу, а не по
+        # EVENT_WINDOW: окно событий шире пяти часов действия, но связывать их
+        # незачем.
+        "active": active_now(journal, now),
         "series": series,
         "stats": stats,
         # Своё окно, не выбранное на странице — см. GMI_WINDOW.

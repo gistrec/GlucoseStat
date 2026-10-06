@@ -325,6 +325,107 @@ body {
     }
 }
 
+/* ── Активный инсулин и углеводы ───────────────────────────────────── */
+
+/* Две половины одной карточки, как у сенсора: остаток укола и остаток еды
+   тянут сахар в разные стороны, и читать их нужно рядом. Половина без
+   остатка не рисуется вовсе — тогда вторая занимает всю ширину. */
+.active {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    background: var(--panel);
+    border: 1px solid var(--panel-chrome);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    margin-bottom: 24px;
+}
+
+.active__half + .active__half {
+    margin-left: 28px;
+    padding-left: 28px;
+    border-left: 1px solid var(--panel-chrome);
+}
+
+.active__label {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: baseline;
+    justify-content: space-between;
+    margin: 0;
+    font-size: 0.9rem;
+}
+
+.active__aside {
+    font-size: 0.8rem;
+    color: var(--muted);
+}
+
+.active__reading {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin: 10px 0 0;
+}
+
+.active__value {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 2.4rem;
+    font-weight: 500;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
+
+.active__unit {
+    color: var(--muted);
+}
+
+/* Полоса — доля от того, что ещё в игре: фон тем же цветом, но бледно, чтобы
+   было видно, сколько уже отработало. */
+.active__track {
+    position: relative;
+    margin-top: 14px;
+    height: 6px;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.active__track::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--tone);
+    opacity: 0.15;
+}
+
+.active__fill {
+    position: relative;
+    height: 100%;
+    border-radius: 3px;
+    background: var(--tone);
+}
+
+.active__hint {
+    margin: 10px 0 0;
+    font-size: 0.82rem;
+    color: var(--muted);
+}
+
+@media (max-width: 640px) {
+    .active {
+        grid-auto-flow: row;
+        padding: 16px;
+    }
+
+    .active__half + .active__half {
+        margin: 16px 0 0;
+        padding: 16px 0 0;
+        border-left: none;
+        border-top: 1px solid var(--panel-chrome);
+    }
+}
+
 /* ── Пустое состояние ──────────────────────────────────────────────── */
 .empty {
     background: var(--panel);

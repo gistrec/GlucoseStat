@@ -5,6 +5,7 @@ import { state, MEALS_PAGE } from "./js/state.js";
 import { els } from "./js/dom.js";
 import { THEMES, THEME_BG, initialTheme, rememberTheme, storedTheme } from "./js/theme.js";
 import { renderNow, renderStats } from "./js/now-stats.js";
+import { renderActive } from "./js/active.js";
 import { renderSensor } from "./js/sensor.js";
 import { renderNights } from "./js/nights.js";
 import { drawChart, hoverAt, clearHover } from "./js/chart.js";
@@ -98,6 +99,9 @@ function render() {
     els.empty.hidden = true;
 
     renderNow();
+    // Рядом с журналом и по той же причине не ждёт сенсора: остаток инсулина
+    // считается по уколам, а не по кривой.
+    renderActive();
     // До проверки на пустые данные: когда замеров нет вовсе, знать, жив ли
     // сборщик, тем более важно.
     renderCollectorState();
