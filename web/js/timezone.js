@@ -161,7 +161,10 @@ function open() {
     renderList("");
     els.zoneMenu.hidden = false;
     els.zone.setAttribute("aria-expanded", "true");
-    els.zoneSearch.focus();
+    // Фокус в поиск — только с мышью. На телефоне он поднимал клавиатуру
+    // поверх списка, хотя чаще всего нужен тап по одному из трёх городов;
+    // поиск остаётся в одном касании.
+    if (window.matchMedia("(pointer: fine)").matches) els.zoneSearch.focus();
     // Выбранный пояс в длинном списке — в поле зрения, а не за прокруткой.
     const picked = els.zoneList.querySelector('[aria-selected="true"]');
     if (picked) picked.scrollIntoView({ block: "nearest" });

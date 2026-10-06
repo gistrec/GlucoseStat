@@ -252,7 +252,9 @@ body {
     width: 100%;
     padding: 8px 10px;
     font: inherit;
-    font-size: 0.88rem;
+    /* Не меньше 16px: поле мельче iOS Safari увеличивает при фокусе, и
+       страница остаётся приближенной после закрытия меню. */
+    font-size: 16px;
     color: var(--fg);
     background: var(--bg);
     border: 1px solid var(--panel-chrome);
