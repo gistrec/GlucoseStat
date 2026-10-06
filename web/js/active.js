@@ -1,6 +1,6 @@
 import { state } from "./state.js";
 import { els } from "./dom.js";
-import { TZ_MINUTES, formatAmount, formatSpan } from "./format.js";
+import { TZ_MINUTES, formatAmount, formatSpan, plural } from "./format.js";
 
 /* Плашка «Активный инсулин и углеводы»: сколько короткого ещё работает и
    сколько съеденного ещё всасывается. Числа считает сборщик (active.py) по
@@ -23,6 +23,14 @@ export function renderActive() {
 function insulinHalf(insulin) {
     const now = Date.now();
     const since = formatSpan((now - insulin.last * 1000) / 1000);
+    // При одном уколе «из 5 ед, 2 ч 18 мин» читается верно. При нескольких то
+    // же время рядом с суммой выглядело бы как «7 ед вкололи 20 мин назад»,
+    // а это лишь последний из трёх.
+    const count = insulin.count || 1;
+    const aside =
+        count === 1
+            ? `из ${formatAmount(insulin.of)} ед, ${since}`
+            : `из ${formatAmount(insulin.of)} ед за ${count} ${plural(count, "укол", "укола", "уколов")}, последний ${since} назад`;
     const peak = insulin.peak * 1000 - now;
     // Пик последнего укола: до него сахар ещё не видел полной силы дозы.
     const peakText = peak > 0 ? `пик через ${formatSpan(peak / 1000)}` : "пик прошёл";
@@ -30,7 +38,7 @@ function insulinHalf(insulin) {
     return half({
         token: "--insulin",
         title: "Активный инсулин",
-        aside: `из ${formatAmount(insulin.of)} ед, ${since}`,
+        aside,
         value: formatAmount(insulin.left),
         unit: "ед ещё работает",
         share: insulin.left / insulin.of,

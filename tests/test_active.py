@@ -48,7 +48,25 @@ class TestActiveNow:
             (BASE - timedelta(hours=8), "bolus", None, 6.0),
             (BASE - timedelta(minutes=30), "bolus", None, 2.0),
         ]
-        assert active_now(journal, BASE)["insulin"]["of"] == 2.0
+        insulin = active_now(journal, BASE)["insulin"]
+        assert insulin["of"] == 2.0
+        assert insulin["count"] == 1
+
+    def test_several_shots_add_up(self):
+        journal = [
+            (BASE - timedelta(hours=3), "bolus", None, 4.0),
+            (BASE - timedelta(hours=1), "bolus", None, 2.0),
+            (BASE - timedelta(minutes=20), "bolus", None, 1.0),
+        ]
+        insulin = active_now(journal, BASE)["insulin"]
+
+        assert insulin["of"] == 7.0
+        assert insulin["count"] == 3
+        assert insulin["left"] == pytest.approx(
+            4 * iob_fraction(180) + 2 * iob_fraction(60) + iob_fraction(20), abs=0.05
+        )
+        # Пик и конец действия — у последнего укола.
+        assert insulin["last"] == ts(BASE - timedelta(minutes=20))
 
     def test_basal_is_not_counted(self):
         journal = [(BASE - timedelta(minutes=30), "basal", None, 14.0)]
@@ -61,6 +79,7 @@ class TestActiveNow:
         assert carbs == {
             "left": 30.0,
             "of": 60.0,
+            "count": 1,
             "last": ts(meal),
             "until": ts(meal + timedelta(minutes=255)),
         }

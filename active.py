@@ -83,6 +83,9 @@ def _remaining(
     return {
         "left": round(left, 1),
         "of": round(sum(amount for _, amount, _ in live), 1),
+        # Сколько записей сложено: «из 7 ед» за один укол и за три — разные
+        # истории, и подпись обязана их различать.
+        "count": len(live),
         "last": _seconds(last),
         "until": _seconds(last + lasts),
     }
