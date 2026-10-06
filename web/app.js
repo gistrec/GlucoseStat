@@ -10,7 +10,8 @@ import { renderSensor } from "./js/sensor.js";
 import { renderNights } from "./js/nights.js";
 import { drawChart, hoverAt, clearHover } from "./js/chart.js";
 import { renderReview, setMealFilter, overlayHoverAt, clearOverlayHover } from "./js/meals.js";
-import { TIMEZONE, formatAgo, formatDateTime } from "./js/format.js";
+import { HOME_TIMEZONE, formatAgo, formatDateTime } from "./js/format.js";
+import { initZonePicker, renderZoneButton } from "./js/timezone.js";
 
 const RELOAD_INTERVAL_MS = 60 * 1000;
 
@@ -85,10 +86,10 @@ function renderCollectorState() {
    и подсказка называет её по имени. */
 
 function render() {
-    if (!state.timezoneWarned && state.snapshot.timezone && state.snapshot.timezone !== TIMEZONE) {
+    if (!state.timezoneWarned && state.snapshot.timezone && state.snapshot.timezone !== HOME_TIMEZONE) {
         state.timezoneWarned = true;
         console.warn(
-            `Снимок нарезан в зоне ${state.snapshot.timezone}, страница подписывает время в ${TIMEZONE} — поменяйте DISPLAY_TZ и TIMEZONE вместе.`
+            `Снимок нарезан в зоне ${state.snapshot.timezone}, домашняя зона страницы — ${HOME_TIMEZONE} — поменяйте DISPLAY_TZ и HOME_TIMEZONE вместе.`
         );
     }
 
@@ -98,6 +99,8 @@ function render() {
     // если показывать по-прежнему нечего.
     els.empty.hidden = true;
 
+    // Часы на кнопке пояса идут вместе со снимком — раз в минуту.
+    renderZoneButton();
     renderNow();
     // Рядом с журналом и по той же причине не ждёт сенсора: остаток инсулина
     // считается по уколам, а не по кривой.
@@ -231,6 +234,11 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (ev
 });
 
 applyTheme(initialTheme());
+// Смена пояса перерисовывает всё: часы подписаны на оси, в подсказках, в
+// плашках и таблице разбора.
+initZonePicker(() => {
+    if (state.snapshot) render();
+});
 
 load();
 setInterval(load, RELOAD_INTERVAL_MS);

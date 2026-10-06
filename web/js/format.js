@@ -4,42 +4,108 @@ import { state } from "./state.js";
 // приложения используют 18: расхождение (0,01 ммоль/л) меньше шага сенсора.
 export const MGDL_PER_MMOL = 18;
 
-/* Часовой пояс всех подписей времени — тот же, в котором отвечает бот
-   (DISPLAY_TZ=Europe/Belgrade).
+/* Два пояса, и путать их нельзя.
 
-   В data.json время лежит в unix-секундах, и без явной зоны страница читала бы
-   его по часам устройства: один и тот же приём пищи назывался бы 01:43 с
-   ноутбука и 02:43 с телефона, живущего по другой стране. Зона названа вслух в
-   подсказке — иначе выбор остаётся невидимым ровно тогда, когда человек
-   сверяет запись с собственными часами. */
-export const TIMEZONE = "Europe/Belgrade";
-export const TIMEZONE_LABEL = "Белград";
+   Домашний (HOME_TIMEZONE) — тот, в котором отвечает бот и в котором сборщик
+   режет сутки (DISPLAY_TZ=Europe/Belgrade): по нему считаны ночи, профиль
+   обычного дня, подневный вид месяца и разбивка еды по времени суток.
+   Перенести их в другой пояс страница не может — нарезка уже сделана.
 
-/* Зона, в которой сборщик нарезал сутки, приходит в снимке; пока снимка нет —
-   или он собран прежним сборщиком — остаётся прибитая константа. Всё, что
-   рисует нарезанные на сервере сутки (подневный вид месяца, профиль обычного
-   дня), берёт зону отсюда: подписывать чужую нарезку по своей зоне значит
-   молча врать на час-два. */
-export function displayTimezone() {
-    return (state.snapshot && state.snapshot.timezone) || TIMEZONE;
+   Пояс просмотра (TIMEZONE) — в нём страница подписывает часы: ось графика,
+   подсказки, «Действие до 19:45». Его выбирают в шапке (js/timezone.js), по
+   умолчанию это пояс устройства. В data.json время лежит в unix-секундах, и
+   без явной зоны один и тот же приём пищи назывался бы 01:43 с ноутбука и
+   02:43 с телефона; поэтому зона всегда задана явно и названа в подсказке.
+
+   TIMEZONE, TIMEZONE_LABEL и TZ_MINUTES — живые привязки модуля: setTimezone
+   меняет их, и все, кто их импортировал, видят новое значение. */
+export const HOME_TIMEZONE = "Europe/Belgrade";
+export const HOME_LABEL = "Белград";
+
+/* Закреплённые в меню пояса — там, где владелец бывает. Русские имена только
+   у них: у остальных четырёхсот имя города берётся из идентификатора. */
+export const PINNED_ZONES = [
+    ["Europe/Belgrade", "Белград"],
+    ["Europe/Moscow", "Москва"],
+    ["Asia/Novosibirsk", "Новосибирск"],
+];
+const ZONE_NAMES = Object.fromEntries(PINNED_ZONES);
+
+export function zoneLabel(zone) {
+    return ZONE_NAMES[zone] || zone.split("/").pop().replace(/_/g, " ");
 }
 
-/* Минуты местных суток — для профиля обычного дня. Форматтер один на модуль:
-   Intl.DateTimeFormat дорог в создании, а minutesOfDay зовётся на каждый слот
-   каждой перерисовки. hourCycle: "h23" обязателен: при hour: "2-digit" без
-   него ICU в части локалей отдаёт «24:00», и полуночный слот уезжает за
-   пределы массива. */
-export const TZ_MINUTES = new Intl.DateTimeFormat("ru-RU", {
-    timeZone: TIMEZONE,
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-});
+/* «UTC+3», «UTC+5:30», «UTC». На дату, а не навсегда: у Белграда смещение
+   зимой и летом разное, у Москвы — одно. */
+export function zoneOffset(zone, at = new Date()) {
+    const part = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "shortOffset" })
+        .formatToParts(at)
+        .find((item) => item.type === "timeZoneName");
+    return part ? part.value.replace("GMT", "UTC") : "UTC";
+}
 
+export function zoneOffsetMinutes(zone, at = new Date()) {
+    const match = zoneOffset(zone, at).match(/UTC([+-])(\d+)(?::(\d+))?/);
+    if (!match) return 0;
+    return (match[1] === "-" ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3] || 0));
+}
+
+function clockFormat(zone) {
+    return new Intl.DateTimeFormat("ru-RU", {
+        timeZone: zone,
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+    });
+}
+
+export let TIMEZONE = HOME_TIMEZONE;
+export let TIMEZONE_LABEL = HOME_LABEL;
+/* Часы и минуты в поясе просмотра. Форматтер один на пояс: Intl.DateTimeFormat
+   дорог в создании. hourCycle: "h23" обязателен: при hour: "2-digit" без него
+   ICU в части локалей отдаёт «24:00». */
+export let TZ_MINUTES = clockFormat(TIMEZONE);
+
+export function setTimezone(zone) {
+    TIMEZONE = zone;
+    TIMEZONE_LABEL = zoneLabel(zone);
+    TZ_MINUTES = clockFormat(zone);
+}
+
+/* Зона, в которой сборщик нарезал сутки, приходит в снимке; пока снимка нет —
+   или он собран прежним сборщиком — остаётся домашняя. Всё, что рисует
+   нарезанные на сервере сутки (подневный вид месяца, профиль обычного дня),
+   берёт зону отсюда: подписывать чужую нарезку по своей зоне значит молча
+   врать на час-два. */
+export function displayTimezone() {
+    return (state.snapshot && state.snapshot.timezone) || HOME_TIMEZONE;
+}
+
+/* Часы просмотра расходятся с часами нарезки — тогда блоки, нарезанные
+   сервером, договаривают «по Белграду». По смещению, а не по имени: Париж и
+   Белград живут по одним часам, и приписка там была бы шумом. */
+export function awayFromHome(at = new Date()) {
+    return zoneOffsetMinutes(TIMEZONE, at) !== zoneOffsetMinutes(displayTimezone(), at);
+}
+
+/* «по Белграду» — для подписи нарезанного сервером. */
+export function homeNote() {
+    const zone = displayTimezone();
+    return `по ${zone === HOME_TIMEZONE ? "Белграду" : zone}`;
+}
+
+const SLICE_MINUTES = new Map();
+
+/* Минуты местных суток в поясе нарезки — для профиля обычного дня и разбивки
+   еды по времени суток. Не в поясе просмотра: слоты профиля посчитаны
+   сервером по белградским суткам, и завтрак в 08:00 по Белграду остаётся
+   завтраком, сколько бы ни показывали часы в Новосибирске. */
 export function minutesOfDay(seconds) {
     let hours = 0;
     let minutes = 0;
-    for (const part of TZ_MINUTES.formatToParts(new Date(seconds * 1000))) {
+    const zone = displayTimezone();
+    if (!SLICE_MINUTES.has(zone)) SLICE_MINUTES.set(zone, clockFormat(zone));
+    for (const part of SLICE_MINUTES.get(zone).formatToParts(new Date(seconds * 1000))) {
         if (part.type === "hour") hours = Number(part.value);
         if (part.type === "minute") minutes = Number(part.value);
     }

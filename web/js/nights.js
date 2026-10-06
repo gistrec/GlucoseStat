@@ -1,7 +1,7 @@
 import { state } from "./state.js";
 import { els, readColor, readNumber } from "./dom.js";
 import { zoneColor, readingColor } from "./series.js";
-import { formatMmol, formatDelta } from "./format.js";
+import { formatMmol, formatDelta, awayFromHome, homeNote } from "./format.js";
 import { statCard } from "./now-stats.js";
 
 /* Ночь — единственная часть суток, которую человек не видит: днём низкий сахар
@@ -31,7 +31,9 @@ export function renderNights() {
     els.nightNote.textContent =
         `${nightHour(nights.from)}–${nightHour(nights.to)} по каждой ночи за последнюю неделю. ` +
         `Гипогликемии и минимум — по всем ночам, где сенсор отвечал; дрейф — по ночам, ` +
-        `где к ${nightHour(nights.drift_from)} ужин успел отработать.`;
+        `где к ${nightHour(nights.drift_from)} ужин успел отработать.` +
+        // Часы ночи — сервера: в поездке «00–06» остаются белградскими.
+        (awayFromHome() ? ` Часы — ${homeNote()}.` : "");
 
     els.nightStats.replaceChildren(...nightCards(nights));
     els.night.hidden = false;

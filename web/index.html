@@ -50,7 +50,19 @@
             </div>
             <!-- Подпись и заголовок задаёт app.js: кнопка перебирает три
                  состояния, и её текст — единственное, что о них сообщает. -->
-            <button class="theme" id="theme" type="button"></button>
+            <div class="head__controls">
+                <!-- Пояс просмотра. Подпись и часы ставит js/timezone.js; меню
+                     строится при открытии — в нём четыреста поясов, держать их
+                     в разметке всё время незачем. -->
+                <div class="zone">
+                    <button class="theme zone__button" id="zone" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="zone-menu"></button>
+                    <div class="zone__menu" id="zone-menu" hidden>
+                        <input class="zone__search" id="zone-search" type="search" placeholder="Город или UTC+3" aria-label="Найти часовой пояс" autocomplete="off" />
+                        <div class="zone__list" id="zone-list" role="listbox" aria-label="Часовой пояс"></div>
+                    </div>
+                </div>
+                <button class="theme" id="theme" type="button"></button>
+            </div>
         </header>
 
         <section class="now" id="now" hidden>

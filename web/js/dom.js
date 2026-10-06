@@ -37,6 +37,10 @@ export const els = {
     meals: document.getElementById("meals"),
     footUpdated: document.getElementById("foot-updated"),
     theme: document.getElementById("theme"),
+    zone: document.getElementById("zone"),
+    zoneMenu: document.getElementById("zone-menu"),
+    zoneSearch: document.getElementById("zone-search"),
+    zoneList: document.getElementById("zone-list"),
     themeColor: document.getElementById("theme-color"),
 };
 

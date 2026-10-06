@@ -6,6 +6,9 @@ import { STALE_AFTER_MS } from "./now-stats.js";
 import {
     TIMEZONE,
     TIMEZONE_LABEL,
+    HOME_TIMEZONE,
+    HOME_LABEL,
+    zoneLabel,
     displayTimezone,
     minutesOfDay,
     toMmol,
@@ -327,13 +330,15 @@ export function dayProfile() {
     const profile = state.snapshot.profile;
     if (!profile) return null;
 
-    if (profile.tz !== TIMEZONE) {
+    // Слоты профиля ищутся по минутам суток в поясе нарезки (minutesOfDay), а
+    // не в поясе просмотра, — сверять профиль надо с ним.
+    if (profile.tz !== displayTimezone()) {
         // Однократно: предупреждение о конфигурации, а не спам на каждую
         // перерисовку раз в минуту.
         if (!state.profileTzWarned) {
             state.profileTzWarned = true;
             console.warn(
-                `Профиль дня нарезан в зоне ${profile.tz}, страница подписывает время в ${TIMEZONE} — коридор не рисуется.`
+                `Профиль дня нарезан в зоне ${profile.tz}, снимок — в ${displayTimezone()} — коридор не рисуется.`
             );
         }
         return null;
@@ -1859,12 +1864,12 @@ export function showDayTip(clientX) {
     // сходятся: подписывать московскую нарезку «Белградом» хуже, чем показать
     // сырое имя зоны.
     const zone = displayTimezone();
-    const zoneLabel = zone === TIMEZONE ? TIMEZONE_LABEL : zone;
+    const sliced = zone === HOME_TIMEZONE ? HOME_LABEL : zoneLabel(zone);
     time.textContent = `${new Date(day.start * 1000).toLocaleDateString("ru-RU", {
         timeZone: zone,
         day: "numeric",
         month: "long",
-    })}, ${zoneLabel}`;
+    })}, ${sliced}`;
 
     // Метка медианы — тем же цветом, что её засечка на холсте.
     const median = tipRow(

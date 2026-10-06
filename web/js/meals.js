@@ -14,6 +14,8 @@ import {
     formatDelta,
     formatDose,
     plural,
+    awayFromHome,
+    homeNote,
 } from "./format.js";
 
 /* ── Разбор приёмов пищи ───────────────────────────────────────────── */
@@ -992,7 +994,9 @@ export function renderRatio(analysis) {
             ? ` из ${dosed.length}. Остальные отброшены: сахар в момент еды ` +
               "вне целевого диапазона, гипогликемия или незакрытое окно"
             : "") +
-        ". Не рекомендация дозы.";
+        ". Не рекомендация дозы." +
+        // Время суток приёма считается в поясе нарезки (minutesOfDay).
+        (awayFromHome() ? ` Время суток — ${homeNote()}.` : "");
 
     fillRatioTable(els.ratioTable, "Время суток", byDaypart);
     els.ratioTable.parentElement.hidden = !byDaypart.length;
