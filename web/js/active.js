@@ -33,7 +33,11 @@ function insulinHalf(insulin) {
             : `из ${formatAmount(insulin.of)} ед за ${count} ${plural(count, "укол", "укола", "уколов")}, последний ${since} назад`;
     const peak = insulin.peak * 1000 - now;
     // Пик последнего укола: до него сахар ещё не видел полной силы дозы.
-    const peakText = peak > 0 ? `пик через ${formatSpan(peak / 1000)}` : "пик прошёл";
+    // Временем, а не одним «прошёл»: по часам его сверяют с кривой.
+    const peakText =
+        peak > 0
+            ? `пик в ${clock(insulin.peak)}, через ${formatSpan(peak / 1000)}`
+            : `пик был в ${clock(insulin.peak)}`;
 
     return half({
         token: "--insulin",
