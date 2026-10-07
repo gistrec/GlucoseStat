@@ -70,7 +70,7 @@ The snapshot maths — time in range, GMI, variability, downsampling, trend — 
 
 ## What the page shows
 
-Current value with a trend arrow, a chart over 24 / 48 hours / 7 days / 30 days, and per-period statistics: time in range, average, spread, coefficient of variation, and GMI.
+Current value with a trend arrow, a chart over 24 / 48 hours / 7 days / 30 days, and per-period statistics: time in range, average, spread and coefficient of variation. GMI sits under the current value, outside the period tiles.
 
 ### Chart windows
 
@@ -136,9 +136,9 @@ The second half, data completeness, is counted from the readings alone. Time in 
 
 ### GMI
 
-GMI ignores the selected period: it is always the estimated HbA1c over the last **14 days**, the window Bergenstal et al. (2018) calibrated the formula on. Tying it to the buttons would put two different numbers, a week's GMI and a month's, under one name, and neither would be what a clinician means by it.
+GMI ignores the selected period: it is always the estimated HbA1c over the last **14 days**, the window Bergenstal et al. (2018) calibrated the formula on. Tying it to the buttons would put two different numbers, a week's GMI and a month's, under one name, and neither would be what a clinician means by it. So it is not a period tile either: it stands under the current value and reads the same on every tab, where a tile beside "24 hours" figures would pass for one of them.
 
-Below 70% CGM coverage over those two weeks the card disappears rather than showing a figure: an HbA1c estimated from three days looks as authoritative as one estimated from fourteen.
+Below 70% CGM coverage over those two weeks the line disappears rather than showing a figure: an HbA1c estimated from three days looks as authoritative as one estimated from fourteen.
 
 ### Units and zones
 

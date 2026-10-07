@@ -45,11 +45,28 @@ export function renderNow() {
         els.nowMeta.className = "now__meta";
     }
 
+    renderGmi();
+
     // Журнал молчанию сенсора не подчиняется: когда замеры устарели, «что ел и
     // чем колол» — единственное, что на странице осталось свежим.
     renderNowEvents();
 
     els.now.hidden = false;
+}
+
+/* GMI живёт по своему окну в две недели, а не по выбранному периоду, — поэтому
+   под текущим значением, а не среди плиток: там он стоял бы рядом с числами
+   «за 24 часа» и читался бы как ещё одно из них. Снимок отдаёт null, когда за
+   две недели набралось меньше 70 % измерений, — тогда строки просто нет,
+   вместо солидно выглядящей выдумки. */
+function renderGmi() {
+    const gmi = state.snapshot.gmi;
+    els.nowGmi.hidden = !gmi;
+    if (!gmi) return;
+
+    const value = document.createElement("strong");
+    value.textContent = `GMI ${percent(gmi.value)}`;
+    els.nowGmi.replaceChildren(value, ` · расчётный HbA1c за ${gmi.days} дней`);
 }
 
 /* Три строки рядом с текущим значением: последнее из журнала за двое суток —
@@ -236,18 +253,6 @@ export function renderStats() {
     if (stats.cv !== null && stats.cv !== undefined) {
         cards.push(statCard("Вариабельность", percent(stats.cv),
             stats.cv <= 36 ? `стабильно, норма ≤ ${percent(36)}` : `выше нормы ≤ ${percent(36)}`));
-    }
-
-    /* GMI живёт по своему окну в две недели, а не по выбранному периоду: под
-       одним названием иначе оказывались бы два разных числа. Снимок отдаёт
-       null, когда за две недели набралось меньше 70 % измерений — тогда
-       карточки просто нет, вместо солидно выглядящей выдумки. На почасовых
-       панелях не показываем: они про сегодня и вчера, а GMI — про две недели. */
-    const gmi = state.snapshot.gmi;
-    if (!HOURLY_RANGES.has(state.activeRange) && gmi) {
-        cards.push(
-            statCard("GMI", percent(gmi.value), `расчётный HbA1c за ${gmi.days} дней`)
-        );
     }
 
     cards.push(statCard("Измерений", stats.count.toLocaleString("ru-RU"), RANGE_LABELS[state.activeRange]));
