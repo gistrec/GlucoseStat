@@ -38,7 +38,7 @@ from publish import PUBLISH_PATH, build_snapshot
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(BASE_DIR, "web")
-ASSETS = ("index.html", "app.js", "style.css", "favicon.svg", "apple-touch-icon.png")
+ASSETS = ("index.html", "app.js", "style.css", "favicon.svg", "apple-touch-icon.png", "cat.gif")
 
 #: Каталоги, которые копируются целиком. ``app.js`` — точка входа, а сама
 #: страница живёт в модулях ``web/js/``, и перечислять их поимённо в ASSETS

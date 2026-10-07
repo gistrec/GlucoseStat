@@ -183,12 +183,18 @@ export function readingColor(mgdl) {
     return readColor("--accent", "#7eb8f7");
 }
 
-export function zoneColor(mgdl) {
+/* Зона значения. Имя совпадает с CSS-переменной её цвета; по нему же ведёт
+   себя котёнок — одна функция не даёт ему и цифре в шапке разойтись. */
+export function zone(mgdl) {
     const { low, high } = state.snapshot.target;
-    if (mgdl < low) return "var(--hypo)";
-    if (mgdl > high) return "var(--high)";
-    if (mgdl > targetMid()) return "var(--hyper)";
-    return "var(--in-range)";
+    if (mgdl < low) return "hypo";
+    if (mgdl > high) return "high";
+    if (mgdl > targetMid()) return "hyper";
+    return "in-range";
+}
+
+export function zoneColor(mgdl) {
+    return `var(--${zone(mgdl)})`;
 }
 
 /* Цветная метка ряда. Одна на легенду и на строки в шапке: там и там она
