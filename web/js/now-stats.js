@@ -61,15 +61,6 @@ export function renderNow() {
    что уже сказано единицей, а колонка узкая. Еда осталась «Углеводами» —
    99,3 г это углеводы, а не вес тарелки, и «Еда» на этом месте врёт. */
 const NOW_EVENTS = [
-    /* Сверка глюкометром — первой строкой, до еды и уколов. Она про ту же
-       величину, что большое число выше, а не про журнал: прочитав «3,1»
-       красным, человек первым делом спрашивает, мерили ли по крови, — и ответ
-       обязан стоять там, где задан вопрос, а не под графиком.
-
-       Ради этого вся затея и нужна: провал бывает компрессионным, и тот, кто
-       смотрит на страницу со стороны, по одной кривой этого не отличит. Строка
-       «Глюкометр 5,2 · 12 мин назад» отличает. */
-    { lane: "sugars", series: SERIES.sugar, label: "Глюкометр", unit: "ммоль/л", format: formatMmol },
     { lane: "meals", series: SERIES.meal, label: "Углеводы", unit: "г" },
     { lane: "bolus", series: SERIES.insulin, label: "Короткий", unit: "ед" },
     { lane: "basal", series: SERIES.basal, label: "Длинный", unit: "ед" },
@@ -86,33 +77,6 @@ function lastEvent(lane) {
 
     const [seconds, amount] = entries[entries.length - 1];
     return { t: seconds, amount };
-}
-
-/* Сколько строка «Глюкометр» живёт в шапке. Восемь часов — не окно снимка
-   (сверки приезжают за двое суток и рисуются на графике весь этот срок), а
-   срок годности ответа на вопрос, ради которого строка там стоит: «этому
-   числу выше верить или нет». Вчерашняя капля крови на него не отвечает — она
-   отвечает на вопрос, который задавали вчера, — но стоит вплотную к текущему
-   значению и выглядит как его подтверждение.
-
-   Не 15 минут, которыми notify.py гасит тревогу: там сверка отменяет звонок
-   прямо сейчас, и ошибиться нельзя. Здесь она объясняет картину, и утренняя
-   проверка всё ещё объясняет день. */
-export const SUGAR_STALE_AFTER_MS = 8 * 60 * 60 * 1000;
-
-/* Сверки лежат отдельно от дорожек событий и другой формой — объектами, а не
-   парами: они рисуются на самой кривой, в её единицах и на её оси, а не
-   столбиком в дорожке (см. _sugars в publish.py). Отсюда своя функция вместо
-   ветки в lastEvent: величина остаётся в мг/дл, как в снимке, и переводит её
-   формат строки. */
-function lastSugar() {
-    const sugars = state.snapshot.sugars || [];
-    if (!sugars.length) return null;
-
-    const last = sugars[sugars.length - 1];
-    if (Date.now() - last.t * 1000 > SUGAR_STALE_AFTER_MS) return null;
-
-    return { t: last.t, amount: last.mgdl };
 }
 
 /* Приём, записанный в несколько заходов, — одна еда, как и в таблице разбора:
@@ -144,10 +108,7 @@ function nowEventRow(kind, event) {
 
     const value = document.createElement("span");
     value.className = "now__event-value";
-    // Формат — у ряда, а не общий: углеводы и единицы округляет formatAmount,
-    // а сахар лежит в мг/дл и читается в ммоль/л теми же десятыми, какими
-    // подписаны число в шапке и кривая под ним.
-    value.textContent = (kind.format || formatAmount)(event.amount);
+    value.textContent = formatAmount(event.amount);
 
     const unit = document.createElement("span");
     unit.className = "now__event-unit";
@@ -162,7 +123,7 @@ function nowEventRow(kind, event) {
 }
 
 function renderNowEvents() {
-    const LAST = { meals: lastMeal, sugars: lastSugar };
+    const LAST = { meals: lastMeal };
     const rows = NOW_EVENTS.map((kind) => [
         kind,
         (LAST[kind.lane] || (() => lastEvent(kind.lane)))(),
