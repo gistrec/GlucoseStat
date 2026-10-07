@@ -3,7 +3,6 @@ export const els = {
     nowValue: document.getElementById("now-value"),
     nowArrow: document.getElementById("now-arrow"),
     nowMeta: document.getElementById("now-meta"),
-    nowGmi: document.getElementById("now-gmi"),
     nowEvents: document.getElementById("now-events"),
     active: document.getElementById("active"),
     empty: document.getElementById("empty"),
