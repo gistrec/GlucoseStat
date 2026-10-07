@@ -1,6 +1,7 @@
 import { state } from "./state.js";
 import { els } from "./dom.js";
 import { formatShortDay, formatSpan, percent, plural } from "./format.js";
+import { setFoldSummary } from "./fold.js";
 
 /* Карточка сенсора: сколько ему осталось и сколько данных от него дошло.
 
@@ -34,7 +35,25 @@ export function renderSensor() {
     }
 
     els.sensorCard.replaceChildren(lifeHalf(sensor), dataHalf(sensor));
+    setFoldSummary("sensor", sensorSummary(sensor));
     els.sensor.hidden = false;
+}
+
+/* Сводка свёрнутого раздела: сколько осталось и сколько данных дошло — те же
+   два ответа, что у половин карточки, одной строкой. */
+function sensorSummary(sensor) {
+    const data = `данные ${percent(sensor.coverage)}`;
+    if (!sensor.ends) return data;
+
+    const leftMs = sensor.ends * 1000 - Date.now();
+    const days = Math.floor(leftMs / 86400000);
+    const left =
+        leftMs <= 0
+            ? "срок вышел"
+            : days < 1
+              ? `осталось ${formatSpan(leftMs / 1000)}`
+              : `осталось ${days} ${plural(days, "день", "дня", "дней")}`;
+    return `${left} · ${data}`;
 }
 
 /* Левая половина: срок. Дни считаются по часам браузера, а не приходят из

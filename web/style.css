@@ -848,6 +848,85 @@ body {
     color: var(--fg);
 }
 
+/* Заголовок раздела и строка-сводка в одну линию: свёрнутый раздел занимает
+   одну строку, и главное число стоит прямо за названием. На узком экране
+   сводка уходит под заголовок, а не обрезается. */
+.review__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 12px;
+}
+
+/* Заголовок — кнопка: свёртка нажимается по названию, а не по отдельному
+   значку, в который на телефоне не попасть. Шрифт и цвет — заголовка. */
+.review__toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.review__toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 4px;
+}
+
+/* Шеврон рисуется рамкой, а не символом: у «▾» в разных шрифтах разная
+   высота, и он прыгает относительно названия. */
+.review__chev {
+    width: 7px;
+    height: 7px;
+    margin: 0 3px;
+    border-right: 1.5px solid var(--muted);
+    border-bottom: 1.5px solid var(--muted);
+    transform: translateY(-2px) rotate(45deg);
+    transition: transform 0.15s;
+}
+
+.review.is-folded .review__chev {
+    transform: rotate(-45deg);
+}
+
+.review__toggle:hover .review__chev {
+    border-color: var(--fg);
+}
+
+.review__summary {
+    display: none;
+    margin: 0;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.8rem;
+    color: var(--muted);
+}
+
+.review.is-folded .review__summary {
+    display: block;
+}
+
+.review.is-folded .review__body {
+    display: none;
+}
+
+/* Свёрнутые разделы стоят плотнее развёрнутых: это уже не блоки, а строки
+   одного списка, и прежний зазор между ними читался бы как пустота. */
+.review.is-folded {
+    margin-bottom: 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .review__chev {
+        transition: none;
+    }
+}
+
 .review__note {
     margin: 0 0 16px;
     font-size: 0.82rem;
@@ -1078,12 +1157,10 @@ body {
     border-color: var(--accent);
 }
 
-/* Углеводный коэффициент — под списком приёмов, из которого и посчитан.
+/* Углеводный коэффициент — свой раздел под разбором приёмов, из которого и
+   посчитан.
    Своей таблице хватает стилей .meals: это те же строки о тех же приёмах,
    только сведённые, и другой вид им не положен. */
-.ratio {
-    margin-top: 24px;
-}
 
 /* Узкой сводке из четырёх колонок не нужна минимальная ширина списка приёмов —
    на телефоне она помещается как есть, без горизонтальной прокрутки. */

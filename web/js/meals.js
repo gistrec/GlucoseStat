@@ -1,6 +1,7 @@
 import { state, MEALS_PAGE } from "./state.js";
 import { els, readColor, readNumber } from "./dom.js";
 import { statCard } from "./now-stats.js";
+import { setFoldSummary } from "./fold.js";
 import { legendItem, tipRow, placeTip } from "./chart.js";
 import {
     TIMEZONE,
@@ -901,6 +902,13 @@ export function renderReviewStats(analysis) {
 
     els.reviewStats.append(...cards);
     els.reviewStats.hidden = false;
+
+    setFoldSummary(
+        "review",
+        `${summary.count} ${plural(summary.count, "приём", "приёма", "приёмов")}` +
+            (summary.count ? ` · в ориентире ${summary.good}` : "") +
+            (summary.hypo ? ` · с гипо ${summary.hypo}` : "")
+    );
 }
 
 /* ── Углеводный коэффициент ────────────────────────────────────────── */
@@ -1010,6 +1018,14 @@ export function renderRatio(analysis) {
 
     fillRatioTable(els.ratioSizeTable, "Размер порции", byPortion);
     els.ratioSizeWrap.hidden = !byPortion.length;
+
+    // Сводка — по времени суток: коэффициент меняется за день, и ради этого
+    // разреза его и смотрят. Разрез по порциям — запасной, когда первого нет.
+    const brief = byDaypart.length ? byDaypart : byPortion;
+    setFoldSummary(
+        "ratio",
+        `${brief.map((row) => `${row.label.toLowerCase()} ${formatAmount(row.ratio)}`).join(" · ")} г/ед`
+    );
 
     els.ratio.hidden = false;
 }
@@ -1171,6 +1187,8 @@ export function renderReview() {
     // прочерками сообщает не больше, чем её отсутствие, а места занимает экран.
     if (!analysis || !analysis.meals.length) {
         els.review.hidden = true;
+        // Коэффициент — свой раздел, но считается из того же разбора.
+        els.ratio.hidden = true;
         return;
     }
 

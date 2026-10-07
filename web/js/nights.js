@@ -3,6 +3,7 @@ import { els, readColor, readNumber } from "./dom.js";
 import { zoneColor, readingColor } from "./series.js";
 import { formatMmol, formatDelta, awayFromHome, homeNote } from "./format.js";
 import { statCard } from "./now-stats.js";
+import { setFoldSummary } from "./fold.js";
 
 /* Ночь — единственная часть суток, которую человек не видит: днём низкий сахар
    замечают по себе, в три часа его замечает только сенсор. Числа приходят из
@@ -36,6 +37,11 @@ export function renderNights() {
         (awayFromHome() ? ` Часы — ${homeNote()}.` : "");
 
     els.nightStats.replaceChildren(...nightCards(nights));
+    setFoldSummary(
+        "night",
+        `гипо ${nights.hypo_nights} из ${nights.counted}` +
+            (nights.min_median !== null ? ` · минимум ${formatMmol(nights.min_median)}` : "")
+    );
     els.night.hidden = false;
 
     // Строка ночей — после снятия hidden: у скрытой секции clientWidth равен

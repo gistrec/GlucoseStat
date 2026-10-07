@@ -111,84 +111,123 @@
              данных, по которым посчитано всё выше. Содержимое строит
              js/sensor.js; секции нет, пока снимок о сенсоре молчит. -->
         <section class="review" id="sensor" hidden>
-            <h2 class="review__title">Сенсор</h2>
-            <p class="review__note">
-                Когда менять сенсор и сколько данных он отдал за неделю.
-                Статистика выше посчитана по этим же замерам.
-            </p>
-            <div class="sensor" id="sensor-card"></div>
+            <div class="review__head">
+                <h2 class="review__title">
+                    <button class="review__toggle" type="button" data-fold="sensor" aria-expanded="true" aria-controls="sensor-body">
+                        <span class="review__chev" aria-hidden="true"></span>Сенсор
+                    </button>
+                </h2>
+                <p class="review__summary" id="sensor-summary"></p>
+            </div>
+
+            <div class="review__body" id="sensor-body">
+                <p class="review__note">
+                    Когда менять сенсор и сколько данных он отдал за неделю.
+                    Статистика выше посчитана по этим же замерам.
+                </p>
+                <div class="sensor" id="sensor-card"></div>
+            </div>
         </section>
 
         <!-- Ночь считается по сырым замерам, а не по прореженной кривой выше:
              провал в пару минут корзина усредняет, и на графике его нет. -->
         <section class="review" id="night" hidden>
-            <h2 class="review__title">Разбор ночей</h2>
-            <p class="review__note" id="night-note"></p>
+            <div class="review__head">
+                <h2 class="review__title">
+                    <button class="review__toggle" type="button" data-fold="night" aria-expanded="true" aria-controls="night-body">
+                        <span class="review__chev" aria-hidden="true"></span>Разбор ночей
+                    </button>
+                </h2>
+                <p class="review__summary" id="night-summary"></p>
+            </div>
 
-            <section class="stats stats--tight" id="night-stats"></section>
+            <div class="review__body" id="night-body">
+                <p class="review__note" id="night-note"></p>
 
-            <ul class="nights" id="night-strip" role="list"></ul>
+                <section class="stats stats--tight" id="night-stats"></section>
+
+                <ul class="nights" id="night-strip" role="list"></ul>
+            </div>
         </section>
 
         <section class="review" id="review" hidden>
-            <h2 class="review__title">Разбор приёмов пищи</h2>
-            <p class="review__note" id="review-note"></p>
+            <div class="review__head">
+                <h2 class="review__title">
+                    <button class="review__toggle" type="button" data-fold="review" aria-expanded="true" aria-controls="review-body">
+                        <span class="review__chev" aria-hidden="true"></span>Разбор приёмов пищи
+                    </button>
+                </h2>
+                <p class="review__summary" id="review-summary"></p>
+            </div>
 
-            <section class="stats stats--tight" id="review-stats"></section>
+            <div class="review__body" id="review-body">
+                <p class="review__note" id="review-note"></p>
 
-            <div class="review__panel" id="review-panel">
-                <!-- Кнопки групп. Состав и числа задаёт js/meals.js: группа,
-                     в которой за окно разбора не набралось ни одного приёма,
-                     остаётся в ряду погашенной. -->
-                <div class="filters" id="meal-filters" role="group" aria-label="Группа приёмов" hidden></div>
+                <section class="stats stats--tight" id="review-stats"></section>
 
-                <canvas id="overlay" role="img"></canvas>
-                <!-- Своя подсказка, а не та же, что у графика выше: они живут в
-                     разных карточках, и абсолютная позиция считается от
-                     ближайшей из них. -->
-                <div class="tip" id="overlay-tip" hidden></div>
-                <ul class="legend" id="overlay-legend"></ul>
+                <div class="review__panel" id="review-panel">
+                    <!-- Кнопки групп. Состав и числа задаёт js/meals.js: группа,
+                         в которой за окно разбора не набралось ни одного приёма,
+                         остаётся в ряду погашенной. -->
+                    <div class="filters" id="meal-filters" role="group" aria-label="Группа приёмов" hidden></div>
 
-                <!-- Чем выбранная группа кончилась: холст показывает форму
-                     подъёма, а высоту его медианы по кривым не прочитать.
-                     После легенды, а не между ней и холстом: легенда называет
-                     линии, и разрывать её с тем, что она объясняет, нельзя. -->
-                <p class="filters__note" id="meal-filter-note"></p>
+                    <canvas id="overlay" role="img"></canvas>
+                    <!-- Своя подсказка, а не та же, что у графика выше: они живут в
+                         разных карточках, и абсолютная позиция считается от
+                         ближайшей из них. -->
+                    <div class="tip" id="overlay-tip" hidden></div>
+                    <ul class="legend" id="overlay-legend"></ul>
+
+                    <!-- Чем выбранная группа кончилась: холст показывает форму
+                         подъёма, а высоту его медианы по кривым не прочитать.
+                         После легенды, а не между ней и холстом: легенда называет
+                         линии, и разрывать её с тем, что она объясняет, нельзя. -->
+                    <p class="filters__note" id="meal-filter-note"></p>
+
+                    <p class="review__hint">
+                        Нажмите на время приёма — его кривая закрепится. Строка под
+                        указателем подсвечивает свою и без нажатия. По самому
+                        графику можно вести указателем: подсказка назовёт медиану,
+                        разброс и выбранный приём на этой минуте.
+                    </p>
+                </div>
+
+                <div class="meals__wrap">
+                    <table class="meals" id="meals">
+                        <caption class="visually-hidden">Приёмы пищи и что было с глюкозой после каждого</caption>
+                    </table>
+                </div>
+
+                <!-- Подпись задаёт app.js: она называет число оставшихся приёмов, а
+                     когда их не осталось, кнопки нет вовсе. -->
+                <button class="meals__more" id="meals-more" type="button" hidden></button>
 
                 <p class="review__hint">
-                    Нажмите на время приёма — его кривая закрепится. Строка под
-                    указателем подсвечивает свою и без нажатия. По самому
-                    графику можно вести указателем: подсказка назовёт медиану,
-                    разброс и выбранный приём на этой минуте.
+                    В колонке «Запись» два знака: чем число углеводов получено —
+                    ⚖︎ взвешено, ✎ со слов, ▣ по фото — и сколько в нём веры:
+                    ●●● точно, ●●○ примерно, ●○○ наугад. Σ перед числом — приём,
+                    сложенный из нескольких записей; под наведением он перечисляет
+                    заходы.
                 </p>
             </div>
+        </section>
 
-            <div class="meals__wrap">
-                <table class="meals" id="meals">
-                    <caption class="visually-hidden">Приёмы пищи и что было с глюкозой после каждого</caption>
-                </table>
+        <!-- Блока нет, пока в каком-нибудь времени суток не наберётся
+             достаточно приёмов, у которых доза шла только на еду и окно
+             закрылось без гипогликемии: медиана по двум обедам — это среднее
+             двух обедов, выданное за общую картину. Своим разделом, а не
+             хвостом разбора приёмов: его сворачивают отдельно. -->
+        <section class="review ratio" id="ratio" hidden>
+            <div class="review__head">
+                <h2 class="review__title">
+                    <button class="review__toggle" type="button" data-fold="ratio" aria-expanded="true" aria-controls="ratio-body">
+                        <span class="review__chev" aria-hidden="true"></span>Углеводный коэффициент
+                    </button>
+                </h2>
+                <p class="review__summary" id="ratio-summary"></p>
             </div>
 
-            <!-- Подпись задаёт app.js: она называет число оставшихся приёмов, а
-                 когда их не осталось, кнопки нет вовсе. -->
-            <button class="meals__more" id="meals-more" type="button" hidden></button>
-
-            <p class="review__hint">
-                В колонке «Запись» два знака: чем число углеводов получено —
-                ⚖︎ взвешено, ✎ со слов, ▣ по фото — и сколько в нём веры:
-                ●●● точно, ●●○ примерно, ●○○ наугад. Σ перед числом — приём,
-                сложенный из нескольких записей; под наведением он перечисляет
-                заходы.
-            </p>
-
-            <!-- После подсказки о знаках, а не между ней и таблицей: подсказка
-                 описывает колонки списка приёмов и обязана стоять рядом с ним.
-                 Блока нет, пока в каком-нибудь времени суток не наберётся
-                 достаточно приёмов, у которых доза шла только на еду и окно
-                 закрылось без гипогликемии: медиана по двум обедам — это
-                 среднее двух обедов, выданное за общую картину. -->
-            <div class="ratio" id="ratio" hidden>
-                <h3 class="review__title">Углеводный коэффициент</h3>
+            <div class="review__body" id="ratio-body">
                 <p class="review__note" id="ratio-note"></p>
                 <div class="meals__wrap">
                     <table class="meals" id="ratio-table">
