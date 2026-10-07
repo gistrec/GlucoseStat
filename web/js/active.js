@@ -3,11 +3,11 @@ import { els } from "./dom.js";
 import { TZ_MINUTES, formatAmount, formatSpan, plural } from "./format.js";
 
 /* Плашка «Активный инсулин и углеводы»: сколько короткого ещё работает и
-   сколько съеденного ещё всасывается. Числа считает сборщик (active.py) по
+   сколько съеденного ещё усваивается. Числа считает сборщик (active.py) по
    тем же кривым, по которым IOB и COB получает модель прогноза, — здесь
    только подписи к ним.
 
-   Половина без остатка не рисуется: «0 г ещё всасывается» в три часа ночи —
+   Половина без остатка не рисуется: «0 г ещё усваивается» в три часа ночи —
    место, занятое ради нуля. Нет обеих — нет и плашки. */
 export function renderActive() {
     const active = state.snapshot.active || {};
@@ -57,9 +57,9 @@ function carbsHalf(carbs) {
         aside: `из ${formatAmount(carbs.of)} г`,
         // Целыми граммами: десятые доли у оценки по линейной кривой — шум.
         value: String(Math.round(carbs.left)),
-        unit: "г ещё всасывается",
+        unit: "г ещё усваивается",
         share: carbs.left / carbs.of,
-        hint: `Всасывание до ${clock(carbs.until)}`,
+        hint: `Усвоение до ${clock(carbs.until)}`,
     });
 }
 
