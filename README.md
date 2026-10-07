@@ -136,7 +136,7 @@ The second half, data completeness, is counted from the readings alone. Time in 
 
 ### GMI
 
-GMI ignores the selected period: it is always the estimated HbA1c over the last **14 days**, the window Bergenstal et al. (2018) calibrated the formula on. Tying it to the buttons would put two different numbers, a week's GMI and a month's, under one name, and neither would be what a clinician means by it.
+GMI ignores the selected period: it is always the estimated HbA1c over the last **14 days**, the window Bergenstal et al. (2018) calibrated the formula on. Tying it to the buttons would put two different numbers, a week's GMI and a month's, under one name, and neither would be what a clinician means by it. The card is the same on every tab, the 24- and 48-hour ones included, and its caption names the 14 days.
 
 Below 70% CGM coverage over those two weeks the card disappears rather than showing a figure: an HbA1c estimated from three days looks as authoritative as one estimated from fourteen.
 

@@ -1,7 +1,7 @@
 import { state } from "./state.js";
 import { els } from "./dom.js";
 import { SERIES, zoneColor, seriesKey } from "./series.js";
-import { RANGE_LABELS, PREV_LABELS, HOURLY_RANGES } from "./ranges.js";
+import { RANGE_LABELS, PREV_LABELS } from "./ranges.js";
 import {
     formatMmol,
     formatAgo,
@@ -241,10 +241,11 @@ export function renderStats() {
     /* GMI живёт по своему окну в две недели, а не по выбранному периоду: под
        одним названием иначе оказывались бы два разных числа. Снимок отдаёт
        null, когда за две недели набралось меньше 70 % измерений — тогда
-       карточки просто нет, вместо солидно выглядящей выдумки. На почасовых
-       панелях не показываем: они про сегодня и вчера, а GMI — про две недели. */
+       карточки просто нет, вместо солидно выглядящей выдумки. Стоит на всех
+       панелях, почасовых тоже: число одно и то же, и подпись «за 14 дней» не
+       даёт принять его за число выбранного периода. */
     const gmi = state.snapshot.gmi;
-    if (!HOURLY_RANGES.has(state.activeRange) && gmi) {
+    if (gmi) {
         cards.push(
             statCard("GMI", percent(gmi.value), `расчётный HbA1c за ${gmi.days} дней`)
         );
