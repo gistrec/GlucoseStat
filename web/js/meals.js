@@ -691,6 +691,13 @@ export function renderMeals(analysis) {
 
         const when = document.createElement("td");
         const at = new Date(meal.t * 1000);
+        // Полоска исхода — тот же цвет, что у «Исхода» в последней колонке,
+        // только у даты: на телефоне до последней колонки надо листать вбок.
+        // Слово остаётся там, поэтому для чтения вслух полоска скрыта.
+        const stripe = document.createElement("span");
+        stripe.className = `meals__outcome ${flagClass}`;
+        stripe.setAttribute("aria-hidden", "true");
+        when.append(stripe);
         if (drawable) {
             const pick = document.createElement("button");
             pick.type = "button";
@@ -1036,7 +1043,7 @@ export function ratioRows(dosed, groups, valueOf) {
 export function fillRatioTable(table, firstColumn, rows) {
     const head = document.createElement("thead");
     const headRow = document.createElement("tr");
-    for (const title of [firstColumn, "Приёмов", "Г на 1 ед", "Подъём, медиана"]) {
+    for (const title of [firstColumn, "Приёмов", "Г на 1\u00a0ед", "Подъём, медиана"]) {
         const cell = document.createElement("th");
         cell.scope = "col";
         cell.textContent = title;

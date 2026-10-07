@@ -981,6 +981,19 @@ body {
     box-shadow: inset 3px 0 0 var(--meal);
 }
 
+/* Исход приёма у даты: цвет берёт у .flag--*, рисует фоном. Отдельно от
+   полосы выбора у самого края ячейки — та говорит «эта кривая на графике»,
+   эта — «чем кончилась еда», и слиться в одну им нельзя. */
+.meals__outcome {
+    display: inline-block;
+    width: 4px;
+    height: 1.5em;
+    margin-right: 10px;
+    border-radius: 2px;
+    background: currentColor;
+    vertical-align: middle;
+}
+
 .meals__pick {
     padding: 0;
     border: 0;
@@ -1076,6 +1089,14 @@ body {
    «Подъём, медиана» справа. */
 .ratio .meals {
     table-layout: fixed;
+}
+
+/* Доли ширины на телефоне уже, чем заголовки в строку: «Г на 1 ед» не влезает
+   в свои 20 % и, выровненный вправо, наезжает на «Приёмов». Здесь заголовкам
+   можно переноситься — к низу, чтобы числа под ними начинались вровень. */
+.ratio .meals th {
+    white-space: normal;
+    vertical-align: bottom;
 }
 
 .ratio .meals th:first-child,
