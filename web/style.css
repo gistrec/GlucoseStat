@@ -966,7 +966,7 @@ body {
    вся строка отзывается на курсор, но нажимается кнопка с датой: у неё есть
    роль и состояние, которых у строки таблицы быть не может.
 
-   Отмечает строку рамка сверху и снизу, а не подложка: таблица лежит прямо
+   Отмечает строку рамка, а не подложка: таблица лежит прямо
    на фоне страницы, и любая заливка утягивает контраст «Исхода» — зелёного и
    красного на светлой теме — ниже AA. И не полоса слева: там стоит полоска
    исхода, и две полосы рядом читались бы как одна непонятная. Тень, а не
@@ -977,6 +977,24 @@ body {
 
 .meals tbody tr.is-picked td {
     box-shadow: inset 0 2px 0 var(--meal), inset 0 -2px 0 var(--meal);
+}
+
+/* Боковые стороны рамки — у крайних ячеек: тень строке не задать, только
+   ячейке, и вертикальная линия у каждой разрезала бы строку на клетки. */
+.meals tbody tr:hover td:first-child {
+    box-shadow: inset 0 1px 0 var(--muted), inset 0 -1px 0 var(--muted), inset 1px 0 0 var(--muted);
+}
+
+.meals tbody tr:hover td:last-child {
+    box-shadow: inset 0 1px 0 var(--muted), inset 0 -1px 0 var(--muted), inset -1px 0 0 var(--muted);
+}
+
+.meals tbody tr.is-picked td:first-child {
+    box-shadow: inset 0 2px 0 var(--meal), inset 0 -2px 0 var(--meal), inset 2px 0 0 var(--meal);
+}
+
+.meals tbody tr.is-picked td:last-child {
+    box-shadow: inset 0 2px 0 var(--meal), inset 0 -2px 0 var(--meal), inset -2px 0 0 var(--meal);
 }
 
 /* Исход приёма у даты: цвет берёт у .flag--*, рисует фоном. Выбор строки
