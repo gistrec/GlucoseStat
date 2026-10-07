@@ -13,6 +13,7 @@ import { renderReview, setMealFilter, overlayHoverAt, clearOverlayHover } from "
 import { HOME_TIMEZONE, formatAgo, formatDateTime } from "./js/format.js";
 import { initZonePicker, renderZoneButton } from "./js/timezone.js";
 import { initFolds } from "./js/fold.js";
+import { initKitten, renderKitten } from "./js/kitten.js";
 
 const RELOAD_INTERVAL_MS = 60 * 1000;
 
@@ -103,6 +104,9 @@ function render() {
     // Часы на кнопке пояса идут вместе со снимком — раз в минуту.
     renderZoneButton();
     renderNow();
+    // Котёнок идёт за той же цифрой, что и шапка, — в том числе когда она
+    // устарела: тогда он просто сидит.
+    renderKitten();
     // Рядом с журналом и по той же причине не ждёт сенсора: остаток инсулина
     // считается по уколам, а не по кривой.
     renderActive();
@@ -248,6 +252,8 @@ initFolds((id) => {
     if (id === "night") renderNights();
     if (id === "review") renderReview();
 });
+
+initKitten();
 
 load();
 setInterval(load, RELOAD_INTERVAL_MS);
