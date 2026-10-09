@@ -65,6 +65,13 @@
             </div>
         </header>
 
+        <!-- Расхождение текущего сенсора с глюкометром. Текст и видимость
+             задаёт js/sensor.js по sensor.bias снимка. -->
+        <div class="bias" id="bias" role="note" hidden>
+            <p class="bias__title" id="bias-title"></p>
+            <p class="bias__text" id="bias-text"></p>
+        </div>
+
         <section class="now" id="now" hidden>
             <div class="now__main">
                 <div class="now__reading">
@@ -73,9 +80,6 @@
                     <span class="now__arrow" id="now-arrow"></span>
                 </div>
                 <p class="now__meta" id="now-meta"></p>
-                <!-- Расхождение текущего сенсора с глюкометром. Текст и
-                     видимость задаёт js/sensor.js по sensor.bias снимка. -->
-                <p class="now__bias" id="now-bias" hidden></p>
             </div>
 
             <!-- Последняя еда и оба инсулина. Состав задаёт app.js: строки,

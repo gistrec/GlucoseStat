@@ -383,12 +383,28 @@ body {
     color: var(--low);
 }
 
-/* Тем же оранжевым, что «сенсор не передаёт данные»: и то и другое — не про
-   сахар, а про то, насколько верить числу над ним. */
-.now__bias {
-    margin: 8px 0 0;
-    max-width: 36rem;
+/* Плашка над текущим значением — тем же оранжевым, что «сенсор не передаёт
+   данные»: и то и другое не про сахар, а про то, насколько верить числу под
+   ней. Своим блоком, а не строкой в .now: строку мелким кеглем под числом
+   глаз пропускает ровно так же, как подпись «обновлено минуту назад». */
+.bias {
+    background: var(--panel);
+    border: 1px solid var(--low);
+    border-left-width: 4px;
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    margin-bottom: 16px;
+}
+
+.bias__title {
+    margin: 0;
     color: var(--low);
+    font-weight: 600;
+}
+
+.bias__text {
+    margin: 4px 0 0;
+    color: var(--muted);
     font-size: 0.9rem;
 }
 
