@@ -1177,33 +1177,34 @@ export function drawSensorChanges(ctx, changes, x, left, right, top, bottom, mut
     ctx.textBaseline = "top";
     ctx.lineWidth = 1;
 
+    const label = "новый сенсор";
+    const width = ctx.measureText(label).width;
+    const textY = top + LABEL_OFFSET;
+
     for (const moment of changes) {
         const at = Math.round(x(moment)) + 0.5;
         if (at <= left || at >= right) continue;
 
-        ctx.globalAlpha = 0.7;
-        ctx.strokeStyle = muted;
-        ctx.setLineDash([3, 4]);
-        ctx.beginPath();
-        ctx.moveTo(at, top);
-        ctx.lineTo(at, bottom);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        // Подпись — справа от линии, а у правого края слева: обрезанная рамкой
-        // она читалась бы как «новый се». И строкой ниже верхнего края: там
-        // стоят подписи эпизодов высокого сахара (drawHighs).
-        const label = "новый сенсор";
-        const width = ctx.measureText(label).width;
-        const toLeft = at + 4 + width > right;
-        const textX = toLeft ? at - 4 - width : at + 4;
-        const textY = top + LABEL_OFFSET;
+        // Подпись — по центру над линией, а пунктир начинается под ней: так
+        // пара читается как одна метка. У краёв подпись прижимается к рамке,
+        // иначе обрезанная она читалась бы как «новый се». Строкой ниже
+        // верхнего края: там стоят подписи эпизодов высокого сахара (drawHighs).
+        const textX = Math.min(Math.max(at - width / 2, left + 2), right - 2 - width);
         ctx.globalAlpha = 0.85;
         ctx.fillStyle = panel;
         ctx.fillRect(textX - 2, textY - 2, width + 4, 13);
         ctx.globalAlpha = 1;
         ctx.fillStyle = muted;
         ctx.fillText(label, textX, textY);
+
+        ctx.globalAlpha = 0.7;
+        ctx.strokeStyle = muted;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath();
+        ctx.moveTo(at, textY + 14);
+        ctx.lineTo(at, bottom);
+        ctx.stroke();
+        ctx.setLineDash([]);
     }
     ctx.restore();
 }
