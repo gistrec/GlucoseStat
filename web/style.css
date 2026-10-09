@@ -1987,6 +1987,14 @@ body {
     line-height: 1.5;
 }
 
+.stat__about p {
+    margin: 0;
+}
+
+.stat__about p + p {
+    margin-top: 8px;
+}
+
 .stat__hint {
     margin: 4px 0 0;
     color: var(--muted);

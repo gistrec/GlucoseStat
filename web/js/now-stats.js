@@ -185,7 +185,7 @@ const abouts = new Map();
 const ABOUT_WIDTH = 300;
 const ABOUT_GUTTER = 16;
 
-function aboutPopover(key, text) {
+function aboutPopover(key, paragraphs) {
     let entry = abouts.get(key);
     if (entry) return entry;
 
@@ -193,7 +193,11 @@ function aboutPopover(key, text) {
     popover.className = "stat__about";
     popover.id = `stat-about-${key}`;
     popover.popover = "auto";
-    popover.textContent = text;
+    for (const text of paragraphs) {
+        const paragraph = document.createElement("p");
+        paragraph.textContent = text;
+        popover.append(paragraph);
+    }
 
     entry = { popover, anchor: null };
     popover.addEventListener("beforetoggle", (event) => {
@@ -220,9 +224,9 @@ function aboutPopover(key, text) {
     return entry;
 }
 
-function withAbout(card, key, text) {
+function withAbout(card, key, paragraphs) {
     const label = card.querySelector(".stat__label");
-    const entry = aboutPopover(key, text);
+    const entry = aboutPopover(key, paragraphs);
 
     const toggle = document.createElement("button");
     toggle.type = "button";
@@ -235,7 +239,6 @@ function withAbout(card, key, text) {
 
     // Сразу за заголовком: в углу знак стоит абсолютно, а в порядке чтения
     // экранной читалкой он идёт вслед за тем, что поясняет.
-    label.after(toggle);
     card.classList.add("stat--about");
     return card;
 }
@@ -294,19 +297,26 @@ export function renderStats() {
                     (delta) => `${formatAmount(delta)} %`,
                     (was) => percent(was))),
             "tir",
-            "TIR: доля времени, когда сахар был в 3,9–10,0 ммоль/л. Это стандартный "
-                + "целевой диапазон для сенсора по международному консенсусу. Цель: "
-                + "больше 70 % времени в диапазоне, ниже 3,9 меньше 4 %, выше 10,0 "
-                + "меньше 25 %."),
+            [
+                "TIR (Time in Range), время в диапазоне. Сколько времени сахар "
+                    + "был в 3,9–10,0 ммоль/л.",
+                "Это стандартный целевой диапазон для сенсоров по международному "
+                    + "консенсусу.",
+                "Цели: в диапазоне больше 70 % времени, ниже 3,9 меньше 4 %, "
+                    + "выше 10,0 меньше 25 %.",
+            ]),
         withAbout(
             statCard("В узком диапазоне", percent(stats.titr),
                 `ниже ${percent(stats.below)} · выше ${percent(stats.above_tight)}`),
             "titr",
-            "TITR: доля времени, когда сахар был в 3,9–7,8 ммоль/л. В этом диапазоне "
-                + "сахар держится у людей без диабета, около 95 % времени. Узкий "
-                + "диапазон лежит внутри целевого, поэтому TITR не бывает больше TIR. "
-                + "«Выше» здесь значит выше 7,8. Общепринятой цели пока нет, "
-                + "чаще всего называют больше 50 %."),
+            [
+                "TITR (Time in Tight Range), время в узком диапазоне. Сколько "
+                    + "времени сахар был в 3,9–7,8 ммоль/л.",
+                "У людей без диабета сахар держится здесь около 95 % времени.",
+                "Узкий диапазон лежит внутри целевого, поэтому TITR не бывает "
+                    + "больше TIR. «Выше» на этой карточке значит выше 7,8.",
+                "Общепринятой цели пока нет, чаще всего называют больше 50 %.",
+            ]),
         // Число замеров — мелкой подписью, а не своей карточкой: шаг записи
         // неоднороден (минута у живого опроса, пять у бэкфилла), так что само
         // по себе оно мало что говорит, а статистика взвешена по времени.
@@ -340,13 +350,17 @@ export function renderStats() {
             withAbout(
                 statCard("GMI", percent(gmi.value), `расчётный HbA1c за ${gmi.days} дней`),
                 "gmi",
-                "GMI (Glucose Management Indicator): оценка гликированного гемоглобина "
-                    + "HbA1c по среднему сахару с сенсора за последние 14 дней, всегда "
-                    + "за 14, какой бы период ни был выбран. Считается по формуле "
-                    + "Бергенстала (2018) и только когда сенсор покрыл не меньше 70 % "
-                    + "этих дней. С лабораторным HbA1c может расходиться на 0,5 % и "
-                    + "больше: анализ отражает примерно три месяца и зависит от "
-                    + "эритроцитов. Цель для большинства взрослых с диабетом — меньше 7 %.")
+                [
+                    "GMI (Glucose Management Indicator), расчётный HbA1c, то есть "
+                        + "гликированный гемоглобин. Считается по среднему сахару "
+                        + "с сенсора по формуле Бергенстала (2018).",
+                    "Окно всегда 14 дней, какой бы период ни был выбран. Если сенсор "
+                        + "покрыл меньше 70 % этих дней, GMI не показывается.",
+                    "С лабораторным HbA1c может расходиться на 0,5 % и больше: "
+                        + "анализ крови отражает примерно три месяца и зависит "
+                        + "от эритроцитов.",
+                    "Для большинства взрослых с диабетом цель меньше 7 %.",
+                ])
         );
     }
 
