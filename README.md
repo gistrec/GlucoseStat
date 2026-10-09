@@ -70,7 +70,7 @@ The snapshot maths — time in range, GMI, variability, downsampling, trend — 
 
 ## What the page shows
 
-Current value with a trend arrow, a chart over 24 / 48 hours / 7 days / 30 days, and per-period statistics: time in range, average, spread, coefficient of variation, and GMI.
+Current value with a trend arrow, a chart over 24 / 48 hours / 7 days / 30 days, and per-period statistics: time in range, time in tight range (3.9–7.8 mmol/L, where glucose sits without diabetes), average, spread, coefficient of variation, and GMI.
 
 ### Chart windows
 

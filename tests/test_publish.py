@@ -28,6 +28,7 @@ from publish import (
     FORECAST_MAX_AGE,
     TARGET_HIGH_MGDL,
     TARGET_LOW_MGDL,
+    TIGHT_HIGH_MGDL,
     _artifacts,
     _compare,
     _daily,
@@ -119,6 +120,17 @@ class TestStats:
         stats = _stats(readings(TARGET_LOW_MGDL, TARGET_HIGH_MGDL))
 
         assert stats["tir"] == 100.0
+
+    def test_tight_range_is_a_part_of_the_target_range(self):
+        # 100 — в узком, 160 — только в целевом, 50 и 250 — ни в одном.
+        stats = _stats(readings(100, 160, 50, 250))
+
+        assert stats["titr"] == 25.0
+        assert stats["tir"] == 50.0
+
+    def test_tight_range_boundaries_count_as_in_range(self):
+        assert _stats(readings(TARGET_LOW_MGDL, TIGHT_HIGH_MGDL))["titr"] == 100.0
+        assert _stats(readings(TIGHT_HIGH_MGDL + 1))["titr"] == 0.0
 
     def test_reports_average_and_extremes(self):
         stats = _stats(readings(80, 100, 120))

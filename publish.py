@@ -58,6 +58,11 @@ TARGET_HIGH_MGDL = 180
 # а не про новую метрику.
 TARGET_MID_MGDL = 130
 
+# Узкий диапазон, TITR: 70–140 mg/dL (3.9–7.8 mmol/L) — где сахар держится у
+# людей без диабета. Граница консенсусная, а не 130 с графика: так число можно
+# сравнивать с исследованиями и другими приложениями.
+TIGHT_HIGH_MGDL = 140
+
 # Окно и шаг прореживания на период. Сырьё идёт с шагом 5 минут, но 30 дней
 # в таком виде — это 8600 точек: график столько не покажет, а вес страницы
 # вырастет на порядок. Статистика при этом всегда считается по сырым данным.
@@ -431,6 +436,9 @@ def _stats(readings: list[tuple[datetime, float]]) -> dict | None:
     in_range = sum(
         weight for value, weight in pairs if TARGET_LOW_MGDL <= value <= TARGET_HIGH_MGDL
     )
+    tight = sum(
+        weight for value, weight in pairs if TARGET_LOW_MGDL <= value <= TIGHT_HIGH_MGDL
+    )
     below = sum(weight for value, weight in pairs if value < TARGET_LOW_MGDL)
     above = sum(weight for value, weight in pairs if value > TARGET_HIGH_MGDL)
 
@@ -447,6 +455,7 @@ def _stats(readings: list[tuple[datetime, float]]) -> dict | None:
         "min": round(min(values)),
         "max": round(max(values)),
         "tir": round(100 * in_range / total, 1),
+        "titr": round(100 * tight / total, 1),
         "below": round(100 * below / total, 1),
         "above": round(100 * above / total, 1),
         # Коэффициент вариации: ≤36% считается стабильной гликемией.

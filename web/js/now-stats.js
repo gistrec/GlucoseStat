@@ -1,7 +1,7 @@
 import { state } from "./state.js";
 import { els } from "./dom.js";
 import { SERIES, zoneColor, seriesKey } from "./series.js";
-import { RANGE_LABELS, PREV_LABELS } from "./ranges.js";
+import { PREV_LABELS } from "./ranges.js";
 import {
     formatMmol,
     formatAgo,
@@ -9,6 +9,7 @@ import {
     formatDateTime,
     formatAmount,
     percent,
+    plural,
     trendArrow,
 } from "./format.js";
 
@@ -221,7 +222,12 @@ export function renderStats() {
             compareRow(prev, "tir",
                 (delta) => `${formatAmount(delta)} %`,
                 (was) => percent(was))),
-        statCard("Среднее", formatMmol(stats.avg), "ммоль/л",
+        statCard("В узком диапазоне", percent(stats.titr), "3,9–7,8 ммоль/л, как без диабета"),
+        // Число замеров — мелкой подписью, а не своей карточкой: шаг записи
+        // неоднороден (минута у живого опроса, пять у бэкфилла), так что само
+        // по себе оно мало что говорит, а статистика взвешена по времени.
+        statCard("Среднее", formatMmol(stats.avg),
+            `ммоль/л, по ${stats.count.toLocaleString("ru-RU")} ${plural(stats.count, "измерению", "измерениям", "измерениям")}`,
             compareRow(prev, "avg",
                 (delta) => `${formatMmol(delta)} ммоль/л`,
                 (was) => formatMmol(was))),
@@ -250,8 +256,6 @@ export function renderStats() {
             statCard("GMI", percent(gmi.value), `расчётный HbA1c за ${gmi.days} дней`)
         );
     }
-
-    cards.push(statCard("Измерений", stats.count.toLocaleString("ru-RU"), RANGE_LABELS[state.activeRange]));
 
     els.stats.append(...cards);
     els.stats.hidden = false;
