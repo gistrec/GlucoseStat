@@ -239,6 +239,7 @@ function withAbout(card, key, paragraphs) {
 
     // Сразу за заголовком: в углу знак стоит абсолютно, а в порядке чтения
     // экранной читалкой он идёт вслед за тем, что поясняет.
+    label.after(toggle);
     card.classList.add("stat--about");
     return card;
 }
