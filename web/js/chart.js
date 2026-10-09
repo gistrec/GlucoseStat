@@ -1189,14 +1189,18 @@ export function drawSensorChanges(ctx, changes, x, left, right, top, bottom, mut
         // пара читается как одна метка. У краёв подпись прижимается к рамке,
         // иначе обрезанная она читалась бы как «новый се». Строкой ниже
         // верхнего края: там стоят подписи эпизодов высокого сахара (drawHighs).
+        // Под буквами — ореол цветом панели, а не плашка: плашка вырезала
+        // светлый короб в подложке зоны высокого сахара (как у прогноза).
         const textX = Math.min(Math.max(at - width / 2, left + 2), right - 2 - width);
-        ctx.globalAlpha = 0.85;
-        ctx.fillStyle = panel;
-        ctx.fillRect(textX - 2, textY - 2, width + 4, 13);
         ctx.globalAlpha = 1;
+        ctx.lineJoin = "round";
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = panel;
+        ctx.strokeText(label, textX, textY);
         ctx.fillStyle = muted;
         ctx.fillText(label, textX, textY);
 
+        ctx.lineWidth = 1;
         ctx.globalAlpha = 0.7;
         ctx.strokeStyle = muted;
         ctx.setLineDash([3, 4]);
