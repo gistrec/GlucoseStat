@@ -449,6 +449,19 @@ class TestDaily:
         assert snapshot["series"]["week"]["kind"] == "points"
         assert snapshot["series"]["month"]["kind"] == "daily"
         assert "points" not in snapshot["series"]["month"]
+        assert snapshot["series"]["two_weeks"]["kind"] == "points"
+        assert snapshot["series"]["two_months"]["kind"] == "daily"
+        assert snapshot["series"]["quarter"]["kind"] == "daily"
+
+    def test_long_ranges_are_not_compared(self):
+        # 60 и 90 дней не сравниваются с прошлым периодом — цена выборки
+        # (COMPARED_RANGES); две недели сравниваются, как неделя и месяц.
+        data = readings(*([120] * 200), step_minutes=5)
+        snapshot = build_snapshot(data, [], BASE + timedelta(hours=17))
+
+        assert "prev" in snapshot["stats"]["two_weeks"]
+        assert "prev" not in snapshot["stats"]["two_months"]
+        assert "prev" not in snapshot["stats"]["quarter"]
 
     def test_snapshot_carries_the_day_profile_key(self):
         # Проводка профиля — одна строка в build_snapshot, но без неё он не
@@ -612,7 +625,8 @@ class TestPublishWindow:
         publish(path=str(tmp_path / "data.json"), last_success=1.0)
 
         window = datetime.now(timezone.utc).replace(tzinfo=None) - captured["since"]
-        assert abs(window - timedelta(days=60)) < timedelta(minutes=5)
+        # Квартал (90 дней) длиннее удвоенного месяца (60): он и задаёт окно.
+        assert abs(window - timedelta(days=90)) < timedelta(minutes=5)
 
 
 class TestTrend:

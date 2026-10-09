@@ -14,6 +14,7 @@ import { HOME_TIMEZONE, formatAgo, formatDateTime } from "./js/format.js";
 import { initZonePicker, renderZoneButton } from "./js/timezone.js";
 import { initFolds } from "./js/fold.js";
 import { initResearch } from "./js/research.js";
+import { MORE_RANGES, RANGE_LABELS } from "./js/ranges.js";
 
 const RELOAD_INTERVAL_MS = 60 * 1000;
 
@@ -143,21 +144,67 @@ async function load() {
     }
 }
 
-els.ranges.addEventListener("click", (event) => {
-    const button = event.target.closest(".ranges__btn");
-    if (!button) return;
+/* ── Период ────────────────────────────────────────────────────────── */
 
-    state.activeRange = button.dataset.range;
-    for (const item of els.ranges.children) {
-        const active = item === button;
+const moreButton = document.getElementById("ranges-more");
+const moreMenu = document.getElementById("ranges-menu");
+
+function setMenu(open) {
+    moreMenu.hidden = !open;
+    moreButton.setAttribute("aria-expanded", String(open));
+}
+
+function selectRange(range) {
+    state.activeRange = range;
+    const fromMenu = MORE_RANGES.includes(range);
+
+    // Подсветка сообщает о выборе только глазами; aria-pressed и aria-checked —
+    // всем остальным.
+    for (const item of els.ranges.querySelectorAll(".ranges__btn[data-range]")) {
+        const active = item.dataset.range === range;
         item.classList.toggle("is-active", active);
-        // Подсветка сообщает о выборе только глазами; aria-pressed — всем
-        // остальным.
         item.setAttribute("aria-pressed", String(active));
     }
+    for (const item of moreMenu.querySelectorAll(".ranges__item")) {
+        item.setAttribute("aria-checked", String(item.dataset.range === range));
+    }
+    // На кнопке — выбранное окно, иначе не видно, что сейчас открыто.
+    moreButton.classList.toggle("is-active", fromMenu);
+    moreButton.textContent = `${fromMenu ? RANGE_LABELS[range] : "Другое"} ▾`;
+
+    setMenu(false);
     drawChart();
     renderStats();
+}
+
+els.ranges.addEventListener("click", (event) => {
+    if (event.target === moreButton) {
+        setMenu(moreMenu.hidden);
+        if (!moreMenu.hidden) moreMenu.querySelector(".ranges__item").focus();
+        return;
+    }
+    const button = event.target.closest("[data-range]");
+    if (button) selectRange(button.dataset.range);
 });
+
+document.addEventListener("click", (event) => {
+    if (!moreMenu.hidden && !event.target.closest(".ranges__more")) setMenu(false);
+});
+
+moreMenu.addEventListener("keydown", (event) => {
+    const items = [...moreMenu.querySelectorAll(".ranges__item")];
+    const index = items.indexOf(document.activeElement);
+    if (event.key === "Escape") {
+        setMenu(false);
+        moreButton.focus();
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const step = event.key === "ArrowDown" ? 1 : -1;
+        items[(index + step + items.length) % items.length].focus();
+    }
+});
+
+moreButton.textContent = "Другое ▾";
 
 window.addEventListener("resize", () => {
     if (state.snapshot && state.snapshot.latest) {

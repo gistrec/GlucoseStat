@@ -113,7 +113,17 @@
             <button class="ranges__btn is-active" data-range="day" type="button" aria-pressed="true">24 часа</button>
             <button class="ranges__btn" data-range="two_days" type="button" aria-pressed="false">48 часов</button>
             <button class="ranges__btn" data-range="week" type="button" aria-pressed="false">7 дней</button>
-            <button class="ranges__btn" data-range="month" type="button" aria-pressed="false">30 дней</button>
+            <!-- Длинные окна. Подпись кнопки ставит app.js: «Другое» или
+                 выбранное окно из меню. -->
+            <div class="ranges__more">
+                <button class="ranges__btn ranges__more-btn" id="ranges-more" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="ranges-menu">Другое</button>
+                <div class="ranges__menu" id="ranges-menu" role="menu" hidden>
+                    <button class="ranges__item" data-range="two_weeks" type="button" role="menuitemradio" aria-checked="false">14 дней</button>
+                    <button class="ranges__item" data-range="month" type="button" role="menuitemradio" aria-checked="false">30 дней</button>
+                    <button class="ranges__item" data-range="two_months" type="button" role="menuitemradio" aria-checked="false">60 дней</button>
+                    <button class="ranges__item" data-range="quarter" type="button" role="menuitemradio" aria-checked="false">90 дней</button>
+                </div>
+            </div>
         </nav>
 
         <section class="chart" id="chart" hidden>

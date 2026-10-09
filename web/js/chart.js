@@ -1101,12 +1101,13 @@ export function seriesGaps(series, points, tail) {
     return gaps;
 }
 
-/* Кольца рисует только суточная панель, не двое суток: снимок публикует
-   их окном RANGES["day"] (см. publish.py), а страница выбирает более узко —
-   решение оставить их редкой деталью суточного вида, не заводить вторую
-   плотность на растянутой вдвое кривой. */
+/* Кольца — на обеих почасовых панелях. Пока правило ловило любой быстрый
+   скачок, их было по десятку в сутки, и на 48 часах они сливались; иглу с
+   возвратом (publish._artifacts) находит единицы в сутки, и окну «а что было
+   сутки назад» она нужна так же, как суточному. Снимок публикует их окном
+   RANGES["two_days"]. */
 export function seriesArtifacts() {
-    if (state.activeRange !== "day" || !state.snapshot.artifacts) return [];
+    if (!HOURLY_RANGES.has(state.activeRange) || !state.snapshot.artifacts) return [];
 
     const startTime = state.snapshot.generated_at - SPAN_SECONDS[state.activeRange];
     return state.snapshot.artifacts.filter((artifact) => artifact.t >= startTime);

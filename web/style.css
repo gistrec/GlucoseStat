@@ -883,6 +883,68 @@ body {
     border-color: var(--accent);
 }
 
+/* «Другое» — пятая кнопка того же ряда, а меню под ней — тем же видом, что
+   меню пояса в шапке. */
+.ranges__more {
+    position: relative;
+    flex: 1;
+    display: flex;
+}
+
+.ranges__more-btn {
+    white-space: nowrap;
+}
+
+.ranges__menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 20;
+    min-width: 100%;
+    display: grid;
+    gap: 2px;
+    padding: 6px;
+    background: var(--panel);
+    border: 1px solid var(--panel-chrome);
+    border-radius: var(--radius);
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.25);
+}
+
+.ranges__item {
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: var(--fg);
+    font: inherit;
+    font-size: 0.9rem;
+    text-align: left;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.ranges__item:hover,
+.ranges__item:focus-visible {
+    background: var(--panel-chrome);
+    outline: none;
+}
+
+.ranges__item[aria-checked="true"] {
+    color: var(--accent);
+}
+
+/* На телефоне — уже поля: «14 дней ▾» длиннее остальных подписей, и с
+   обычными полями четвёртая кнопка переносила бы стрелку на вторую строку. */
+@media (max-width: 480px) {
+    .ranges {
+        gap: 6px;
+    }
+
+    .ranges__btn {
+        padding: 10px 6px;
+    }
+}
+
 /* ── График ────────────────────────────────────────────────────────── */
 .chart {
     position: relative;
