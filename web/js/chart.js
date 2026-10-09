@@ -841,6 +841,16 @@ export function drawChart() {
             axisAlpha
         );
         drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeight);
+        drawSensorChanges(
+            ctx,
+            state.snapshot.sensor_changes || [],
+            x,
+            padding.left,
+            width - padding.right,
+            padding.top,
+            padding.top + plotHeight,
+            muted
+        );
         // Предупреждение — под хвостом модели: там, где они расходятся, видно
         // обоих, а где сходятся, верхним остаётся прогноз.
         if (fall) drawFall(ctx, fall, x, y);
@@ -1137,6 +1147,54 @@ export const GAP_LABEL = "нет сигнала";
    Уступает подпись по частям: в совсем узкой полосе остаётся одна
    длительность, а когда и та не влезает — полоса молчит, и называет её
    легенда. */
+/* Замена сенсора — тонкий пунктир через всю область и подпись у верхнего края.
+   Тише полосы молчания: это не пропуск данных, а пометка, после которой у
+   кривой другой прибор и, возможно, другая ошибка (плашка сверки с
+   глюкометром считается с этого же момента). Пунктир, а не сплошная, по той
+   же причине, что у краёв молчания: момент установки — со слов Abbott или,
+   у старых сенсоров, восстановлен по разрыву прогрева. */
+export function drawSensorChanges(ctx, changes, x, left, right, top, bottom, muted) {
+    if (!changes.length) return;
+    const LABEL_OFFSET = 22;
+
+    const panel = readColor("--panel", "#0d0d14");
+    ctx.save();
+    ctx.font = '10px "JetBrains Mono", monospace';
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.lineWidth = 1;
+
+    for (const moment of changes) {
+        const at = Math.round(x(moment)) + 0.5;
+        if (at <= left || at >= right) continue;
+
+        ctx.globalAlpha = 0.7;
+        ctx.strokeStyle = muted;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath();
+        ctx.moveTo(at, top);
+        ctx.lineTo(at, bottom);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Подпись — справа от линии, а у правого края слева: обрезанная рамкой
+        // она читалась бы как «новый се». И строкой ниже верхнего края: там
+        // стоят подписи эпизодов высокого сахара (drawHighs).
+        const label = "новый сенсор";
+        const width = ctx.measureText(label).width;
+        const toLeft = at + 4 + width > right;
+        const textX = toLeft ? at - 4 - width : at + 4;
+        const textY = top + LABEL_OFFSET;
+        ctx.globalAlpha = 0.85;
+        ctx.fillStyle = panel;
+        ctx.fillRect(textX - 2, textY - 2, width + 4, 13);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = muted;
+        ctx.fillText(label, textX, textY);
+    }
+    ctx.restore();
+}
+
 export function drawGaps(ctx, gaps, x, left, right, top, bottom, muted, axisAlpha) {
     if (!gaps.length) return;
 

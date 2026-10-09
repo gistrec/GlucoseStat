@@ -227,7 +227,31 @@ class TestBias:
 
         bias = _bias(self.started, series, sticks)
 
-        assert bias == {"mgdl": -19.0, "pairs": 6, "share": 100}
+        assert bias == {
+            "mgdl": -19.0,
+            "pairs": 6,
+            "agree": 6,
+            "from": 92.0,
+            "to": 110.0,
+        }
+
+    def test_the_range_is_only_where_the_offset_holds(self):
+        """Пара на высоком сахаре с обратным знаком диапазон не расширяет."""
+
+        series, sticks = self.pairs([-18, -20, -15, -30, -12])
+        # Глюкометр 160, сенсор 200: на высоком сахаре сенсор выше.
+        high_at = BASE - timedelta(hours=1)
+        sticks.append((high_at, 160.0))
+        series = [
+            (moment, 200.0 if abs(moment - high_at) < timedelta(minutes=10) else value)
+            for moment, value in series
+        ]
+
+        bias = _bias(self.started, series, sticks)
+
+        assert bias["pairs"] == 6
+        assert bias["agree"] == 5
+        assert bias["to"] == 110.0
 
     def test_one_typo_does_not_move_the_median(self):
         series, sticks = self.pairs([-18, -20, -15, -30, -12, +105])
@@ -276,13 +300,14 @@ class TestBias:
 def test_the_collector_stores_both_marks(monkeypatch):
     """run_once кладёт в базу и установку, и конец срока по модели прибора."""
 
-    starts, ends = [], []
+    starts, ends, history = [], [], []
     monkeypatch.setattr(main, "store_readings", lambda rows: len(rows))
     monkeypatch.setattr(main, "last_readings", lambda limit=10: [])
     monkeypatch.setattr(main, "store_last_success", lambda when: None)
     monkeypatch.setattr(main, "publish", lambda **kwargs: None)
     monkeypatch.setattr(main, "store_sensor_start", lambda when: starts.append(when))
     monkeypatch.setattr(main, "store_sensor_end", lambda when: ends.append(when))
+    monkeypatch.setattr(main, "store_sensor", lambda *row: history.append(row))
 
     class Known:
         started = BASE - timedelta(days=2)
@@ -293,3 +318,44 @@ def test_the_collector_stores_both_marks(monkeypatch):
 
     assert starts == [Known.started]
     assert ends == [Known.started + timedelta(days=15)]
+    # И в историю — та же установка, срок и модель.
+    assert history == [(Known.started, Known.started + timedelta(days=15), 4)]
+
+
+def test_a_broken_history_does_not_cost_the_current_sensor(monkeypatch):
+    """Сбой записи истории не мешает отметкам текущего сенсора."""
+
+    starts = []
+    monkeypatch.setattr(main, "store_readings", lambda rows: len(rows))
+    monkeypatch.setattr(main, "last_readings", lambda limit=10: [])
+    monkeypatch.setattr(main, "store_last_success", lambda when: None)
+    monkeypatch.setattr(main, "publish", lambda **kwargs: None)
+    monkeypatch.setattr(main, "store_sensor_start", lambda when: starts.append(when))
+    monkeypatch.setattr(main, "store_sensor_end", lambda when: None)
+
+    def broken(*row):
+        raise RuntimeError("no table")
+
+    monkeypatch.setattr(main, "store_sensor", broken)
+
+    class Known:
+        started = BASE - timedelta(days=2)
+        kind = 4
+        lifetime_days = 15
+
+    main.run_once(FakeCollector([(BASE, 110.0)], sensor=Known()), None, 300, 60, None)
+
+    assert starts == [Known.started]
+
+
+def test_the_snapshot_marks_sensor_changes_within_the_week():
+    """Замены сенсора — epoch-секундами, только в окне недельной панели."""
+
+    recent = BASE - timedelta(days=3)
+    old = BASE - timedelta(days=20)
+
+    snapshot = build_snapshot(
+        readings(BASE - timedelta(hours=2), BASE), [], BASE, sensor_changes=[old, recent]
+    )
+
+    assert snapshot["sensor_changes"] == [unix(recent)]

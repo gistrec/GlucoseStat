@@ -111,6 +111,27 @@ class CollectorState(Base):
     occurred_at = Column(DateTime, nullable=False)
 
 
+class SensorRecord(Base):
+    """Каждый сенсор, который видел сборщик, — строкой на установку.
+
+    ``collector_state`` держит только текущий: отметка перезаписывается, и
+    на графике за неделю прошлую замену было бы нечем подписать. Здесь
+    история — для линий замены на графике и для сверок по сенсорам.
+    """
+
+    __tablename__ = "sensors"
+
+    # Момент установки, наивный UTC. Ключ: установка у сенсора одна, и
+    # повторный опрос того же сенсора обновляет строку, а не множит её.
+    started = Column(DateTime, primary_key=True)
+    ends = Column(DateTime, nullable=True)
+    # Номер модели из ответа Abbott (``pt``), см. SENSOR_MODELS.
+    kind = Column(Integer, nullable=True)
+    # Откуда известна установка: ``abbott`` — из ответа LibreLinkUp, ``gap`` —
+    # восстановлена по разрыву прогрева в показаниях (сенсоры до этой таблицы).
+    source = Column(String(16), nullable=False)
+
+
 class GlucoseReading(Base):
     """Single glucose reading as published by LibreLinkUp.
 

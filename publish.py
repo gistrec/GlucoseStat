@@ -28,6 +28,7 @@ from database.queries import (
     read_sensor_end,
     read_sensor_start,
     readings_since,
+    sensor_starts_since,
     timezone_history,
 )
 from daytime import DISPLAY_TZ, _covered, _weigh, _weighted_percentile, _zone
@@ -244,7 +245,7 @@ def _bias(
         return None
 
     times = [moment for moment, _ in readings]
-    diffs = []
+    pairs: list[tuple[float, float]] = []  # (глюкометр, сенсор − глюкометр)
     for moment, finger in fingersticks:
         if moment < started:
             continue
@@ -254,20 +255,25 @@ def _bias(
             key=lambda i: abs(times[i] - moment),
         )
         if abs(times[nearest] - moment) <= BIAS_MAX_OFFSET:
-            diffs.append(readings[nearest][1] - finger)
+            pairs.append((finger, readings[nearest][1] - finger))
 
-    if len(diffs) < BIAS_MIN_PAIRS:
+    if len(pairs) < BIAS_MIN_PAIRS:
         return None
 
-    offset = median(diffs)
-    same_side = sum(1 for diff in diffs if diff * offset > 0) / len(diffs)
-    if abs(offset) < BIAS_MIN_MGDL or same_side < BIAS_MIN_SHARE:
+    offset = median(diff for _, diff in pairs)
+    agreeing = [finger for finger, diff in pairs if diff * offset > 0]
+    if abs(offset) < BIAS_MIN_MGDL or len(agreeing) / len(pairs) < BIAS_MIN_SHARE:
         return None
 
     return {
         "mgdl": round(offset, 1),
-        "pairs": len(diffs),
-        "share": round(100 * same_side),
+        "pairs": len(pairs),
+        # Сколько пар согласны со смещением и при каком сахаре по глюкометру:
+        # смещение проверено только в этом диапазоне, и плашка называет его,
+        # а не обещает ту же ошибку на любом сахаре.
+        "agree": len(agreeing),
+        "from": round(min(agreeing), 1),
+        "to": round(max(agreeing), 1),
     }
 
 
@@ -731,6 +737,7 @@ def build_snapshot(
     sensor_ends: datetime | None = None,
     forecast_rows: list[tuple[datetime, int, float, str]] | None = None,
     zones: list[tuple[datetime, str]] | None = None,
+    sensor_changes: list[datetime] | None = None,
 ) -> dict:
     """Assemble the snapshot the page reads. Pure: no database, no clock.
 
@@ -841,6 +848,13 @@ def build_snapshot(
         "sensor": _sensor(
             sensor_started, sensor_ends, readings, now, fingersticks or []
         ),
+        # Установки сенсоров — пунктир «новый сенсор» на почасовых панелях.
+        # Окно — самой широкой из них: месяц сводится по дням, и линии там нет.
+        "sensor_changes": [
+            int(moment.replace(tzinfo=timezone.utc).timestamp())
+            for moment in (sensor_changes or [])
+            if moment >= now - RANGES["week"][0]
+        ],
         # Окно — суточной панели (RANGES["day"]), а не отдельная константа:
         # кольца рисует только она, и второго источника правды для этого
         # окна заводить незачем.
@@ -953,6 +967,7 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
         forecast_rows=latest_forecast(),
         # Смены пояса из бота — время суток приёма для коэффициента.
         zones=timezone_history(),
+        sensor_changes=sensor_starts_since(now - RANGES["week"][0]),
     )
 
     directory = os.path.dirname(os.path.abspath(path))

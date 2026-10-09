@@ -11,6 +11,7 @@ from .connection import session
 from .models import (
     CollectorState,
     GlucoseReading,
+    SensorRecord,
     glucose_forecasts,
     journal_entries,
     meal_confirmations,
@@ -116,6 +117,44 @@ def read_sensor_end() -> datetime | None:
     """Конец срока сенсора, или None, пока сборщик его не записал."""
 
     return _read_mark("sensor_ends")
+
+
+def store_sensor(started: datetime, ends: datetime, kind: int | None) -> None:
+    """Записать сенсор в историю; тот же сенсор — обновить строку."""
+
+    statement = insert(SensorRecord).values(
+        started=started, ends=ends, kind=kind, source="abbott"
+    )
+    statement = statement.on_duplicate_key_update(
+        ends=statement.inserted.ends,
+        kind=statement.inserted.kind,
+        source=statement.inserted.source,
+    )
+
+    with session() as db:
+        db.execute(statement)
+        db.commit()
+
+
+def sensor_starts_since(start: datetime) -> list[datetime]:
+    """Установки сенсоров не раньше ``start``, старые первыми.
+
+    Пустой список, если таблицы ещё нет — та же оговорка, что у
+    ``_read_mark``: её создаёт сборщик, а рендерер на реплике не может.
+    """
+
+    try:
+        with session() as db:
+            return list(
+                db.execute(
+                    select(SensorRecord.started)
+                    .where(SensorRecord.started >= start)
+                    .order_by(SensorRecord.started)
+                ).scalars()
+            )
+    except SQLAlchemyError as error:
+        log.warning("sensor history unavailable, publishing without it: %s", error)
+        return []
 
 
 def readings_since(start: datetime) -> list[tuple[datetime, float]]:

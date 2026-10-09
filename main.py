@@ -18,6 +18,7 @@ from database.queries import (
     latest_fingerstick,
     store_last_success,
     store_readings,
+    store_sensor,
     store_sensor_end,
     store_sensor_start,
 )
@@ -208,14 +209,21 @@ def run_once(
     # значило бы потерять смену сенсора, случившуюся при перезапуске.
     sensor = collector.sensor
     if sensor is not None:
+        ends = sensor.started + timedelta(days=sensor.lifetime_days)
         try:
             store_sensor_start(sensor.started)
             # Конец срока считает сборщик: модель прибора видна только ему,
             # а рендереру на реплике достаётся готовая дата — иначе срок
             # пришлось бы знать обеим машинам, и разошлись бы они молча.
-            store_sensor_end(sensor.started + timedelta(days=sensor.lifetime_days))
+            store_sensor_end(ends)
         except Exception:
             log.exception("failed to store the sensor start")
+        # История — своим try: без неё пропадёт лишь линия замены на
+        # графике, и сбой не должен стоить карточки текущего сенсора.
+        try:
+            store_sensor(sensor.started, ends, sensor.kind)
+        except Exception:
+            log.exception("failed to store the sensor history")
 
     # Своим try, а не внутри опроса: упавшая запись не должна выглядеть
     # неудачным опросом и включать backoff.
