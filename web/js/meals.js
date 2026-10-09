@@ -992,7 +992,12 @@ export function renderRatio(analysis) {
     );
     const clean = dosed.filter(ratioReady);
 
-    const byDaypart = ratioRows(clean, DAYPARTS, (meal) => minutesOfDay(meal.t));
+    // local_min — минута суток там, где человек ел (analysis.py, по смене
+    // пояса из бота). Старый снимок без неё — в поясе нарезки, как раньше.
+    const localTime = clean.every((meal) => meal.local_min != null);
+    const byDaypart = ratioRows(clean, DAYPARTS, (meal) =>
+        localTime ? meal.local_min : minutesOfDay(meal.t)
+    );
     const byPortion = ratioRows(clean, PORTIONS, (meal) => meal.carbs);
 
     if (!byDaypart.length && !byPortion.length) {
@@ -1012,8 +1017,11 @@ export function renderRatio(analysis) {
               "вне целевого диапазона, гипогликемия или незакрытое окно"
             : "") +
         ". Не рекомендация дозы." +
-        // Время суток приёма считается в поясе нарезки (minutesOfDay).
-        (awayFromHome() ? ` Время суток — ${homeNote()}.` : "");
+        (localTime
+            ? " Время суток — по местному времени в момент еды."
+            : awayFromHome()
+              ? ` Время суток — ${homeNote()}.`
+              : "");
 
     fillRatioTable(els.ratioTable, "Время суток", byDaypart);
     els.ratioTable.parentElement.hidden = !byDaypart.length;

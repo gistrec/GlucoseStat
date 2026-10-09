@@ -81,6 +81,19 @@ glucose_forecasts = Table(
     Column("created_at", DateTime, nullable=False),
 )
 
+# История часовых поясов человека — бот пишет строку на каждый /tz. Нужна
+# коэффициенту: «утро» приёма — по часам там, где человек ел, а не по поясу,
+# в котором страница режет сутки.
+user_timezones = Table(
+    "user_timezones",
+    journal_metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("tg_user_id", BigInteger, nullable=False),
+    Column("tz", String(64), nullable=False),
+    # С какого момента пояс действует. Наивный UTC, как occurred_at.
+    Column("effective_from", DateTime, nullable=False),
+)
+
 
 class CollectorState(Base):
     """Состояние сборщика, видимое рендереру на другой машине.

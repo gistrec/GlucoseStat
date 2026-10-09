@@ -591,6 +591,7 @@ class TestPublishWindow:
         monkeypatch.setattr("publish.read_sensor_start", lambda: None)
         monkeypatch.setattr("publish.read_sensor_end", lambda: None)
         monkeypatch.setattr("publish.latest_forecast", list)
+        monkeypatch.setattr("publish.timezone_history", list)
 
         publish(path=str(tmp_path / "data.json"), last_success=1.0)
 
@@ -874,6 +875,7 @@ class TestLastSuccessSource:
         monkeypatch.setattr("publish.read_sensor_start", lambda: None)
         monkeypatch.setattr("publish.read_sensor_end", lambda: None)
         monkeypatch.setattr("publish.latest_forecast", list)
+        monkeypatch.setattr("publish.timezone_history", list)
 
     def test_the_database_wins_over_the_previous_snapshot(self, tmp_path, monkeypatch):
         path = tmp_path / "data.json"
@@ -952,6 +954,7 @@ class TestPublishCarryForward:
         monkeypatch.setattr("publish.read_sensor_start", lambda: None)
         monkeypatch.setattr("publish.read_sensor_end", lambda: None)
         monkeypatch.setattr("publish.latest_forecast", list)
+        monkeypatch.setattr("publish.timezone_history", list)
         # Пустая база — то состояние, ради которого наследование и осталось.
         monkeypatch.setattr("publish.read_last_success", lambda: None)
 
@@ -975,6 +978,7 @@ class TestPublishCarryForward:
         monkeypatch.setattr("publish.read_sensor_start", lambda: None)
         monkeypatch.setattr("publish.read_sensor_end", lambda: None)
         monkeypatch.setattr("publish.latest_forecast", list)
+        monkeypatch.setattr("publish.timezone_history", list)
         monkeypatch.setattr("publish.read_last_success", lambda: None)
 
         # Каталог на месте файла: переименовать в него нельзя, и publish

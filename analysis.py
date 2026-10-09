@@ -14,6 +14,8 @@ import statistics
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
+from daytime import local_minutes
+
 
 # Окно разбора. Короткий инсулин отрабатывает 3–5 часов, за четыре часа
 # нормальная кривая успевает подняться и вернуться — а шестичасовое окно почти
@@ -416,6 +418,7 @@ def analyse(
     boluses: list[tuple[datetime, float]] | None = None,
     limit: int = 24,
     origins: dict[datetime, list[dict]] | None = None,
+    zones: list[tuple[datetime, str]] | None = None,
 ) -> dict:
     """Разобрать последние приёмы пищи и свести их в итог.
 
@@ -430,6 +433,9 @@ def analyse(
 
     ``origins`` — сырьё для ``trust_level`` по метке записи; списком на метку,
     потому что две записи еды могут стоять на одной секунде.
+
+    ``zones`` — смены пояса человека (``timezone_history``): по ним у приёмов
+    коэффициента стоит ``local_min``, минута суток там, где человек ел.
     """
 
     # Перекусы (до SNACK_CARBS граммов) не участвуют вовсе: не режут чужие
@@ -449,6 +455,7 @@ def analyse(
     }
 
     excursions = []
+    excursions_by_meal = []
     for meal, records in zip(reviewed, sittings):
         item = excursion(
             meal,
@@ -462,14 +469,20 @@ def analyse(
         )
         if item is not None:
             excursions.append(item)
+            excursions_by_meal.append((meal, item))
 
     # Коэффициенту — все приёмы окна, а не показанные кривые: лимит режет
     # журнал до последних четырёх-пяти дней, и медиана выходила по пяти
     # приёмам. Без точек кривой — только то, что читает renderRatio, иначе
     # снимок потяжелел бы на те самые кривые, от которых бережёт лимит.
+    # Время суток — по поясу, в котором человек ел: страница режет сутки в
+    # DISPLAY_TZ, и после перелёта на пять часов завтрак уезжал в «ночь».
     ratio_meals = [
-        {key: item[key] for key in RATIO_FIELDS if key in item}
-        for item in excursions
+        {
+            **{key: item[key] for key in RATIO_FIELDS if key in item},
+            "local_min": local_minutes(meal[0], zones or []),
+        }
+        for meal, item in excursions_by_meal
         if item.get("dose") and item["dose"].get("units", 0) > 0
     ]
 

@@ -9,9 +9,9 @@
 
 import math
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Через ``or``, а не значением по умолчанию: пустая переменная в окружении
 # должна означать «зона не задана», а не зону с пустым именем.
@@ -23,6 +23,30 @@ def _zone() -> ZoneInfo:
     """Разрешение зоны один раз: ``ZoneInfo`` читает базу tzdata с диска."""
 
     return ZoneInfo(DISPLAY_TZ)
+
+
+def local_minutes(moment: datetime, history: list[tuple[datetime, str]]) -> int:
+    """Минута местных суток в ``moment`` (наивный UTC) — по поясу, который
+    тогда действовал у человека.
+
+    ``history`` — смены пояса из бота, старые первыми (``timezone_history``).
+    До первой смены и при непонятном имени пояса — ``DISPLAY_TZ``: тот же
+    пояс, в котором бот живёт, пока человек его не выбирал.
+    """
+
+    name = DISPLAY_TZ
+    for since, tz in history:
+        if since > moment:
+            break
+        name = tz
+
+    try:
+        zone = ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = _zone()
+
+    local = moment.replace(tzinfo=timezone.utc).astimezone(zone)
+    return local.hour * 60 + local.minute
 
 
 # Потолок веса одного замера. Дальше начинается молчание сенсора, которое не

@@ -28,6 +28,7 @@ from database.queries import (
     read_sensor_end,
     read_sensor_start,
     readings_since,
+    timezone_history,
 )
 from daytime import DISPLAY_TZ, _covered, _weigh, _weighted_percentile, _zone
 from librelinkup import SENSOR_LIFETIME_FALLBACK_DAYS
@@ -729,6 +730,7 @@ def build_snapshot(
     sensor_started: datetime | None = None,
     sensor_ends: datetime | None = None,
     forecast_rows: list[tuple[datetime, int, float, str]] | None = None,
+    zones: list[tuple[datetime, str]] | None = None,
 ) -> dict:
     """Assemble the snapshot the page reads. Pure: no database, no clock.
 
@@ -850,6 +852,7 @@ def build_snapshot(
             hypo_mgdl=TARGET_LOW_MGDL,
             boluses=boluses,
             origins=origins,
+            zones=zones,
         ),
     }
 
@@ -948,6 +951,8 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
         # Бот пишет прогноз на каждую точку; нет таблицы или строк — пусто, и
         # хвост остаётся линейным.
         forecast_rows=latest_forecast(),
+        # Смены пояса из бота — время суток приёма для коэффициента.
+        zones=timezone_history(),
     )
 
     directory = os.path.dirname(os.path.abspath(path))

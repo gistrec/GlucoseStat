@@ -15,6 +15,7 @@ from .models import (
     journal_entries,
     meal_confirmations,
     meal_estimates,
+    user_timezones,
 )
 
 
@@ -182,6 +183,28 @@ def journal_since(start: datetime) -> list[tuple[datetime, str, float | None, fl
         )
         for row in rows
     ]
+
+
+def timezone_history() -> list[tuple[datetime, str]]:
+    """Смены пояса как (effective_from, tz), старые первыми.
+
+    Без фильтра по человеку: журнал на странице один, и чей он — решает бот,
+    а не рендерер. Пустой список, если таблицы нет (бот её ещё не завёл) —
+    тогда время суток считается в ``DISPLAY_TZ``, как раньше.
+    """
+
+    try:
+        with session() as db:
+            rows = db.execute(
+                select(user_timezones.c.effective_from, user_timezones.c.tz).order_by(
+                    user_timezones.c.effective_from
+                )
+            ).all()
+    except SQLAlchemyError as error:
+        log.warning("time zones unavailable, publishing without them: %s", error)
+        return []
+
+    return [(row.effective_from, str(row.tz)) for row in rows]
 
 
 def latest_forecast() -> list[tuple[datetime, int, float, str]]:

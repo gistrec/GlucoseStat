@@ -1,6 +1,7 @@
 """Postprandial analysis: rise, peak, return, and what gets excluded."""
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from analysis import (
     RATIO_FIELDS,
@@ -518,8 +519,21 @@ class TestAnalyse:
 
         assert len(result["meals"]) == 2
         assert len(result["ratio_meals"]) == 4
-        assert set(result["ratio_meals"][0]) <= set(RATIO_FIELDS)
+        assert set(result["ratio_meals"][0]) <= {*RATIO_FIELDS, "local_min"}
         assert result["ratio_meals"][0]["dose"]["units"] == 6.0
+
+    def test_the_ratio_meal_knows_its_local_time(self):
+        """Минута суток — по поясу человека в момент еды, а не по DISPLAY_TZ."""
+
+        readings = rising_then_back(100, 160)
+        zones = [(START - timedelta(days=1), "Asia/Novokuznetsk")]
+
+        result = analyse(
+            [(START, 60.0)], readings, LATER, HYPO, boluses=[(START, 6.0)], zones=zones
+        )
+
+        local = START.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("Asia/Novokuznetsk"))
+        assert result["ratio_meals"][0]["local_min"] == local.hour * 60 + local.minute
 
 
 class TestTrustLevel:
