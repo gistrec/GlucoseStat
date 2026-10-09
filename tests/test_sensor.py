@@ -11,7 +11,7 @@ from librelinkup import (
     SENSOR_MODELS,
     _parse_sensor,
 )
-from publish import SENSOR_WINDOW, _sensor, build_snapshot
+from publish import SENSOR_WINDOW, _bias, _sensor, build_snapshot
 
 
 def unix(moment):
@@ -202,7 +202,75 @@ class TestSnapshotCarriesIt:
             "coverage",
             "quiet",
             "quiet_minutes",
+            "bias",
         }
+
+
+class TestBias:
+    """Сверка текущего сенсора с глюкометром — основание для плашки."""
+
+    started = BASE - timedelta(days=3)
+
+    def pairs(self, diffs, sensor=80.0):
+        """Ряд сенсора на ``sensor`` и замеры, отстоящие от него на ``-diff``."""
+
+        series = readings(self.started, BASE)
+        series = [(moment, sensor) for moment, _ in series]
+        sticks = [
+            (self.started + timedelta(hours=6 * (i + 1), minutes=1), sensor - diff)
+            for i, diff in enumerate(diffs)
+        ]
+        return series, sticks
+
+    def test_a_steady_underread_is_reported(self):
+        series, sticks = self.pairs([-18, -20, -15, -30, -12, -22])
+
+        bias = _bias(self.started, series, sticks)
+
+        assert bias == {"mgdl": -19.0, "pairs": 6, "share": 100}
+
+    def test_one_typo_does_not_move_the_median(self):
+        series, sticks = self.pairs([-18, -20, -15, -30, -12, +105])
+
+        assert _bias(self.started, series, sticks)["mgdl"] == -16.5
+
+    def test_too_few_pairs_say_nothing(self):
+        series, sticks = self.pairs([-18, -20, -15, -30])
+
+        assert _bias(self.started, series, sticks) is None
+
+    def test_noise_within_the_sensor_accuracy_says_nothing(self):
+        series, sticks = self.pairs([-5, -8, -3, -6, -7])
+
+        assert _bias(self.started, series, sticks) is None
+
+    def test_a_split_verdict_says_nothing(self):
+        series, sticks = self.pairs([-20, -25, -15, +20, +18, -30])
+
+        assert _bias(self.started, series, sticks) is None
+
+    def test_the_previous_sensor_does_not_count(self):
+        series, sticks = self.pairs([-18, -20, -15, -30, -12])
+        old = [(self.started - timedelta(hours=1), 200.0)]
+
+        bias = _bias(self.started, series, old + sticks)
+
+        assert bias["pairs"] == 5
+
+    def test_a_stick_far_from_any_reading_is_not_a_pair(self):
+        series, sticks = self.pairs([-18, -20, -15, -30, -12])
+        series = [item for item in series if abs(item[0] - sticks[0][0]) > timedelta(minutes=10)]
+
+        assert _bias(self.started, series, sticks) is None
+
+    def test_the_snapshot_carries_it(self):
+        series, sticks = self.pairs([-18, -20, -15, -30, -12])
+
+        snapshot = build_snapshot(
+            series, [], BASE, fingersticks=sticks, sensor_started=self.started
+        )
+
+        assert snapshot["sensor"]["bias"]["pairs"] == 5
 
 
 def test_the_collector_stores_both_marks(monkeypatch):

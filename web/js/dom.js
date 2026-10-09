@@ -4,6 +4,7 @@ export const els = {
     nowArrow: document.getElementById("now-arrow"),
     nowMeta: document.getElementById("now-meta"),
     nowEvents: document.getElementById("now-events"),
+    nowBias: document.getElementById("now-bias"),
     active: document.getElementById("active"),
     empty: document.getElementById("empty"),
     ranges: document.getElementById("ranges"),

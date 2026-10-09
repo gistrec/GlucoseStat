@@ -10,8 +10,10 @@ sensor serial, and none of that belongs on a public URL.
 import json
 import os
 import tempfile
+from bisect import bisect_left
 from datetime import date, datetime, time, timedelta, timezone
 from itertools import pairwise
+from statistics import median
 
 from active import active_now
 from agp import day_profile
@@ -31,7 +33,6 @@ from daytime import DISPLAY_TZ, _covered, _weigh, _weighted_percentile, _zone
 from librelinkup import SENSOR_LIFETIME_FALLBACK_DAYS
 from lows import high_episodes, low_episodes
 from nights import night_summary
-
 
 # Читается при загрузке модуля, до всякого .env, — потому и задавать его нужно
 # в окружении: так его видят все трое (сборщик, превью, ручной пересбор), а не
@@ -147,6 +148,18 @@ SENSOR_SILENCE = timedelta(minutes=15)
 ARTIFACT_DELTA_MGDL = 10.8
 ARTIFACT_MAX_SECONDS = 120
 
+# Сверка сенсора с глюкометром. Пара — замер и ближайшая к нему точка сенсора
+# не дальше пяти минут: дальше разница говорит уже о движении сахара, а не о
+# сенсоре. Смещение — медиана разниц, а не среднее: одна опечатка при вводе
+# (93,7 вместо 193,7) сдвинула бы среднее по десятку пар на полторы ммоль/л.
+# Предупреждение — только когда смещение и велико, и устойчиво: от пяти пар,
+# по модулю от 0,5 ммоль/л (9 мг/дл — на уровне MARD самого Libre, меньше
+# уже не отличить от шума) и в одну сторону хотя бы у трёх пар из четырёх.
+BIAS_MAX_OFFSET = timedelta(minutes=5)
+BIAS_MIN_PAIRS = 5
+BIAS_MIN_MGDL = 9
+BIAS_MIN_SHARE = 0.75
+
 
 def _downsample(
     readings: list[tuple[datetime, float]], step_minutes: int, low: int
@@ -212,11 +225,56 @@ def _gaps(readings: list[tuple[datetime, float]], since: datetime) -> list[dict]
     return gaps
 
 
+def _bias(
+    started: datetime | None,
+    readings: list[tuple[datetime, float]],
+    fingersticks: list[tuple[datetime, float]],
+) -> dict | None:
+    """Насколько текущий сенсор расходится с глюкометром, или ``None``.
+
+    Только по замерам с момента установки: у прошлого сенсора своя ошибка, и
+    смешав их, плашка винила бы новый за грехи старого. ``None`` — и когда пар
+    мало, и когда расхождение в пределах шума: плашка появляется, только если
+    есть что сказать (см. ``BIAS_*``).
+    """
+
+    if started is None or not readings:
+        return None
+
+    times = [moment for moment, _ in readings]
+    diffs = []
+    for moment, finger in fingersticks:
+        if moment < started:
+            continue
+        index = bisect_left(times, moment)
+        nearest = min(
+            (i for i in (index - 1, index) if 0 <= i < len(times)),
+            key=lambda i: abs(times[i] - moment),
+        )
+        if abs(times[nearest] - moment) <= BIAS_MAX_OFFSET:
+            diffs.append(readings[nearest][1] - finger)
+
+    if len(diffs) < BIAS_MIN_PAIRS:
+        return None
+
+    offset = median(diffs)
+    same_side = sum(1 for diff in diffs if diff * offset > 0) / len(diffs)
+    if abs(offset) < BIAS_MIN_MGDL or same_side < BIAS_MIN_SHARE:
+        return None
+
+    return {
+        "mgdl": round(offset, 1),
+        "pairs": len(diffs),
+        "share": round(100 * same_side),
+    }
+
+
 def _sensor(
     started: datetime | None,
     ends: datetime | None,
     readings: list[tuple[datetime, float]],
     now: datetime,
+    fingersticks: list[tuple[datetime, float]] | None = None,
 ) -> dict:
     """Сенсор: когда надет, когда кончится и сколько данных от него дошло.
 
@@ -291,6 +349,7 @@ def _sensor(
         "coverage": round(100 * (1 - silent_seconds / total), 1),
         "quiet": count,
         "quiet_minutes": round(silent_seconds / 60),
+        "bias": _bias(started, readings, fingersticks or []),
     }
 
 
@@ -776,7 +835,9 @@ def build_snapshot(
         # Сам сенсор: сколько ему осталось и сколько данных от него дошло.
         # Отметка установки приходит снаружи, как и last_success: снимок
         # собирается без базы, иначе его не собрал бы preview.py.
-        "sensor": _sensor(sensor_started, sensor_ends, readings, now),
+        "sensor": _sensor(
+            sensor_started, sensor_ends, readings, now, fingersticks or []
+        ),
         # Окно — суточной панели (RANGES["day"]), а не отдельная константа:
         # кольца рисует только она, и второго источника правды для этого
         # окна заводить незачем.
@@ -857,25 +918,31 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
     # событий на странице просто не появятся.
     journal = journal_since(now - ANALYSIS_WINDOW)
 
+    # Отметку пишет сборщик; на рендерере она приезжает репликацией. Нет
+    # её — карточка сенсора покажет только полноту данных.
+    sensor_started = read_sensor_start()
+
+    # Сверки глюкометром — за двое суток для графика и за всю жизнь сенсора
+    # для его сверки (``_bias``): страница всё равно режет точки по своему
+    # окну в ``_sugars``, а в снимок уходит только смещение.
+    fingersticks_from = now - EVENT_WINDOW
+    if sensor_started is not None:
+        fingersticks_from = min(fingersticks_from, sensor_started)
+
     snapshot = build_snapshot(
         readings,
         journal,
         now,
         last_success=last_success,
         origins=meal_origins_since(now - ANALYSIS_WINDOW),
-        # Своим окном, не окном разбора: сверки живут на графике, а не в
-        # разборе приёмов, и тащить их за две недели значило бы возить в
-        # снимке сотню точек, из которых страница покажет две.
-        fingersticks=fingersticks_since(now - EVENT_WINDOW),
+        fingersticks=fingersticks_since(fingersticks_from),
         # Не из readings: последнее измерение может быть старше окна графиков,
         # и тогда странице нужно показать «данных нет с такого-то числа».
         # Сорок строк, а не десять: выборка обязана накрыть TREND_WINDOW при
         # минутном опросе, иначе точки старше 15 минут в ней нет, rate выходит
         # null — и страница молча гасит прогноз со стрелкой тренда.
         latest=_trend(last_readings(40)),
-        # Отметку пишет сборщик; на рендерере она приезжает репликацией. Нет
-        # её — карточка сенсора покажет только полноту данных.
-        sensor_started=read_sensor_start(),
+        sensor_started=sensor_started,
         sensor_ends=read_sensor_end(),
         # Бот пишет прогноз на каждую точку; нет таблицы или строк — пусто, и
         # хвост остаётся линейным.

@@ -1,6 +1,6 @@
 import { state } from "./state.js";
 import { els } from "./dom.js";
-import { formatShortDay, formatSpan, percent, plural } from "./format.js";
+import { formatMmol, formatShortDay, formatSpan, percent, plural } from "./format.js";
 import { setFoldSummary } from "./fold.js";
 
 /* Карточка сенсора: сколько ему осталось и сколько данных от него дошло.
@@ -29,6 +29,7 @@ const WARN_DAYS = 1;
 
 export function renderSensor() {
     const sensor = state.snapshot.sensor;
+    renderBias(sensor && sensor.bias);
     if (!sensor) {
         els.sensor.hidden = true;
         return;
@@ -37,6 +38,26 @@ export function renderSensor() {
     els.sensorCard.replaceChildren(lifeHalf(sensor), dataHalf(sensor));
     setFoldSummary("sensor", sensorSummary(sensor));
     els.sensor.hidden = false;
+}
+
+/* Плашка под текущим значением: сенсор устойчиво расходится с глюкометром.
+   Под числом, а не в карточке сенсора: читать её нужно ровно тогда, когда
+   смотришь на значение, а карточка внизу страницы и бывает свёрнута. Само
+   значение не исправляется — смещение посчитано по горстке пар и на высоком
+   сахаре бывает другим, поэтому страница предупреждает, а не подменяет.
+   Число и порог появления считает publish.py (_bias): нет bias — нет плашки. */
+function renderBias(bias) {
+    if (!bias) {
+        els.nowBias.hidden = true;
+        return;
+    }
+
+    const direction = bias.mgdl < 0 ? "занижает" : "завышает";
+    els.nowBias.textContent =
+        `⚠ Этот сенсор ${direction} показания: в среднем на ${formatMmol(Math.abs(bias.mgdl))} ммоль/л ` +
+        `относительно глюкометра (${bias.pairs} ${plural(bias.pairs, "сверка", "сверки", "сверок")}). ` +
+        `Низкие значения стоит проверять глюкометром.`;
+    els.nowBias.hidden = false;
 }
 
 /* Сводка свёрнутого раздела: сколько осталось и сколько данных дошло — те же
