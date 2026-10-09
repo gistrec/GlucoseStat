@@ -52,9 +52,9 @@
                  состояния, и её текст — единственное, что о них сообщает. -->
             <div class="head__controls">
                 <!-- Разборы — окном поверх страницы, см. js/research.js. -->
-                <button class="theme research-open" id="research-open" type="button" aria-haspopup="dialog">
-                    <span aria-hidden="true">✎ </span><span class="theme__label">Исследования</span>
-                </button>
+                <!-- Без значка и без theme__label: на узком экране у темы
+                     остаётся глиф, а этой кнопке, кроме слова, нечего показать. -->
+                <button class="theme research-open" id="research-open" type="button" aria-haspopup="dialog">Исследования</button>
                 <!-- Пояс просмотра. Подпись и часы ставит js/timezone.js; меню
                      строится при открытии — в нём четыреста поясов, держать их
                      в разметке всё время незачем. -->
