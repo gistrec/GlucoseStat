@@ -142,13 +142,15 @@ SENSOR_WINDOW = timedelta(days=7)
 # разрывы, которые на графике видны.
 SENSOR_SILENCE = timedelta(minutes=15)
 
-# Порог пометки «возможный артефакт сенсора». Интерстициальная жидкость
-# сглаживает даже быстрые скачки крови, поэтому 0,6 ммоль/л (10,8 мг/дл) за
-# 2 минуты между соседними замерами — уже не физиология, а либо компрессия
-# (лёг на сенсор, провал и мгновенный отскок), либо шум калибровки в первые
-# сутки нового сенсора. Считается по сырым замерам: усреднение в корзину
+# Порог пометки «возможный шум сенсора»: точка, в которую кривая прыгнула и
+# из которой сразу прыгнула обратно, оба раза не меньше чем на 0,4 ммоль/л
+# (7,2 мг/дл) и не дольше 2 минут на шаг. Зигзаг, а не скорость: прежнее
+# правило «скачок от 0,6 за 2 минуты» ловило в основном быстрый, но ровный
+# подъём после еды — 41 пометка из 45 за неделю 02–09.10 — и ставило кольцо
+# на соседку иглы, а не на неё. Ровная кривая обратно не прыгает, шум и
+# компрессия — прыгают. Считается по сырым замерам: усреднение в корзину
 # ``_downsample`` смазывает как раз ту иглу, которую нужно поймать.
-ARTIFACT_DELTA_MGDL = 10.8
+ARTIFACT_DELTA_MGDL = 7.2
 ARTIFACT_MAX_SECONDS = 120
 
 # Сверка сенсора с глюкометром. Пара — замер и ближайшая к нему точка сенсора
@@ -362,37 +364,40 @@ def _sensor(
 
 
 def _artifacts(readings: list[tuple[datetime, float]], since: datetime) -> list[dict]:
-    """Замеры, чья скорость изменения физиологически недостижима.
+    """Точки-иглы: кривая прыгнула в них и сразу вернулась (см. ``ARTIFACT_*``).
 
-    Каждая запись несёт ``dv``/``dsec`` — чем именно скачок нарушил порог, —
-    чтобы подсказка на странице объясняла пометку числом, а не просто словом
-    «шум». Точка публикуется под правым концом скачка: это она, а не левая
-    соседка, воспринимается глазом как игла на кривой.
+    Каждая запись несёт ``dv`` — скачок в точку, ``back`` — скачок из неё и
+    ``dsec`` — сколько длилась игла от соседки до соседки, чтобы подсказка
+    объясняла пометку числами, а не словом «шум». Публикуется сама игла: её
+    глаз и видит выбившейся из кривой.
 
-    Как и ``_gaps``, окно проверяется по правому концу пары, а не по левому:
-    скачок, начавшийся до окна и закончившийся внутри него, обязан остаться
-    виден.
+    Последняя точка не проверяется: обратного скачка у неё ещё нет, и пометка
+    появится через минуту, со следующим замером. Окно — по самой игле.
     """
 
     artifacts = []
-    for (left_t, left_v), (right_t, right_v) in pairwise(readings):
-        if right_t < since:
+    for (left_t, left_v), (mid_t, mid_v), (right_t, right_v) in zip(
+        readings, readings[1:], readings[2:]
+    ):
+        if mid_t < since:
             continue
 
-        delta_seconds = (right_t - left_t).total_seconds()
-        if delta_seconds <= 0 or delta_seconds > ARTIFACT_MAX_SECONDS:
+        into = (mid_t - left_t).total_seconds()
+        out = (right_t - mid_t).total_seconds()
+        if not (0 < into <= ARTIFACT_MAX_SECONDS and 0 < out <= ARTIFACT_MAX_SECONDS):
             continue
 
-        delta_mgdl = right_v - left_v
-        if abs(delta_mgdl) < ARTIFACT_DELTA_MGDL:
+        jump, back = mid_v - left_v, right_v - mid_v
+        if jump * back >= 0 or min(abs(jump), abs(back)) < ARTIFACT_DELTA_MGDL:
             continue
 
         artifacts.append(
             {
-                "t": int(right_t.replace(tzinfo=timezone.utc).timestamp()),
-                "mgdl": round(right_v),
-                "dv": round(delta_mgdl / 18.0, 2),
-                "dsec": round(delta_seconds),
+                "t": int(mid_t.replace(tzinfo=timezone.utc).timestamp()),
+                "mgdl": round(mid_v),
+                "dv": round(jump / 18.0, 2),
+                "back": round(back / 18.0, 2),
+                "dsec": round(into + out),
             }
         )
 

@@ -237,73 +237,88 @@ class TestArtifacts:
     def window(self, hours=48):
         return BASE - timedelta(hours=hours)
 
+    @staticmethod
+    def series(*values, step=60):
+        return [(BASE + timedelta(seconds=step * i), float(v)) for i, v in enumerate(values)]
+
     def test_steady_readings_are_not_flagged(self):
         data = readings(120, 121, 120, 122, 121, step_minutes=1)
 
         assert _artifacts(data, self.window()) == []
 
-    def test_a_fast_jump_is_flagged(self):
-        # 15 мг/дл за полторы минуты — выше порога (10,8 за ≤120с).
-        data = [(BASE, 120.0), (BASE + timedelta(seconds=90), 135.0)]
+    def test_a_spike_and_return_is_flagged_on_the_spike(self):
+        # 3,5 → 3,9 → 3,3: точка выскочила и вернулась — как 08.10 в 10:24.
+        data = self.series(90, 100, 82)
 
         assert _artifacts(data, self.window()) == [
             {
-                "t": unix(BASE + timedelta(seconds=90)),
-                "mgdl": 135,
-                "dv": 0.83,
-                "dsec": 90,
+                "t": unix(BASE + timedelta(seconds=60)),
+                "mgdl": 100,
+                "dv": 0.56,
+                "back": -1.0,
+                "dsec": 120,
             }
         ]
 
-    def test_the_same_jump_slower_is_not_flagged(self):
-        # Тот же скачок, растянутый за порог по времени, — уже не игла.
-        data = [(BASE, 120.0), (BASE + timedelta(seconds=150), 135.0)]
+    def test_a_fast_steady_rise_is_not_noise(self):
+        # 4,9 → 5,6 → 6,9 → 7,2: быстро, но в одну сторону — подъём после еды.
+        data = self.series(89, 100, 124, 130)
 
         assert _artifacts(data, self.window()) == []
 
-    def test_a_small_jump_within_time_is_not_flagged(self):
-        # 10 мг/дл — меньше порога, хоть и быстро.
-        data = [(BASE, 120.0), (BASE + timedelta(seconds=60), 130.0)]
+    def test_a_small_wiggle_is_not_flagged(self):
+        # Туда-обратно на 5 мг/дл — меньше порога в 7,2.
+        data = self.series(100, 105, 100)
 
         assert _artifacts(data, self.window()) == []
 
-    def test_exactly_the_time_threshold_still_counts(self):
-        # 120 секунд — ещё внутри порога, не за ним.
-        data = [(BASE, 100.0), (BASE + timedelta(seconds=120), 125.0)]
+    def test_one_small_side_is_not_enough(self):
+        # Вверх на 15, вниз только на 4: игла должна вернуться, а не осесть.
+        data = self.series(100, 115, 111)
 
-        assert len(_artifacts(data, self.window())) == 1
+        assert _artifacts(data, self.window()) == []
 
-    def test_a_compression_low_flags_both_the_drop_and_the_recovery(self):
-        # Провал и мгновенный отскок — классика передавленного сенсора:
-        # обе стороны читаются как игла, не только падение.
+    def test_a_slow_return_is_not_a_spike(self):
+        # Обратный скачок дольше двух минут — уже не игла, а движение кривой.
         data = [
             (BASE, 100.0),
-            (BASE + timedelta(seconds=60), 80.0),
-            (BASE + timedelta(seconds=180), 105.0),
+            (BASE + timedelta(seconds=60), 115.0),
+            (BASE + timedelta(seconds=240), 100.0),
         ]
 
-        artifacts = _artifacts(data, self.window())
+        assert _artifacts(data, self.window()) == []
 
-        assert [a["dv"] for a in artifacts] == [-1.11, 1.39]
+    def test_a_compression_low_is_one_mark_on_the_dip(self):
+        # Провал и мгновенный отскок — одна пометка на дне, а не две по бокам.
+        data = self.series(100, 80, 105)
 
-    def test_an_artifact_before_the_window_is_dropped(self):
+        assert [(a["mgdl"], a["dv"], a["back"]) for a in _artifacts(data, self.window())] == [
+            (80, -1.11, 1.39)
+        ]
+
+    def test_the_last_reading_waits_for_its_neighbour(self):
+        # Обратного скачка ещё нет — пометки тоже.
+        data = self.series(100, 100, 120)
+
+        assert _artifacts(data, self.window()) == []
+
+    def test_a_spike_before_the_window_is_dropped(self):
         old = BASE - timedelta(days=5)
         data = [
             (old, 100.0),
             (old + timedelta(seconds=60), 120.0),
-            (BASE, 100.0),
-            (BASE + timedelta(seconds=60), 120.0),
+            (old + timedelta(seconds=120), 100.0),
+            *self.series(100, 120, 100),
         ]
 
-        # Пятидневный скачок — за окном; сегодняшний — внутри.
         assert [a["t"] for a in _artifacts(data, self.window())] == [
             unix(BASE + timedelta(seconds=60))
         ]
 
     def test_delta_threshold_matches_the_published_constant(self):
-        # Порог кратен переведённому в мг/дл 0,6 ммоль/л — тест ловит расхождение,
-        # если константу когда-нибудь подправят и забудут про мгдл-эквивалент.
-        assert ARTIFACT_DELTA_MGDL == pytest.approx(0.6 * 18, abs=0.01)
+        # Порог — 0,4 ммоль/л в мг/дл: тест ловит расхождение, если константу
+        # подправят и забудут про эквивалент.
+        assert ARTIFACT_DELTA_MGDL == pytest.approx(0.4 * 18, abs=0.01)
 
 
 class TestDaily:

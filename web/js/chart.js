@@ -1848,11 +1848,12 @@ export function showTip(clientX) {
             (item) => Math.abs(item.t - point[0]) <= 150
         );
         if (artifact) {
-            const direction = artifact.dv > 0 ? "рост" : "падение";
+            const direction = artifact.dv > 0 ? "вверх" : "вниз";
+            const size = Math.abs(artifact.dv).toFixed(1).replace(".", ",");
             rows.push(
                 tipRow(
                     SERIES.artifact,
-                    `Возможный шум сенсора · ${direction} ${Math.abs(artifact.dv).toFixed(1)} ммоль/л за ${artifact.dsec} с`
+                    `Возможный шум сенсора · скачок ${direction} на ${size} и обратно за ${Math.round(artifact.dsec / 60)} мин`
                 )
             );
         }
