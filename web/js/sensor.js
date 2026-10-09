@@ -56,14 +56,19 @@ function renderBias(bias) {
     // смещением (publish._bias): плашка говорит, где ошибка проверена, а не
     // обещает её на любом сахаре.
     const low = bias.mgdl < 0;
-    const range = `${formatMmol(bias.from)}–${formatMmol(bias.to)}`;
+    const offset = `${formatMmol(Math.abs(bias.mgdl))} ммоль/л ${low ? "меньше" : "больше"}`;
     els.biasTitle.textContent = low
         ? "⚠ Текущий сенсор занижает низкие значения"
         : "⚠ Текущий сенсор завышает показания";
+    // Снимок прежнего сборщика диапазона не несёт — тогда фраза без него, а
+    // не «при сахаре не число–не число» на минуту после выкладки.
     els.biasText.textContent =
-        `При сахаре ${range} ммоль/л по глюкометру сенсор показывает в среднем на ` +
-        `${formatMmol(Math.abs(bias.mgdl))} ммоль/л ${low ? "меньше" : "больше"} ` +
-        `(${bias.agree} из ${bias.pairs} ${plural(bias.pairs, "измерения", "измерений", "измерений")}).`;
+        bias.from == null
+            ? `Сенсор показывает в среднем на ${offset} глюкометра ` +
+              `(${bias.pairs} ${plural(bias.pairs, "измерение", "измерения", "измерений")}).`
+            : `При сахаре ${formatMmol(bias.from)}–${formatMmol(bias.to)} ммоль/л по глюкометру ` +
+              `сенсор показывает в среднем на ${offset} ` +
+              `(${bias.agree} из ${bias.pairs} ${plural(bias.pairs, "измерения", "измерений", "измерений")}).`;
     els.bias.hidden = false;
 }
 

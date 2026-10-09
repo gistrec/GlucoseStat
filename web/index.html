@@ -51,6 +51,10 @@
             <!-- Подпись и заголовок задаёт app.js: кнопка перебирает три
                  состояния, и её текст — единственное, что о них сообщает. -->
             <div class="head__controls">
+                <!-- Разборы — окном поверх страницы, см. js/research.js. -->
+                <button class="theme research-open" id="research-open" type="button" aria-haspopup="dialog">
+                    <span aria-hidden="true">✎ </span><span class="theme__label">Исследования</span>
+                </button>
                 <!-- Пояс просмотра. Подпись и часы ставит js/timezone.js; меню
                      строится при открытии — в нём четыреста поясов, держать их
                      в разметке всё время незачем. -->
@@ -64,6 +68,17 @@
                 <button class="theme" id="theme" type="button"></button>
             </div>
         </header>
+
+        <dialog class="research" id="research" aria-labelledby="research-heading">
+            <div class="research__box">
+                <div class="research__head">
+                    <h2 class="research__heading" id="research-heading">Исследования</h2>
+                    <button class="research__close" id="research-close" type="button" aria-label="Закрыть" autofocus>×</button>
+                </div>
+                <div class="research__tabs" id="research-tabs" role="tablist" aria-label="Разборы"></div>
+                <div class="research__panel" id="research-panel" role="tabpanel"></div>
+            </div>
+        </dialog>
 
         <!-- Расхождение текущего сенсора с глюкометром. Текст и видимость
              задаёт js/sensor.js по sensor.bias снимка. -->

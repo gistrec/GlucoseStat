@@ -13,6 +13,7 @@ import { renderReview, setMealFilter, overlayHoverAt, clearOverlayHover } from "
 import { HOME_TIMEZONE, formatAgo, formatDateTime } from "./js/format.js";
 import { initZonePicker, renderZoneButton } from "./js/timezone.js";
 import { initFolds } from "./js/fold.js";
+import { initResearch } from "./js/research.js";
 
 const RELOAD_INTERVAL_MS = 60 * 1000;
 
@@ -248,6 +249,9 @@ initFolds((id) => {
     if (id === "night") renderNights();
     if (id === "review") renderReview();
 });
+
+// Разборы не зависят от снимка: окно открывается и до первой загрузки.
+initResearch();
 
 load();
 setInterval(load, RELOAD_INTERVAL_MS);

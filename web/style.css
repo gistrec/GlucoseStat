@@ -410,6 +410,247 @@ body {
     font-size: 0.9rem;
 }
 
+/* ── Исследования: окно поверх страницы ──────────────────────────────
+   Те же панели и кегли, что у разделов страницы, но в своём окне: разбор —
+   снимок на дату, и стоять среди живых чисел ему незачем. */
+.research {
+    width: min(720px, calc(100vw - 32px));
+    max-height: min(88vh, 900px);
+    padding: 0;
+    border: 1px solid var(--panel-chrome);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--fg);
+}
+
+.research::backdrop {
+    background: rgb(0 0 0 / 0.5);
+}
+
+.research__box {
+    display: grid;
+    grid-template-rows: auto auto 1fr;
+    gap: 14px;
+    max-height: inherit;
+    padding: 20px;
+}
+
+.research__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.research__heading {
+    margin: 0;
+    font-family: "Bricolage Grotesque", system-ui, sans-serif;
+    font-size: 1.35rem;
+    color: var(--title-ink);
+}
+
+.research__close {
+    border: 0;
+    background: none;
+    color: var(--muted);
+    font-size: 1.5rem;
+    line-height: 1;
+    padding: 4px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.research__close:hover {
+    color: var(--fg);
+}
+
+.research__tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.research__tab {
+    padding: 6px 14px;
+    border: 1px solid var(--panel-chrome);
+    border-radius: 999px;
+    background: var(--panel);
+    color: var(--muted);
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.research__tab[aria-selected="true"] {
+    color: var(--fg);
+    border-color: var(--accent);
+}
+
+.research__close:focus-visible,
+.research__tab:focus-visible,
+.research-open:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.research__panel {
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.research__study {
+    display: grid;
+    gap: 12px;
+    padding: 18px;
+    background: var(--panel);
+    border: 1px solid var(--panel-chrome);
+    border-radius: var(--radius);
+}
+
+.research__meta {
+    margin: 0;
+    color: var(--muted);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.75rem;
+}
+
+.research__title {
+    margin: -6px 0 0;
+    font-size: 1.1rem;
+}
+
+.research__verdict,
+.research__text {
+    margin: 0;
+    max-width: 62ch;
+    line-height: 1.55;
+}
+
+.research__text {
+    color: var(--muted);
+    font-size: 0.92rem;
+}
+
+.research__summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 16px 24px;
+    padding-block: 4px;
+}
+
+.research__kpis {
+    display: flex;
+    gap: 20px;
+}
+
+.research__kpi {
+    display: grid;
+    gap: 2px;
+}
+
+.research__kpi-value {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 1.5rem;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+.research__kpi-label {
+    max-width: 14rem;
+    color: var(--muted);
+    font-size: 0.78rem;
+}
+
+.research__bars {
+    flex: 1;
+    min-width: 220px;
+    display: grid;
+    gap: 6px;
+    margin: 0;
+}
+
+.research__bar {
+    display: grid;
+    grid-template-columns: 6.5rem 1fr 2.5rem;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.research__bar--best {
+    color: var(--fg);
+}
+
+.research__track {
+    height: 8px;
+    background: var(--panel-chrome);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.research__fill {
+    display: block;
+    height: 100%;
+    background: var(--muted);
+    opacity: 0.55;
+    border-radius: 4px;
+}
+
+.research__bar--best .research__fill {
+    background: var(--in-range);
+    opacity: 1;
+}
+
+.research__bar-value {
+    text-align: right;
+}
+
+.research__caption {
+    color: var(--muted);
+    font-size: 0.72rem;
+}
+
+.research__table-wrap {
+    overflow-x: auto;
+}
+
+.research__table {
+    border-collapse: collapse;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.research__table th,
+.research__table td {
+    padding: 6px 16px 6px 0;
+    text-align: left;
+    border-bottom: 1px solid var(--panel-chrome);
+}
+
+.research__table th {
+    color: var(--muted);
+    font-weight: 500;
+}
+
+@media (max-width: 520px) {
+    .research {
+        width: 100vw;
+        max-width: 100vw;
+        max-height: 100dvh;
+        height: 100dvh;
+        border-radius: 0;
+    }
+
+    .research__kpis {
+        flex-wrap: wrap;
+    }
+}
+
 /* Последнее из журнала — еда и оба инсулина. Сетка общая на все строки:
    числа стоят столбиком только пока колонки одни и те же, а порознь
    размеченные строки разъезжаются на первом же трёхзначном числе. */
