@@ -66,6 +66,20 @@ AGREEMENT_LOW_RATIO = 0.25
 
 CARBS_EPSILON_G = 0.05
 
+#: Поля приёма, которые нужны углеводному коэффициенту на странице (ratioReady
+#: и ratioRows в web/js/meals.js). Новое условие там — новое поле здесь.
+RATIO_FIELDS = (
+    "t",
+    "carbs",
+    "dose",
+    "rise",
+    "baseline",
+    "complete",
+    "cut",
+    "hypo",
+    "from_hypo",
+)
+
 #: Сколько точек рисуется на странице. Три — потому что столько уровней
 #: уверенности предлагает бот: «знаю состав», «прикинул», «наугад».
 TRUST_DOTS = 3
@@ -449,6 +463,16 @@ def analyse(
         if item is not None:
             excursions.append(item)
 
+    # Коэффициенту — все приёмы окна, а не показанные кривые: лимит режет
+    # журнал до последних четырёх-пяти дней, и медиана выходила по пяти
+    # приёмам. Без точек кривой — только то, что читает renderRatio, иначе
+    # снимок потяжелел бы на те самые кривые, от которых бережёт лимит.
+    ratio_meals = [
+        {key: item[key] for key in RATIO_FIELDS if key in item}
+        for item in excursions
+        if item.get("dose") and item["dose"].get("units", 0) > 0
+    ]
+
     # Свежие интереснее старых: обрезаем с начала, а итог считаем по тем же
     # окнам, что показаны, — иначе число в сводке не сойдётся с картинкой.
     excursions = excursions[-limit:]
@@ -462,5 +486,6 @@ def analyse(
             "peak_min": list(TYPICAL_PEAK_MIN),
         },
         "meals": excursions,
+        "ratio_meals": ratio_meals,
         "summary": summarise(excursions, hypo_mgdl),
     }

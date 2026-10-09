@@ -34,6 +34,7 @@ from librelinkup import SENSOR_LIFETIME_FALLBACK_DAYS
 from lows import high_episodes, low_episodes
 from nights import night_summary
 
+
 # Читается при загрузке модуля, до всякого .env, — потому и задавать его нужно
 # в окружении: так его видят все трое (сборщик, превью, ручной пересбор), а не
 # один из них. Через ``or``, а не значением по умолчанию: пустую переменную оно

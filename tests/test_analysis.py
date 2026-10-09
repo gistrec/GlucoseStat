@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta, timezone
 
 from analysis import (
+    RATIO_FIELDS,
     SNACK_CARBS,
     TARGET_RISE,
     WINDOW,
@@ -494,6 +495,31 @@ class TestAnalyse:
 
         assert len(result["meals"]) == 2
         assert result["meals"][0]["t"] < result["meals"][1]["t"]
+
+    def test_the_ratio_sees_past_the_limit(self):
+        """Коэффициент — по всем приёмам с болюсом, а не по показанным кривым,
+        и без точек кривой: ради них лимит и стоит."""
+
+        meals, boluses, readings = [], [], []
+        for day in range(5):
+            moment = START + timedelta(days=day)
+            meals.append((moment, 60.0))
+            readings.extend(
+                (timestamp + timedelta(days=day), value)
+                for timestamp, value in rising_then_back(100, 160 + day)
+            )
+            # Последний приём — без укола: ему в коэффициенте не место.
+            if day < 4:
+                boluses.append((moment, 6.0))
+
+        result = analyse(
+            meals, readings, LATER + timedelta(days=5), HYPO, boluses=boluses, limit=2
+        )
+
+        assert len(result["meals"]) == 2
+        assert len(result["ratio_meals"]) == 4
+        assert set(result["ratio_meals"][0]) <= set(RATIO_FIELDS)
+        assert result["ratio_meals"][0]["dose"]["units"] == 6.0
 
 
 class TestTrustLevel:
