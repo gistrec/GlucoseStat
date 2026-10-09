@@ -164,9 +164,12 @@ body {
    фиксированной ширины шапка дёргалась бы при каждом переключении. */
 /* Пояс и тема — одной группой справа: обе кнопки про то, как страница
    показывает данные, а не про сами данные. */
+/* Кнопки шапки — одной высоты: у пояса в строке моноширинные часы с другой
+   высотой строки, и без растяжки его кнопка торчала выше соседних. */
 .head__controls {
     flex: none;
     display: flex;
+    align-items: stretch;
     justify-content: flex-end;
     gap: 8px;
     margin-top: 6px;
@@ -174,8 +177,14 @@ body {
 
 .theme {
     flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    /* Флекс съедает пробел между значком и подписью — его держит gap. */
+    gap: 6px;
     min-width: 7.5rem;
     padding: 8px 12px;
+    line-height: 1.2;
     background: var(--panel);
     border: 1px solid var(--panel-chrome);
     border-radius: var(--radius);
@@ -191,13 +200,35 @@ body {
     border-color: var(--accent);
 }
 
-@media (max-width: 420px) {
-    /* На узком экране заголовок и так занимает всю строку — подпись кнопки
-       уезжает, остаётся значок. */
+/* На телефоне кнопки шапки уходят под заголовок, отдельной строкой во всю
+   ширину: рядом с крупным «Глюкоза» три кнопки не помещались, и последняя
+   уезжала за край экрана. */
+@media (max-width: 560px) {
+    .head {
+        flex-wrap: wrap;
+    }
+
+    .head__controls {
+        width: 100%;
+        margin-top: 0;
+    }
+
+    .head__controls > *,
+    .zone__button {
+        flex: 1;
+    }
+
+    .zone__button {
+        justify-content: center;
+    }
+
     .theme {
         min-width: 0;
     }
+}
 
+@media (max-width: 420px) {
+    /* На узком экране у темы остаётся значок, подпись уезжает. */
     .theme__label {
         display: none;
     }
@@ -212,12 +243,18 @@ body {
 /* ── Пояс просмотра ────────────────────────────────────────────────── */
 .zone {
     position: relative;
+    /* Флекс — чтобы кнопка внутри растянулась на высоту ряда, как соседки. */
+    display: flex;
 }
 
+/* Подпись и часы — по общей базовой линии, а сама строка — по центру
+   растянутой кнопки: align-content работает только у переносимого флекса,
+   отсюда wrap (переноса при этом не бывает — строка короткая). */
 .zone__button {
-    display: inline-flex;
     gap: 8px;
     align-items: baseline;
+    flex-wrap: wrap;
+    align-content: center;
 }
 
 .zone__button[aria-expanded="true"] {
