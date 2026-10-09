@@ -393,7 +393,9 @@ body {
     border-left-width: 4px;
     border-radius: var(--radius);
     padding: 14px 18px;
-    margin-bottom: 16px;
+    /* Тот же шаг, что между панелями (.now): плашка — отдельный блок, а не
+       шапка блока под ней. */
+    margin-bottom: 24px;
 }
 
 .bias__title {

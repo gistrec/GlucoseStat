@@ -848,12 +848,12 @@ def build_snapshot(
         "sensor": _sensor(
             sensor_started, sensor_ends, readings, now, fingersticks or []
         ),
-        # Установки сенсоров — пунктир «новый сенсор» на почасовых панелях.
-        # Окно — самой широкой из них: месяц сводится по дням, и линии там нет.
+        # Установки сенсоров — пунктир «новый сенсор» на всех панелях, и на
+        # месячной тоже, поэтому окно — месяца.
         "sensor_changes": [
             int(moment.replace(tzinfo=timezone.utc).timestamp())
             for moment in (sensor_changes or [])
-            if moment >= now - RANGES["week"][0]
+            if moment >= now - RANGES["month"][0]
         ],
         # Окно — суточной панели (RANGES["day"]), а не отдельная константа:
         # кольца рисует только она, и второго источника правды для этого
@@ -967,7 +967,7 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
         forecast_rows=latest_forecast(),
         # Смены пояса из бота — время суток приёма для коэффициента.
         zones=timezone_history(),
-        sensor_changes=sensor_starts_since(now - RANGES["week"][0]),
+        sensor_changes=sensor_starts_since(now - RANGES["month"][0]),
     )
 
     directory = os.path.dirname(os.path.abspath(path))

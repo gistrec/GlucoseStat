@@ -826,6 +826,18 @@ export function drawChart() {
 
     if (daily) {
         drawDailyBoxes(ctx, days, x, y, padding.left, width - padding.right, boxWidth);
+        // Ось месяца — те же секунды, что у почасовых панелей: линия встаёт
+        // внутри дня замены, в сам момент установки.
+        drawSensorChanges(
+            ctx,
+            state.snapshot.sensor_changes || [],
+            x,
+            padding.left,
+            width - padding.right,
+            padding.top,
+            padding.top + plotHeight,
+            muted
+        );
     } else {
         // До кривой: полоса гасит подложку зон и коридор «обычно», и кривая,
         // нарисованная раньше, тускнела бы у самого края молчания.

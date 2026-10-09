@@ -348,14 +348,18 @@ def test_a_broken_history_does_not_cost_the_current_sensor(monkeypatch):
     assert starts == [Known.started]
 
 
-def test_the_snapshot_marks_sensor_changes_within_the_week():
-    """Замены сенсора — epoch-секундами, только в окне недельной панели."""
+def test_the_snapshot_marks_sensor_changes_within_the_month():
+    """Замены сенсора — epoch-секундами, только в окне месячной панели."""
 
     recent = BASE - timedelta(days=3)
-    old = BASE - timedelta(days=20)
+    month = BASE - timedelta(days=20)
+    old = BASE - timedelta(days=40)
 
     snapshot = build_snapshot(
-        readings(BASE - timedelta(hours=2), BASE), [], BASE, sensor_changes=[old, recent]
+        readings(BASE - timedelta(hours=2), BASE),
+        [],
+        BASE,
+        sensor_changes=[old, month, recent],
     )
 
-    assert snapshot["sensor_changes"] == [unix(recent)]
+    assert snapshot["sensor_changes"] == [unix(month), unix(recent)]
