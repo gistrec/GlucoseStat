@@ -126,7 +126,7 @@ The days left are the question the page can answer before the app does. A sensor
 
 The activation moment comes from LibreLinkUp, in the same `graph` response as the readings. The lifetime does not, and cannot: Abbott reports when a sensor was applied, never how long it will run. What the payload does carry is a product-type number, and `SENSOR_MODELS` is where that number turns into days.
 
-The table is empty on purpose. Abbott publishes no such numbering, and a guess in it would repeat the bug that made this card call a Libre 3 Pro a plain Libre 3 and end its life a day early. The collector logs the number it actually sees, once per process, which is how a row gets added; until then the lifetime is the fallback constant.
+The table is empty on purpose. Abbott publishes no such numbering, and a guess in it would repeat the bug that made this card call a Libre 3 Plus a plain Libre 3 and end its life a day early. The collector logs the number it actually sees, once per process, which is how a row gets added; until then the lifetime is the fallback constant.
 
 The collector stores both the start and the computed end in `collector_state`, so a renderer on a read replica would publish the same dates without needing to know the model. The days left are counted in the browser, since a number baked into a snapshot would be yesterday's by morning.
 
