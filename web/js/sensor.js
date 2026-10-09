@@ -63,10 +63,7 @@ function renderBias(bias) {
     els.biasText.textContent =
         `При сахаре ${range} ммоль/л по глюкометру сенсор показывает в среднем на ` +
         `${formatMmol(Math.abs(bias.mgdl))} ммоль/л ${low ? "меньше" : "больше"} ` +
-        `(${bias.agree} из ${bias.pairs} ${plural(bias.pairs, "измерения", "измерений", "измерений")}). ` +
-        (low
-            ? "Перед тем как есть быстрые углеводы, проверьте глюкометром."
-            : "Перед коррекцией инсулином проверьте глюкометром.");
+        `(${bias.agree} из ${bias.pairs} ${plural(bias.pairs, "измерения", "измерений", "измерений")}).`;
     els.bias.hidden = false;
 }
 
