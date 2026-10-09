@@ -441,6 +441,7 @@ def _stats(readings: list[tuple[datetime, float]]) -> dict | None:
     )
     below = sum(weight for value, weight in pairs if value < TARGET_LOW_MGDL)
     above = sum(weight for value, weight in pairs if value > TARGET_HIGH_MGDL)
+    above_tight = sum(weight for value, weight in pairs if value > TIGHT_HIGH_MGDL)
 
     variance = sum(weight * (value - average) ** 2 for value, weight in pairs) / total
     deviation = variance**0.5
@@ -458,6 +459,9 @@ def _stats(readings: list[tuple[datetime, float]]) -> dict | None:
         "titr": round(100 * tight / total, 1),
         "below": round(100 * below / total, 1),
         "above": round(100 * above / total, 1),
+        # Выше узкого диапазона, то есть выше 7.8. Ниже у обоих диапазонов
+        # общее — "below".
+        "above_tight": round(100 * above_tight / total, 1),
         # Коэффициент вариации: ≤36% считается стабильной гликемией.
         "cv": round(100 * deviation / average, 1) if average else None,
     }

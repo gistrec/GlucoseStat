@@ -1914,6 +1914,79 @@ body {
     white-space: nowrap;
 }
 
+/* Знак пояснения — в правом верхнем углу карточки: заголовок остаётся
+   нетронутым, а знаки соседних карточек стоят на одной линии. Тихий, в цвет
+   подписи: подсказка для того, кто ищет, а не акцент. */
+.stat--about {
+    position: relative;
+}
+
+/* Место под знак, чтобы длинный заголовок переносился, а не залезал под него. */
+.stat--about .stat__label {
+    padding-right: 22px;
+}
+
+.stat__about-toggle {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--muted);
+    opacity: 0.55;
+    font: inherit;
+    font-size: 0.7rem;
+    cursor: pointer;
+}
+
+/* Знак маленький, а палец — нет: невидимый ореол доводит область нажатия
+   до ~34px. */
+.stat__about-toggle::after {
+    content: "";
+    position: absolute;
+    inset: -8px;
+}
+
+.stat__about-toggle:hover,
+.stat__about-toggle[aria-expanded="true"] {
+    opacity: 1;
+    color: var(--fg);
+    background: var(--panel-chrome);
+}
+
+.stat__about-toggle:focus-visible {
+    opacity: 1;
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* Попап в верхнем слое. Позиция и отступ — из JS (ABOUT_WIDTH там же),
+   здесь снимается центровка, которую браузер даёт popover по умолчанию.
+   Оформление — как у меню часового пояса. */
+.stat__about {
+    position: absolute;
+    inset: auto;
+    margin: 0;
+    width: min(300px, calc(100vw - 32px));
+    box-sizing: border-box;
+    padding: 12px 14px;
+    background: var(--panel);
+    color: var(--fg);
+    /* Попап ложится поверх таких же панелей: --panel-chrome в тёмной теме
+       от них не отличить, а тень на почти чёрном не видна. */
+    border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent);
+    border-radius: var(--radius);
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.25);
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
 .stat__hint {
     margin: 4px 0 0;
     color: var(--muted);

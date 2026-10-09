@@ -170,6 +170,76 @@ export function statCard(label, value, hint, compare) {
     return card;
 }
 
+/* Пояснение к карточке — попапом у «?» в правом верхнем углу. Нативный popover:
+   закрытие по клику мимо и по Esc браузер даёт сам, а верхний слой не
+   обрезается краем карточки.
+
+   Карточки пересобираются с каждым снимком, раз в минуту, и при смене
+   периода. Сами попапы живут вне них, по одному на ключ, — иначе открытый
+   закрывался бы посреди чтения. Пересоздаётся только кнопка, и попап
+   запоминает свежую, чтобы встать под неё. */
+const abouts = new Map();
+
+// Ширина попапа — та же, что в CSS: позицию считаем до показа, когда
+// измерить его ещё нельзя.
+const ABOUT_WIDTH = 300;
+const ABOUT_GUTTER = 16;
+
+function aboutPopover(key, text) {
+    let entry = abouts.get(key);
+    if (entry) return entry;
+
+    const popover = document.createElement("div");
+    popover.className = "stat__about";
+    popover.id = `stat-about-${key}`;
+    popover.popover = "auto";
+    popover.textContent = text;
+
+    entry = { popover, anchor: null };
+    popover.addEventListener("beforetoggle", (event) => {
+        if (event.newState !== "open" || !entry.anchor) return;
+        const rect = entry.anchor.getBoundingClientRect();
+        const width = Math.min(ABOUT_WIDTH, window.innerWidth - 2 * ABOUT_GUTTER);
+        // Правым краем к знаку: он стоит в углу карточки, и попап, начатый от
+        // него влево-направо, у правой колонки упирался бы в край экрана.
+        const left = Math.min(
+            Math.max(rect.right - width, ABOUT_GUTTER),
+            window.innerWidth - ABOUT_GUTTER - width
+        );
+        // В координатах документа, а не окна: попап уезжает вместе со
+        // страницей, а не висит над прокручиваемым текстом.
+        popover.style.left = `${left + window.scrollX}px`;
+        popover.style.top = `${rect.bottom + 6 + window.scrollY}px`;
+    });
+    // Подсветка открытого знака в CSS держится на aria-expanded.
+    popover.addEventListener("toggle", (event) => {
+        entry.anchor?.setAttribute("aria-expanded", String(event.newState === "open"));
+    });
+    document.body.append(popover);
+    abouts.set(key, entry);
+    return entry;
+}
+
+function withAbout(card, key, text) {
+    const label = card.querySelector(".stat__label");
+    const entry = aboutPopover(key, text);
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "stat__about-toggle";
+    toggle.textContent = "?";
+    toggle.setAttribute("aria-label", `Что такое «${label.textContent}»`);
+    toggle.popoverTargetElement = entry.popover;
+    toggle.setAttribute("aria-expanded", String(entry.popover.matches(":popover-open")));
+    entry.anchor = toggle;
+
+    // Сразу за заголовком: в углу знак стоит абсолютно, а в порядке чтения
+    // экранной читалкой он идёт вслед за тем, что поясняет.
+    label.after(toggle);
+    card.classList.add("stat--about");
+    return card;
+}
+
 /* Строка «против предыдущего периода» для карточки. Причину отсутствия
    сравнения называет сборщик, а не пустота на странице: «предыдущего периода
    нет» и «в нём слишком мало измерений» — разные фразы, и выбирает между ними
@@ -217,12 +287,26 @@ export function renderStats() {
 
     const prev = stats.prev;
     const cards = [
-        statCard("В целевом диапазоне", percent(stats.tir),
-            `ниже ${percent(stats.below)} · выше ${percent(stats.above)}`,
-            compareRow(prev, "tir",
-                (delta) => `${formatAmount(delta)} %`,
-                (was) => percent(was))),
-        statCard("В узком диапазоне", percent(stats.titr), "3,9–7,8 ммоль/л, как без диабета"),
+        withAbout(
+            statCard("В целевом диапазоне", percent(stats.tir),
+                `ниже ${percent(stats.below)} · выше ${percent(stats.above)}`,
+                compareRow(prev, "tir",
+                    (delta) => `${formatAmount(delta)} %`,
+                    (was) => percent(was))),
+            "tir",
+            "TIR: доля времени, когда сахар был в 3,9–10,0 ммоль/л. Это стандартный "
+                + "целевой диапазон для сенсора по международному консенсусу. Цель: "
+                + "больше 70 % времени в диапазоне, ниже 3,9 меньше 4 %, выше 10,0 "
+                + "меньше 25 %."),
+        withAbout(
+            statCard("В узком диапазоне", percent(stats.titr),
+                `ниже ${percent(stats.below)} · выше ${percent(stats.above_tight)}`),
+            "titr",
+            "TITR: доля времени, когда сахар был в 3,9–7,8 ммоль/л. В этом диапазоне "
+                + "сахар держится у людей без диабета, около 95 % времени. Узкий "
+                + "диапазон лежит внутри целевого, поэтому TITR не бывает больше TIR. "
+                + "«Выше» здесь значит выше 7,8. Общепринятой цели пока нет, "
+                + "чаще всего называют больше 50 %."),
         // Число замеров — мелкой подписью, а не своей карточкой: шаг записи
         // неоднороден (минута у живого опроса, пять у бэкфилла), так что само
         // по себе оно мало что говорит, а статистика взвешена по времени.
@@ -253,7 +337,16 @@ export function renderStats() {
     const gmi = state.snapshot.gmi;
     if (gmi) {
         cards.push(
-            statCard("GMI", percent(gmi.value), `расчётный HbA1c за ${gmi.days} дней`)
+            withAbout(
+                statCard("GMI", percent(gmi.value), `расчётный HbA1c за ${gmi.days} дней`),
+                "gmi",
+                "GMI (Glucose Management Indicator): оценка гликированного гемоглобина "
+                    + "HbA1c по среднему сахару с сенсора за последние 14 дней, всегда "
+                    + "за 14, какой бы период ни был выбран. Считается по формуле "
+                    + "Бергенстала (2018) и только когда сенсор покрыл не меньше 70 % "
+                    + "этих дней. С лабораторным HbA1c может расходиться на 0,5 % и "
+                    + "больше: анализ отражает примерно три месяца и зависит от "
+                    + "эритроцитов. Цель для большинства взрослых с диабетом — меньше 7 %.")
         );
     }
 

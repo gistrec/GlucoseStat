@@ -127,6 +127,8 @@ class TestStats:
 
         assert stats["titr"] == 25.0
         assert stats["tir"] == 50.0
+        assert stats["above_tight"] == 50.0
+        assert stats["titr"] + stats["below"] + stats["above_tight"] == 100.0
 
     def test_tight_range_boundaries_count_as_in_range(self):
         assert _stats(readings(TARGET_LOW_MGDL, TIGHT_HIGH_MGDL))["titr"] == 100.0
