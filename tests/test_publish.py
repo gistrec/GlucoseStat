@@ -1119,6 +1119,22 @@ class TestForecast:
     def test_no_rows_means_no_forecast(self):
         assert _forecast([], BASE) is None
 
+    def test_lower_bound_rides_along_with_the_forecast(self):
+        made_at = BASE
+        snapshot = _forecast(self.rows(made_at), BASE, [(60, 88.6), (30, 101.2)])
+        assert snapshot["lower"] == [
+            [unix(made_at + timedelta(minutes=30)), 101],
+            [unix(made_at + timedelta(minutes=60)), 89],
+        ]
+
+    def test_no_bounds_means_no_lower_key(self):
+        # Без ключа страница предупреждает прямой по скорости, как прежде.
+        assert "lower" not in _forecast(self.rows(BASE), BASE)
+        assert "lower" not in _forecast(self.rows(BASE), BASE, [])
+
+    def test_bounds_without_a_forecast_are_not_published(self):
+        assert _forecast([], BASE, [(30, 100.0)]) is None
+
     def test_snapshot_carries_the_key_either_way(self):
         now = BASE + timedelta(hours=1)
         without = build_snapshot(readings(120, 130), [], now)

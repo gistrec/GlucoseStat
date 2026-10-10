@@ -495,21 +495,43 @@ export function linearTail(latest) {
     return { from: { t: latest.t, mgdl: latest.mgdl }, points: [to], to, model: null };
 }
 
-/* Линейный хвост рядом с модельным — только как предупреждение о падении.
-   На своих данных модель сглаживает редкие провалы к среднему и за полчаса
-   до гипогликемии не называет её ни разу, а линейное продолжение ловит две
-   трети из них (docs/research/glucose-forecast-2026-10.md в GlucoseBot). Так
-   что когда прямая уходит под порог, а модель — нет, прямая остаётся на
-   холсте, цветом «ниже нормы». Когда модель и сама ведёт под порог, второй
-   хвост лишний: предупреждение уже на месте. */
+/* Горизонт нижней границы на холсте. Бот пишет её и на час, но проверялась
+   она на получасе (ml.compare --goal lows в GlucoseBot): на часе ложных
+   тревог втрое больше, и рисовать непроверенное значило бы пугать наугад. */
+export const LOWER_MINUTES = 30;
+
+/* Нижняя граница прогноза из снимка — «в девяти случаях из десяти сахар не
+   уйдёт ниже». Та же форма, что у хвостов, с kind: "lower", чтобы легенда и
+   подсказка назвали её по-своему. Точка — получасовая от made_at; если она
+   уже позади последнего замера, рисовать нечего. */
+export function lowerTail(latest) {
+    const forecast = state.snapshot.forecast;
+    if (!forecast || !Array.isArray(forecast.lower)) return null;
+    const point = forecast.lower.find(([t]) => t === forecast.made_at + LOWER_MINUTES * 60);
+    if (!point || point[0] <= latest.t) return null;
+    const to = {
+        t: point[0],
+        mgdl: Math.min(SENSOR_MAX_MGDL, Math.max(SENSOR_MIN_MGDL, point[1])),
+    };
+    return { from: { t: latest.t, mgdl: latest.mgdl }, points: [to], to, model: null, kind: "lower" };
+}
+
+/* Предупреждение о падении рядом с модельным хвостом. Модель сглаживает
+   редкие провалы к среднему и ям за полчаса не называет, поэтому рядом с
+   ней нужна линия, которая смотрит на худший случай. Это нижняя граница
+   прогноза, когда бот её посчитал: на проверке (октябрь 2026, отложенные
+   дни) она поймала 37 ям из 44 против 34 у прямой и дала 85 ложных тревог
+   против 114. Нет границы — прямая по скорости, как прежде: предупреждение
+   не должно пропадать вместе с таблицей. Рисуется, только когда линия уходит
+   под порог, а модель — нет: если модель и сама ведёт туда, второй хвост
+   лишний. */
 export function fallTail(latest, tail) {
     if (!tail || !tail.model) return null;
-    const linear = linearTail(latest);
-    if (!linear) return null;
     const low = state.snapshot.target ? state.snapshot.target.low : 70;
-    if (linear.to.mgdl > low) return null;
     if (tail.points.some((point) => point.mgdl <= low)) return null;
-    return linear;
+    const warning = lowerTail(latest) || linearTail(latest);
+    if (!warning || warning.to.mgdl > low) return null;
+    return warning;
 }
 
 /* Значение хвоста в момент t — по отрезкам, не по хорде from–to: у модельного
@@ -665,7 +687,7 @@ export function drawChart() {
             legendItems.push(tail.model ? SERIES.forecastModel : SERIES.forecast);
         }
         if (fall) {
-            legendItems.push(SERIES.fall);
+            legendItems.push(fall.kind === "lower" ? SERIES.fallLower : SERIES.fall);
         }
         // И следом — полосы вне нормы: они про ту же кривую, а не про журнал.
         // Снизу вверх, в порядке самих полос на холсте: легенда перечисляет их
@@ -1817,13 +1839,15 @@ export function showTip(clientX) {
     }
 
     // Предупреждение о падении — своей строкой и своим цветом: это не второй
-    // прогноз, а то, куда ведёт текущая скорость, если ничего не менять.
+    // прогноз, а худший случай — граница прогноза или текущая скорость.
     const fall = state.geometry.fall;
     if (fall && state.hoverTime > fall.from.t && state.hoverTime <= fall.to.t) {
+        const kind = fall.kind === "lower" ? SERIES.fallLower : SERIES.fall;
+        const words = fall.kind === "lower" ? "Может упасть до" : "По тренду";
         rows.push(
             tipRow(
-                SERIES.fall,
-                `По тренду ≈ ${formatMmol(tailValueAt(fall, state.hoverTime))} ${SERIES.fall.unit}`
+                kind,
+                `${words} ≈ ${formatMmol(tailValueAt(fall, state.hoverTime))} ${kind.unit}`
             )
         );
     }

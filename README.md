@@ -88,6 +88,8 @@ Without a forecast, or with one computed from a reading more than fifteen minute
 
 The straight line does not vanish altogether. A sharp fall is the one thing it reads better than the model, which smooths rare dips toward the mean and did not call a single low half an hour ahead on the same data, while the line caught two thirds of them. So when the linear extension crosses the low threshold within its half hour and the model's tail does not, the line stays on the canvas in the low colour, thinner and without a number: a warning, not a second forecast.
 
+When the bot has also written a lower bound for the same point (`glucose_forecast_bounds`: a 10 % quantile with a conformal correction, "nine times out of ten the sugar stays above this"), the warning is drawn from the bound's half-hour value instead of the straight line, under the same rule and labelled «Может упасть до». On ten held-out days it caught 37 lows out of 44 against the line's 34, with 85 false alarms against 114. The hour value is stored but not drawn: it was not the one tested. Without a bound the straight line is back, so the warning never disappears with the table.
+
 Both disappear while the latest reading is stale: extending a curve that stopped moving would be lying twice.
 
 ### Thinned readings

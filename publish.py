@@ -20,6 +20,7 @@ from agp import day_profile
 from analysis import analyse
 from database.queries import (
     fingersticks_since,
+    forecast_bounds,
     journal_since,
     last_readings,
     latest_forecast,
@@ -636,7 +637,9 @@ FORECAST_MAX_AGE = timedelta(minutes=20)
 
 
 def _forecast(
-    rows: list[tuple[datetime, int, float, str]], now: datetime
+    rows: list[tuple[datetime, int, float, str]],
+    now: datetime,
+    bounds: list[tuple[int, float]] | None = None,
 ) -> dict | None:
     """Хвост модели для страницы: от какой точки, какая модель, куда ведёт.
 
@@ -651,17 +654,23 @@ def _forecast(
     made_at = rows[0][0]
     if now - made_at > FORECAST_MAX_AGE:
         return None
-    return {
+
+    def at(horizon: int) -> int:
+        return int((made_at + timedelta(minutes=horizon)).replace(tzinfo=timezone.utc).timestamp())
+
+    forecast = {
         "made_at": int(made_at.replace(tzinfo=timezone.utc).timestamp()),
         "model": rows[0][3],
         "points": [
-            [
-                int((made_at + timedelta(minutes=horizon)).replace(tzinfo=timezone.utc).timestamp()),
-                round(mgdl),
-            ]
+            [at(horizon), round(mgdl)]
             for _, horizon, mgdl, _ in sorted(rows, key=lambda row: row[1])
         ],
     }
+    # Нижняя граница от той же точки — ключ только когда она есть: без него
+    # страница предупреждает о падении прямой по скорости, как прежде.
+    if bounds:
+        forecast["lower"] = [[at(horizon), round(mgdl)] for horizon, mgdl in sorted(bounds)]
+    return forecast
 
 
 def _trend(readings: list[tuple[datetime, float]]) -> dict | None:
@@ -766,6 +775,7 @@ def build_snapshot(
     sensor_started: datetime | None = None,
     sensor_ends: datetime | None = None,
     forecast_rows: list[tuple[datetime, int, float, str]] | None = None,
+    bound_rows: list[tuple[int, float]] | None = None,
     zones: list[tuple[datetime, str]] | None = None,
     sensor_changes: list[datetime] | None = None,
 ) -> dict:
@@ -840,7 +850,7 @@ def build_snapshot(
         "latest": latest if latest is not None else _trend(readings),
         # Хвост модели. None — и страница рисует линейный, как прежде: ключ
         # отсутствует ровно тогда, когда рисовать по модели нечестно.
-        "forecast": _forecast(forecast_rows or [], now),
+        "forecast": _forecast(forecast_rows or [], now, bound_rows),
         # Остаток короткого инсулина и углеводов — те же IOB и COB, что видит
         # модель прогноза (кривые в active.py). По всему журналу, а не по
         # EVENT_WINDOW: окно событий шире пяти часов действия, но связывать их
@@ -981,6 +991,9 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
     if sensor_started is not None:
         fingersticks_from = min(fingersticks_from, sensor_started)
 
+    # Бот пишет прогноз на каждую точку; нет таблицы или строк — пусто, и
+    # хвост остаётся линейным. Граница — от той же точки, что и прогноз.
+    forecast_rows = latest_forecast()
     snapshot = build_snapshot(
         readings,
         journal,
@@ -996,9 +1009,8 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
         latest=_trend(last_readings(40)),
         sensor_started=sensor_started,
         sensor_ends=read_sensor_end(),
-        # Бот пишет прогноз на каждую точку; нет таблицы или строк — пусто, и
-        # хвост остаётся линейным.
-        forecast_rows=latest_forecast(),
+        forecast_rows=forecast_rows,
+        bound_rows=forecast_bounds(forecast_rows[0][0]) if forecast_rows else [],
         # Смены пояса из бота — время суток приёма для коэффициента.
         zones=timezone_history(),
         sensor_changes=sensor_starts_since(now - RANGES["quarter"][0]),

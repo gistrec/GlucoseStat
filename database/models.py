@@ -81,6 +81,20 @@ glucose_forecasts = Table(
     Column("created_at", DateTime, nullable=False),
 )
 
+# Нижняя граница того же прогноза — «в девяти случаях из десяти не ниже»
+# (ml.boost.ConformalLower в боте). Своя таблица, потому что ключ прогноза —
+# точка и горизонт без модели. Страница рисует её предупреждением о падении
+# вместо прямой по скорости. Таблицы может не быть — снимок соберётся без неё.
+glucose_forecast_bounds = Table(
+    "glucose_forecast_bounds",
+    journal_metadata,
+    Column("made_at", DateTime, primary_key=True),
+    Column("horizon_min", Integer, primary_key=True),
+    Column("mgdl", Float, nullable=False),
+    Column("model", String(32), nullable=False),
+    Column("created_at", DateTime, nullable=False),
+)
+
 # История часовых поясов человека — бот пишет строку на каждый /tz. Нужна
 # коэффициенту: «утро» приёма — по часам там, где человек ел, а не по поясу,
 # в котором страница режет сутки.

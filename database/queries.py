@@ -12,6 +12,7 @@ from .models import (
     CollectorState,
     GlucoseReading,
     SensorRecord,
+    glucose_forecast_bounds,
     glucose_forecasts,
     journal_entries,
     meal_confirmations,
@@ -279,6 +280,27 @@ def latest_forecast() -> list[tuple[datetime, int, float, str]]:
         (row.made_at, int(row.horizon_min), float(row.mgdl), str(row.model))
         for row in rows
     ]
+
+
+def forecast_bounds(made_at: datetime) -> list[tuple[int, float]]:
+    """Нижняя граница прогноза от точки ``made_at``: (horizon_min, mgdl).
+
+    Пусто, если таблицы нет или бот на эту точку границу не писал, — тогда
+    предупреждение о падении остаётся прямой по скорости.
+    """
+
+    try:
+        with session() as db:
+            rows = db.execute(
+                select(glucose_forecast_bounds.c.horizon_min, glucose_forecast_bounds.c.mgdl)
+                .where(glucose_forecast_bounds.c.made_at == made_at)
+                .order_by(glucose_forecast_bounds.c.horizon_min)
+            ).all()
+    except SQLAlchemyError as error:
+        log.warning("forecast bounds unavailable, publishing without them: %s", error)
+        return []
+
+    return [(int(row.horizon_min), float(row.mgdl)) for row in rows]
 
 
 def fingersticks_since(start: datetime) -> list[tuple[datetime, float]]:
