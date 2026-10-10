@@ -1039,6 +1039,32 @@ class TestPublishCarryForward:
         assert [item.name for item in tmp_path.iterdir()] == ["data.json"]
 
 
+    def test_writes_a_watch_digest_beside_the_snapshot(self, tmp_path, monkeypatch):
+        """Часам (GlucoseWatch) — выжимка рядом со снимком, теми же полями."""
+
+        monkeypatch.setattr("publish.readings_since", lambda since: [])
+        monkeypatch.setattr("publish.journal_since", lambda since: [])
+        monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
+        monkeypatch.setattr("publish.fingersticks_since", lambda since: [])
+        monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
+        monkeypatch.setattr("publish.read_sensor_start", lambda: None)
+        monkeypatch.setattr("publish.read_sensor_end", lambda: None)
+        monkeypatch.setattr("publish.latest_forecast", list)
+        monkeypatch.setattr("publish.timezone_history", list)
+        monkeypatch.setattr("publish.sensor_starts_since", lambda since: [])
+
+        publish(path=str(tmp_path / "data.json"), last_success=1756500000.0)
+
+        snapshot = json.loads((tmp_path / "data.json").read_text(encoding="utf-8"))
+        now = json.loads((tmp_path / "now.json").read_text(encoding="utf-8"))
+
+        assert set(now) == {
+            "generated_at", "collector", "target", "latest", "forecast", "active"
+        }
+        assert all(now[key] == snapshot[key] for key in now)
+        assert now["collector"]["last_success"] == 1756500000
+
+
 class TestStandaloneEntryPoint:
     """The documented one-off rebuild has to start.
 

@@ -29,7 +29,7 @@ python3 -m venv venv
 ./venv/bin/python publish.py       # one-off snapshot rebuild
 ```
 
-Both read `.env` themselves. The snapshot lands in `web/data.json`; to send it somewhere else, export `PUBLISH_PATH`.
+Both read `.env` themselves. The snapshot lands in `web/data.json`; to send it somewhere else, export `PUBLISH_PATH`. Beside it goes `now.json`, a few hundred bytes for the watch app ([GlucoseWatch](https://github.com/gistrec/GlucoseWatch)): `latest`, `forecast`, `active`, `target` and the collector mark, the same fields under the same names as in the full snapshot.
 
 The path resolves as the module loads, before any `.env` is read, so a line in that file reaches nothing at all. That includes the manual rebuild, which would still overwrite the file nginx serves:
 

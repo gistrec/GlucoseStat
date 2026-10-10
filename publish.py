@@ -47,6 +47,11 @@ PUBLISH_PATH = os.getenv("PUBLISH_PATH") or os.path.join(
     os.path.dirname(__file__), "web", "data.json"
 )
 
+# Выжимка для часов (GlucoseWatch) — рядом с полным снимком, в том же
+# каталоге, который раздаёт nginx.
+NOW_NAME = "now.json"
+NOW_KEYS = ("generated_at", "collector", "target", "latest", "forecast", "active")
+
 # Стандартный целевой диапазон для CGM (ADA/ATTD consensus): 70–180 mg/dL,
 # те же 3.9–10.0 mmol/L, что показывает сам Libre.
 TARGET_LOW_MGDL = 70
@@ -1016,6 +1021,26 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
         sensor_changes=sensor_starts_since(now - RANGES["quarter"][0]),
     )
 
+    _write_atomic(path, snapshot)
+    # Выжимка для часов пишется второй: упади она — живая страница уже
+    # обновлена, а часы покажут прошлую выжимку со своим возрастом.
+    _write_atomic(os.path.join(os.path.dirname(path), NOW_NAME), _now(snapshot))
+
+
+def _now(snapshot: dict) -> dict:
+    """Выжимка снимка для часов: только то, что нужно циферблату.
+
+    Полный снимок весит больше сотни килобайт, а часам из него нужны текущая
+    точка, прогноз и активные инсулин с углеводами. Поля те же и названы так
+    же, чтобы у страницы и у часов был один формат, а не два.
+    """
+
+    return {key: snapshot[key] for key in NOW_KEYS}
+
+
+def _write_atomic(path: str, payload: dict) -> None:
+    """Write the file atomically so nginx never serves a half-written one."""
+
     directory = os.path.dirname(os.path.abspath(path))
     os.makedirs(directory, exist_ok=True)
 
@@ -1027,7 +1052,7 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
             "w", encoding="utf-8", dir=directory, delete=False, suffix=".tmp"
         ) as handle:
             temp_path = handle.name
-            json.dump(snapshot, handle, separators=(",", ":"))
+            json.dump(payload, handle, separators=(",", ":"))
             # Переименование атомарно для читателя, но не для диска: без
             # сброса оно может лечь раньше самих данных, и жёсткая перезагрузка
             # оставит на месте живого снимка обрезанный.
