@@ -66,7 +66,7 @@ function renderBias(bias) {
         bias.from == null
             ? `Сенсор показывает в среднем на ${offset} глюкометра ` +
               `(${bias.pairs} ${plural(bias.pairs, "измерение", "измерения", "измерений")}).`
-            : `При сахаре ${formatMmol(bias.from)}–${formatMmol(bias.to)} ммоль/л по глюкометру ` +
+            : `При глюкозе ${formatMmol(bias.from)}–${formatMmol(bias.to)} ммоль/л по глюкометру ` +
               `сенсор показывает в среднем на ${offset} ` +
               `(${bias.agree} из ${bias.pairs} ${plural(bias.pairs, "измерения", "измерений", "измерений")}).`;
     els.bias.hidden = false;
