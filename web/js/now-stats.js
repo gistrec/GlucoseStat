@@ -292,7 +292,7 @@ export function renderStats() {
     const prev = stats.prev;
     const cards = [
         withAbout(
-            statCard("В целевом диапазоне", percent(stats.tir),
+            statCard("TIR", percent(stats.tir),
                 `ниже ${percent(stats.below)} · выше ${percent(stats.above)}`,
                 compareRow(prev, "tir",
                     (delta) => `${formatAmount(delta)} %`,
@@ -306,7 +306,7 @@ export function renderStats() {
                     + "времени, выше 10,0 меньше 25\u00a0%.",
             ]),
         withAbout(
-            statCard("В узком диапазоне", percent(stats.titr),
+            statCard("TITR", percent(stats.titr),
                 `ниже ${percent(stats.below)} · выше ${percent(stats.above_tight)}`),
             "titr",
             [
