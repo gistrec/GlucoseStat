@@ -1060,11 +1060,43 @@ class TestPublishCarryForward:
 
         assert set(now) == {
             "generated_at", "collector", "target", "latest", "forecast", "active",
-            "events", "sensor", "series",
+            "events", "sensor", "today", "series",
         }
         assert all(now[key] == snapshot[key] for key in now if key != "series")
         assert now["series"] == {"day": snapshot["series"]["day"]}
         assert now["collector"]["last_success"] == 1756500000
+
+
+class TestToday:
+    # 10:00 UTC — полдень в Белграде (UTC+2), полночь — 22:00 UTC накануне.
+    NOW = datetime(2026, 10, 11, 10, 0, tzinfo=timezone.utc).replace(tzinfo=None)
+    MIDNIGHT = NOW - timedelta(hours=12)
+
+    def readings(self):
+        """Вечерний час накануне ниже диапазона, дальше ровно 100."""
+
+        evening = [(self.MIDNIGHT - timedelta(hours=1) + timedelta(minutes=5 * i), 50.0) for i in range(12)]
+        today = [(self.MIDNIGHT + timedelta(minutes=5 * i), 100.0) for i in range(144)]
+        return evening + today
+
+    def test_counts_from_local_midnight(self):
+        """Часам — сутки от местной полуночи, а не скользящие 24 часа:
+        вечерний провал вчера в «сегодня» не попадает."""
+
+        snapshot = build_snapshot(self.readings(), [], self.NOW)
+
+        assert snapshot["today"]["tir"] == 100
+        assert snapshot["today"]["below"] == 0
+        assert snapshot["stats"]["day"]["below"] > 0
+
+    def test_follows_the_zone_the_person_is_in(self):
+        """Полночь — по поясу из бота: в Москве (UTC+3) сутки начались
+        часом раньше, и вчерашний час уже «сегодня»."""
+
+        zones = [(self.NOW - timedelta(days=30), "Europe/Moscow")]
+        snapshot = build_snapshot(self.readings(), [], self.NOW, zones=zones)
+
+        assert snapshot["today"]["below"] > 0
 
 
 class TestStandaloneEntryPoint:

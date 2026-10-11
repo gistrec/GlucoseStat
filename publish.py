@@ -32,7 +32,14 @@ from database.queries import (
     sensor_starts_since,
     timezone_history,
 )
-from daytime import DISPLAY_TZ, _covered, _weigh, _weighted_percentile, _zone
+from daytime import (
+    DISPLAY_TZ,
+    _covered,
+    _weigh,
+    _weighted_percentile,
+    _zone,
+    local_minutes,
+)
 from librelinkup import SENSOR_LIFETIME_FALLBACK_DAYS
 from lows import high_episodes, low_episodes
 from nights import night_summary
@@ -52,7 +59,7 @@ PUBLISH_PATH = os.getenv("PUBLISH_PATH") or os.path.join(
 NOW_NAME = "now.json"
 NOW_KEYS = (
     "generated_at", "collector", "target", "latest", "forecast", "active", "events",
-    "sensor",
+    "sensor", "today",
 )
 
 # Стандартный целевой диапазон для CGM (ADA/ATTD consensus): 70–180 mg/dL,
@@ -866,6 +873,10 @@ def build_snapshot(
         "active": active_now(journal, now),
         "series": series,
         "stats": stats,
+        # Сегодня — от местной полуночи по поясу, что сейчас у человека: для
+        # часов. По сырым замерам, а не по серии: её корзины хранят провалы,
+        # и время в диапазоне по ним выходит заниженным.
+        "today": _stats([item for item in readings if item[0] >= _midnight(now, zones or [])]),
         # Своё окно, не выбранное на странице — см. GMI_WINDOW.
         "gmi": _gmi(readings, now),
         # Профиль обычного дня — тоже по своему окну (AGP_WINDOW): «обычно»
@@ -917,6 +928,12 @@ def build_snapshot(
             zones=zones,
         ),
     }
+
+
+def _midnight(now: datetime, zones: list[tuple[datetime, str]]) -> datetime:
+    """Местная полночь сегодняшних суток, наивным UTC."""
+
+    return now.replace(second=0, microsecond=0) - timedelta(minutes=local_minutes(now, zones))
 
 
 def _db_last_success() -> float | None:
