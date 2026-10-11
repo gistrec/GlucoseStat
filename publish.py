@@ -50,7 +50,9 @@ PUBLISH_PATH = os.getenv("PUBLISH_PATH") or os.path.join(
 # Выжимка для часов (GlucoseWatch) — рядом с полным снимком, в том же
 # каталоге, который раздаёт nginx.
 NOW_NAME = "now.json"
-NOW_KEYS = ("generated_at", "collector", "target", "latest", "forecast", "active")
+NOW_KEYS = (
+    "generated_at", "collector", "target", "latest", "forecast", "active", "events"
+)
 
 # Стандартный целевой диапазон для CGM (ADA/ATTD consensus): 70–180 mg/dL,
 # те же 3.9–10.0 mmol/L, что показывает сам Libre.
@@ -1031,11 +1033,15 @@ def _now(snapshot: dict) -> dict:
     """Выжимка снимка для часов: только то, что нужно циферблату.
 
     Полный снимок весит больше сотни килобайт, а часам из него нужны текущая
-    точка, прогноз и активные инсулин с углеводами. Поля те же и названы так
-    же, чтобы у страницы и у часов был один формат, а не два.
+    точка, прогноз, активные инсулин с углеводами и график за сутки. Поля те
+    же и названы так же, чтобы у страницы и у часов был один формат, а не два.
+    Из серий — только суточная: у часов нет места для недель, а она одна
+    весит почти всю выжимку.
     """
 
-    return {key: snapshot[key] for key in NOW_KEYS}
+    now = {key: snapshot[key] for key in NOW_KEYS}
+    now["series"] = {"day": snapshot["series"]["day"]}
+    return now
 
 
 def _write_atomic(path: str, payload: dict) -> None:

@@ -1059,9 +1059,11 @@ class TestPublishCarryForward:
         now = json.loads((tmp_path / "now.json").read_text(encoding="utf-8"))
 
         assert set(now) == {
-            "generated_at", "collector", "target", "latest", "forecast", "active"
+            "generated_at", "collector", "target", "latest", "forecast", "active",
+            "events", "series",
         }
-        assert all(now[key] == snapshot[key] for key in now)
+        assert all(now[key] == snapshot[key] for key in now if key != "series")
+        assert now["series"] == {"day": snapshot["series"]["day"]}
         assert now["collector"]["last_success"] == 1756500000
 
 
