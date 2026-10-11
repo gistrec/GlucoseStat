@@ -51,7 +51,8 @@ PUBLISH_PATH = os.getenv("PUBLISH_PATH") or os.path.join(
 # каталоге, который раздаёт nginx.
 NOW_NAME = "now.json"
 NOW_KEYS = (
-    "generated_at", "collector", "target", "latest", "forecast", "active", "events"
+    "generated_at", "collector", "target", "latest", "forecast", "active", "events",
+    "sensor",
 )
 
 # Стандартный целевой диапазон для CGM (ADA/ATTD consensus): 70–180 mg/dL,
