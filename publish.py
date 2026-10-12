@@ -8,6 +8,7 @@ sensor serial, and none of that belongs on a public URL.
 """
 
 import json
+from zoneinfo import ZoneInfo
 import os
 import tempfile
 from bisect import bisect_left
@@ -33,12 +34,13 @@ from database.queries import (
     timezone_history,
 )
 from daytime import (
-    DISPLAY_TZ,
     _covered,
     _weigh,
     _weighted_percentile,
     _zone,
     local_minutes,
+    zone_at,
+    zone_name_at,
 )
 from librelinkup import SENSOR_LIFETIME_FALLBACK_DAYS
 from lows import high_episodes, low_episodes
@@ -484,7 +486,10 @@ def _stats(readings: list[tuple[datetime, float]]) -> dict | None:
 
 
 def _daily(
-    readings: list[tuple[datetime, float]], now: datetime, span: timedelta
+    readings: list[tuple[datetime, float]],
+    now: datetime,
+    span: timedelta,
+    zone: ZoneInfo | None = None,
 ) -> list[dict]:
     """Summarise every local day the window touches, empty days included.
 
@@ -497,7 +502,11 @@ def _daily(
     середине прожитой части дня, а не обещает вечер, которого ещё не было.
     """
 
-    zone = _zone()
+    # Сутки режутся по одному поясу на всё окно — текущему у человека: по
+    # разным поясам посреди окна выходили бы сутки в 19 или 29 часов, а для
+    # подневной сводки сдвиг старых дней на несколько часов почти ничего не
+    # меняет.
+    zone = zone or _zone()
     window_start = (now - span).replace(tzinfo=timezone.utc)
     window_end = now.replace(tzinfo=timezone.utc)
 
@@ -801,11 +810,16 @@ def build_snapshot(
     именно так оно и проглядело добавленный ключ ``gmi``.
     """
 
+    # Пояс, который сейчас у человека (смены из бота): по нему режутся сутки
+    # и подписывается «местный день» на странице и на часах.
+    zones = zones or []
+    current_zone = zone_at(now, zones)
+
     series, stats = {}, {}
     for name, (span, step_minutes) in RANGES.items():
         subset = [item for item in readings if item[0] >= now - span]
         if step_minutes is None:
-            series[name] = {"kind": "daily", "days": _daily(subset, now, span)}
+            series[name] = {"kind": "daily", "days": _daily(subset, now, span, current_zone)}
         else:
             series[name] = {
                 "kind": "points",
@@ -861,7 +875,7 @@ def build_snapshot(
         },
         # Зона, в которой сборщик нарезает сутки. Страница держит ту же зону
         # своей константой и по этому ключу может её сверить, а не верить.
-        "timezone": DISPLAY_TZ,
+        "timezone": zone_name_at(now, zones),
         "latest": latest if latest is not None else _trend(readings),
         # Хвост модели. None — и страница рисует линейный, как прежде: ключ
         # отсутствует ровно тогда, когда рисовать по модели нечестно.
@@ -876,16 +890,16 @@ def build_snapshot(
         # Сегодня — от местной полуночи по поясу, что сейчас у человека: для
         # часов. По сырым замерам, а не по серии: её корзины хранят провалы,
         # и время в диапазоне по ним выходит заниженным.
-        "today": _stats([item for item in readings if item[0] >= _midnight(now, zones or [])]),
+        "today": _stats([item for item in readings if item[0] >= _midnight(now, zones)]),
         # Своё окно, не выбранное на странице — см. GMI_WINDOW.
         "gmi": _gmi(readings, now),
         # Профиль обычного дня — тоже по своему окну (AGP_WINDOW): «обычно»
         # не зависит от того, какая панель открыта.
-        "profile": day_profile(readings, now),
+        "profile": day_profile(readings, now, zones),
         # И ночи — по своему (NIGHTS_WINDOW). Порог гипогликемии передаётся, а
         # не берётся модулем у себя: «ниже целевого диапазона» на странице и
         # «ночная гипогликемия» обязаны означать одно число.
-        "nights": night_summary(readings, journal, now, hypo_mgdl=TARGET_LOW_MGDL),
+        "nights": night_summary(readings, journal, now, hypo_mgdl=TARGET_LOW_MGDL, zones=zones),
         "events": _events(journal, now - EVENT_WINDOW),
         # Сверки глюкометром — по тому же окну, что события: рисуются они на тех
         # же почасовых панелях, и своя константа для того же окна разъехалась бы

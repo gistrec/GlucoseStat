@@ -18,7 +18,7 @@
 
 from datetime import date, datetime, time, timedelta, timezone
 
-from daytime import DISPLAY_TZ, _covered, _percentile, _zone
+from daytime import _covered, _percentile, zone_at, zone_name_at
 from lows import low_episodes
 
 # Своё окно, не AGP_WINDOW и не ANALYSIS_WINDOW: ночей всего по одной в сутки,
@@ -162,6 +162,7 @@ def night_summary(
     journal: list[tuple[datetime, str, float | None, float | None]],
     now: datetime,
     hypo_mgdl: int,
+    zones: list[tuple[datetime, str]] | None = None,
 ) -> dict | None:
     """Ночи окна: каждая со своим минимумом, и две сводки поверх них.
 
@@ -173,22 +174,33 @@ def night_summary(
     с тремя ночами выглядела бы как неделя из трёх ночей.
     """
 
-    zone = _zone()
+    zones = zones or []
     window_start = now - NIGHTS_WINDOW
+    current = zone_at(now, zones)
 
     nights: list[dict] = []
     # Со вчерашней даты окна: ночь принадлежит дате своего утра, и окно в семь
     # суток пересекает восемь дат — первая входит хвостом.
-    day = window_start.replace(tzinfo=timezone.utc).astimezone(zone).date()
-    last_day = now.replace(tzinfo=timezone.utc).astimezone(zone).date()
+    day = window_start.replace(tzinfo=timezone.utc).astimezone(zone_at(window_start, zones)).date()
+    last_day = now.replace(tzinfo=timezone.utc).astimezone(current).date()
 
     while day <= last_day:
+        # Ночь — по местным часам того пояса, в котором её спали (смены из
+        # бота): после перелёта «с полуночи до шести» — это местная ночь, а не
+        # белградская. Пояс ночи — тот, что действовал к её утру.
+        zone = zone_at(_local_moment(day, NIGHT_TO_HOUR, current), zones)
         start = _local_moment(day, NIGHT_FROM_HOUR, zone)
         end = _local_moment(day, NIGHT_TO_HOUR, zone)
         drift_start = _local_moment(day, DRIFT_FROM_HOUR, zone)
         # Вечер, который эту ночь кормил: от полудня прошлых суток. Не от
         # полуночи — ужин случается до неё, и именно он решает, чистая ли ночь.
         evening = _local_moment(day - timedelta(days=1), 12, zone)
+
+        # Ночь, на которую пришлась смена пояса, нельзя честно нарезать ни
+        # по одному из них: границы ложатся на чужие часы, и дневной провал
+        # мог бы засчитаться ночной гипогликемией. Такая ночь остаётся в
+        # массиве, но как неполная — в сводки она не идёт.
+        crossed = zone_at(start, zones) != zone_at(end, zones)
 
         observed_start = max(start, window_start)
         observed_end = min(end, now)
@@ -214,7 +226,7 @@ def night_summary(
             # Ночь, обрезанная краем окна или «сейчас», не участвует в сводках
             # наравне с целой: половина ночи без гипогликемии не то же самое,
             # что ночь без неё.
-            "partial": observed_start > start or observed_end < end,
+            "partial": observed_start > start or observed_end < end or crossed,
         }
 
         if night:
@@ -259,7 +271,7 @@ def night_summary(
     clean = [item for item in counted if item["fasting"] and item["drift"] is not None]
 
     return {
-        "tz": DISPLAY_TZ,
+        "tz": zone_name_at(now, zones),
         "from": NIGHT_FROM_HOUR,
         "to": NIGHT_TO_HOUR,
         "drift_from": DRIFT_FROM_HOUR,

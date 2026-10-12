@@ -1099,6 +1099,39 @@ class TestToday:
         assert snapshot["today"]["below"] > 0
 
 
+class TestCurrentZone:
+    def test_the_snapshot_slices_days_in_the_zone_from_the_bot(self):
+        """Пояс показа — текущий из бота: страница и часы подписывают местный
+        день по нему, и сутки месяца режутся по местной полуночи."""
+
+        from zoneinfo import ZoneInfo
+
+        now = datetime(2026, 10, 11, 10, 0, tzinfo=timezone.utc).replace(tzinfo=None)
+        readings = [(now - timedelta(minutes=5 * i), 120.0) for i in range(3 * 288)]
+        zones = [(now - timedelta(days=5), "Asia/Novokuznetsk")]
+
+        snapshot = build_snapshot(readings, [], now, zones=zones)
+
+        assert snapshot["timezone"] == "Asia/Novokuznetsk"
+        days = [day for day in snapshot["series"]["month"]["days"] if day["count"]]
+        boundary = datetime.fromtimestamp(days[1]["start"], tz=ZoneInfo("Asia/Novokuznetsk"))
+        assert (boundary.hour, boundary.minute) == (0, 0)
+
+
+class TestUnknownZone:
+    def test_an_unknown_zone_publishes_the_fallback_name(self):
+        """Пояс, которого нет в tzdata, откатывается на DISPLAY_TZ — и в снимок
+        уходит он, а не сырое имя: на нём страница падала бы в Intl."""
+
+        from daytime import DISPLAY_TZ
+
+        now = datetime(2026, 10, 11, 10, 0, tzinfo=timezone.utc).replace(tzinfo=None)
+        readings = [(now - timedelta(minutes=5 * i), 120.0) for i in range(288)]
+        zones = [(now - timedelta(days=1), "Mars/Olympus")]
+
+        assert build_snapshot(readings, [], now, zones=zones)["timezone"] == DISPLAY_TZ
+
+
 class TestStandaloneEntryPoint:
     """The documented one-off rebuild has to start.
 

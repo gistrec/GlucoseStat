@@ -12,7 +12,7 @@
 
 from datetime import date, datetime, timedelta, timezone
 
-from daytime import DISPLAY_TZ, _percentile, _zone
+from daytime import _percentile, zone_at, zone_name_at
 
 # Своё окно, а не GMI_WINDOW и не ANALYSIS_WINDOW: числа совпадают, но причины
 # разные — профиль усредняет форму дня, а не оценивает HbA1c и не собирает
@@ -36,26 +36,34 @@ AGP_MIN_SLOT_SHARE = 0.5
 
 
 def day_profile(
-    readings: list[tuple[datetime, float]], now: datetime
+    readings: list[tuple[datetime, float]],
+    now: datetime,
+    zones: list[tuple[datetime, str]] | None = None,
 ) -> dict | None:
     """Median and 25–75 % corridor per time-of-day slot, or nothing.
 
     Чистая функция над теми же naive-UTC показаниями, что приходят в
     ``build_snapshot``; всё в мг/дл целыми, как и остальной снимок.
+
+    Каждый замер ложится в слот по местным часам того пояса, который
+    действовал у человека в момент замера (``zones`` — смены из бота). Режим
+    живёт по местным часам: после перелёта завтрак в восемь остаётся
+    завтраком в восемь, а не съезжает в «ночь» белградского профиля. Без
+    смен — по ``DISPLAY_TZ``, как раньше.
     """
 
     window = [item for item in readings if item[0] >= now - AGP_WINDOW]
     if not window:
         return None
 
-    zone = _zone()
+    zones = zones or []
     slot_count = 24 * 60 // AGP_SLOT_MINUTES
 
     # слот -> местный день -> замеры этого дня, попавшие в слот
     per_slot: dict[int, dict[date, list[float]]] = {}
     days_seen: set[date] = set()
     for timestamp, mgdl in window:
-        local = timestamp.replace(tzinfo=timezone.utc).astimezone(zone)
+        local = timestamp.replace(tzinfo=timezone.utc).astimezone(zone_at(timestamp, zones))
         days_seen.add(local.date())
         slot = (local.hour * 60 + local.minute) // AGP_SLOT_MINUTES
         per_slot.setdefault(slot, {}).setdefault(local.date(), []).append(mgdl)
@@ -91,7 +99,9 @@ def day_profile(
         return None
 
     return {
-        "tz": DISPLAY_TZ,
+        # Пояс, в котором слоты читать сейчас: часы и страница ставят их на
+        # сегодняшние даты по нему.
+        "tz": zone_name_at(now, zones),
         "slot_min": AGP_SLOT_MINUTES,
         "days": days,
         "slots": slots,
