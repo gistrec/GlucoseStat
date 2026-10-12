@@ -1060,13 +1060,10 @@ class TestPublishCarryForward:
 
         assert set(now) == {
             "generated_at", "collector", "target", "latest", "forecast", "active",
-            "events", "sensor", "today", "series",
+            "events", "sensor", "today", "profile", "series",
         }
         assert all(now[key] == snapshot[key] for key in now if key != "series")
-        assert now["series"] == {
-            "day": snapshot["series"]["day"],
-            "two_days": snapshot["series"]["two_days"],
-        }
+        assert now["series"] == {"day": snapshot["series"]["day"]}
         assert now["collector"]["last_success"] == 1756500000
 
 
