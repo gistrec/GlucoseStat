@@ -1112,7 +1112,8 @@ def _midnight_epoch(moment: float, zone_name: str) -> float:
     """Местная полночь суток ``moment`` в поясе снимка, unix-секундами."""
 
     local = datetime.fromtimestamp(moment, tz=_zone_named(zone_name))
-    return local.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    # fold=0: где осенью повторяется сама полночь, сутки начинаются с первой.
+    return local.replace(hour=0, minute=0, second=0, microsecond=0, fold=0).timestamp()
 
 
 def _write_atomic(path: str, payload: dict) -> None:
