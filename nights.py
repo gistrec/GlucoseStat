@@ -196,6 +196,12 @@ def night_summary(
         # полуночи — ужин случается до неё, и именно он решает, чистая ли ночь.
         evening = _local_moment(day - timedelta(days=1), 12, zone)
 
+        # Ночь, на которую пришлась смена пояса, нельзя честно нарезать ни
+        # по одному из них: границы ложатся на чужие часы, и дневной провал
+        # мог бы засчитаться ночной гипогликемией. Такая ночь остаётся в
+        # массиве, но как неполная — в сводки она не идёт.
+        crossed = zone_at(start, zones) != zone_at(end, zones)
+
         observed_start = max(start, window_start)
         observed_end = min(end, now)
         if observed_end <= observed_start:
@@ -220,7 +226,7 @@ def night_summary(
             # Ночь, обрезанная краем окна или «сейчас», не участвует в сводках
             # наравне с целой: половина ночи без гипогликемии не то же самое,
             # что ночь без неё.
-            "partial": observed_start > start or observed_end < end,
+            "partial": observed_start > start or observed_end < end or crossed,
         }
 
         if night:

@@ -279,3 +279,16 @@ class TestTimezone:
         midnight = datetime.combine(day, time(), tzinfo=ZoneInfo("Asia/Novokuznetsk"))
         assert night["start"] == int(midnight.astimezone(timezone.utc).timestamp())
         assert summary["tz"] == "Asia/Novokuznetsk"
+
+    def test_a_night_across_a_zone_change_is_partial(self):
+        """Ночь, на которую пришлась смена пояса, не нарезать честно ни по
+        одному из них — она остаётся в массиве, но в сводки не идёт."""
+
+        night_start = BASE - timedelta(days=2)
+        zones = [(night_start + timedelta(hours=2), "Asia/Novokuznetsk")]
+        readings = [(BASE - timedelta(days=8) + timedelta(minutes=5 * i), 120.0) for i in range(8 * 288)]
+
+        summary = night_summary(readings, [], BASE, hypo_mgdl=70, zones=zones)
+
+        crossed = [item for item in summary["nights"] if item["partial"] and item["count"] and item["coverage"] == 100]
+        assert crossed

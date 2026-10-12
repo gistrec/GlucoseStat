@@ -38,7 +38,10 @@ def zone_name_at(moment: datetime, history: list[tuple[datetime, str]]) -> str:
         if since > moment:
             break
         name = tz
-    return name
+    # Имя, по которому реально считают: пояс, которого нет в tzdata хоста,
+    # откатывается на DISPLAY_TZ, и публиковать надо его, а не сырое имя —
+    # страница передаёт его в Intl.DateTimeFormat, и тот бросает RangeError.
+    return name if _zone_named(name).key == name else DISPLAY_TZ
 
 
 @lru_cache(maxsize=32)
