@@ -260,3 +260,22 @@ class TestWindowEdges:
         assert summary["drift_from"] == DRIFT_FROM_HOUR
         assert summary["from"] == 0
         assert summary["to"] == 6
+
+
+class TestTimezone:
+    def test_the_night_is_local_to_the_zone_it_was_slept_in(self):
+        """В Новокузнецке ночь — с местной полуночи, а не с белградской."""
+
+        from datetime import datetime, time, timezone
+        from zoneinfo import ZoneInfo
+
+        zones = [(BASE - timedelta(days=30), "Asia/Novokuznetsk")]
+        readings = [(BASE - timedelta(days=8) + timedelta(minutes=5 * i), 120.0) for i in range(8 * 288)]
+
+        summary = night_summary(readings, [], BASE, hypo_mgdl=70, zones=zones)
+
+        night = next(item for item in summary["nights"] if not item["partial"])
+        day = datetime.fromisoformat(night["date"]).date()
+        midnight = datetime.combine(day, time(), tzinfo=ZoneInfo("Asia/Novokuznetsk"))
+        assert night["start"] == int(midnight.astimezone(timezone.utc).timestamp())
+        assert summary["tz"] == "Asia/Novokuznetsk"

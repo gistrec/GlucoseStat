@@ -25,13 +25,12 @@ def _zone() -> ZoneInfo:
     return ZoneInfo(DISPLAY_TZ)
 
 
-def local_minutes(moment: datetime, history: list[tuple[datetime, str]]) -> int:
-    """Минута местных суток в ``moment`` (наивный UTC) — по поясу, который
-    тогда действовал у человека.
+def zone_name_at(moment: datetime, history: list[tuple[datetime, str]]) -> str:
+    """Имя пояса, который действовал у человека в ``moment`` (наивный UTC).
 
     ``history`` — смены пояса из бота, старые первыми (``timezone_history``).
-    До первой смены и при непонятном имени пояса — ``DISPLAY_TZ``: тот же
-    пояс, в котором бот живёт, пока человек его не выбирал.
+    До первой смены — ``DISPLAY_TZ``: тот же пояс, в котором бот живёт, пока
+    человек его не выбирал.
     """
 
     name = DISPLAY_TZ
@@ -39,13 +38,31 @@ def local_minutes(moment: datetime, history: list[tuple[datetime, str]]) -> int:
         if since > moment:
             break
         name = tz
+    return name
+
+
+@lru_cache(maxsize=32)
+def _zone_named(name: str) -> ZoneInfo:
+    """Пояс по имени; непонятное имя — ``DISPLAY_TZ``, а не падение снимка."""
 
     try:
-        zone = ZoneInfo(name)
+        return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError):
-        zone = _zone()
+        return _zone()
 
-    local = moment.replace(tzinfo=timezone.utc).astimezone(zone)
+
+def zone_at(moment: datetime, history: list[tuple[datetime, str]]) -> ZoneInfo:
+    """Пояс, который действовал у человека в ``moment``."""
+
+    return _zone_named(zone_name_at(moment, history))
+
+
+def local_minutes(moment: datetime, history: list[tuple[datetime, str]]) -> int:
+    """Минута местных суток в ``moment`` (наивный UTC) — по поясу, который
+    тогда действовал у человека.
+    """
+
+    local = moment.replace(tzinfo=timezone.utc).astimezone(zone_at(moment, history))
     return local.hour * 60 + local.minute
 
 

@@ -135,3 +135,55 @@ class TestDayProfile:
         assert profile is not None
         assert profile["slots"][48] is None
         assert profile["slots"][0] is not None
+
+
+class TestTimezoneChange:
+    """Слоты — по местным часам того пояса, что действовал в момент замера."""
+
+    MOVED = BASE - timedelta(days=7)
+
+    def readings(self):
+        """Неделя в Белграде, неделя в Новокузнецке; каждое утро с 08:00 до
+        08:30 по местным часам сахар 200, остальное время — 100."""
+
+        from datetime import time, timezone
+        from zoneinfo import ZoneInfo
+
+        def morning(day, zone):
+            start = datetime.combine(day, time(8), tzinfo=ZoneInfo(zone))
+            start = start.astimezone(timezone.utc).replace(tzinfo=None)
+            return start, start + timedelta(minutes=30)
+
+        start = BASE - AGP_WINDOW
+        first_day = (start + timedelta(hours=2)).date()
+        spikes = []
+        for offset in range(16):
+            day = first_day + timedelta(days=offset)
+            for zone in ("Europe/Belgrade", "Asia/Novokuznetsk"):
+                begin, end = morning(day, zone)
+                inside = begin < self.MOVED if zone == "Europe/Belgrade" else begin >= self.MOVED
+                if inside:
+                    spikes.append((begin, end))
+
+        moments = [start + timedelta(minutes=5 * i) for i in range(14 * 288)]
+        return [
+            (moment, 200.0 if any(a <= moment < b for a, b in spikes) else 100.0)
+            for moment in moments
+        ]
+
+    def test_the_morning_stays_at_eight_across_the_move(self):
+        zones = [(self.MOVED, "Asia/Novokuznetsk")]
+        profile = day_profile(self.readings(), BASE, zones)
+
+        eight = 8 * 60 // AGP_SLOT_MINUTES
+        assert profile["slots"][eight][1] == 200
+        assert profile["tz"] == "Asia/Novokuznetsk"
+
+    def test_without_the_history_the_two_mornings_blur(self):
+        # По одним белградским часам новокузнецкое утро — это 03:00, и в слоте
+        # 08:00 подъём остаётся только у белградской недели.
+        profile = day_profile(self.readings(), BASE)
+
+        eight = 8 * 60 // AGP_SLOT_MINUTES
+        assert profile["slots"][eight][1] < 200
+        assert profile["tz"] == DISPLAY_TZ
