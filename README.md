@@ -29,7 +29,7 @@ python3 -m venv venv
 ./venv/bin/python publish.py       # one-off snapshot rebuild
 ```
 
-Both read `.env` themselves. The snapshot lands in `web/data.json`; to send it somewhere else, export `PUBLISH_PATH`. Beside it goes `now.json`, a few hundred bytes for the watch app ([GlucoseWatch](https://github.com/gistrec/GlucoseWatch)): `latest`, `forecast`, `active`, `events`, `sensor`, `today` (the stats from local midnight, by the zone the bot last recorded), `target`, the collector mark and of the series only `day` and `two_days`, the same fields under the same names as in the full snapshot. The two series are most of its weight, about 10 KB; `two_days` is there for yesterday's curve at the same hours.
+Both read `.env` themselves. The snapshot lands in `web/data.json`; to send it somewhere else, export `PUBLISH_PATH`. Beside it goes `now.json`, a few hundred bytes for the watch app ([GlucoseWatch](https://github.com/gistrec/GlucoseWatch)): `latest`, `forecast`, `active`, `events`, `sensor`, `today` (the stats from local midnight, by the zone the bot last recorded), `profile` (the two-week median and corridor the watch draws behind today's curve), `target`, the collector mark and of the series only `day`, the same fields under the same names as in the full snapshot. The day series is most of its weight; the whole file is about 7 KB.
 
 The path resolves as the module loads, before any `.env` is read, so a line in that file reaches nothing at all. That includes the manual rebuild, which would still overwrite the file nginx serves:
 

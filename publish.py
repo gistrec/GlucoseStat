@@ -59,7 +59,7 @@ PUBLISH_PATH = os.getenv("PUBLISH_PATH") or os.path.join(
 NOW_NAME = "now.json"
 NOW_KEYS = (
     "generated_at", "collector", "target", "latest", "forecast", "active", "events",
-    "sensor", "today",
+    "sensor", "today", "profile",
 )
 
 # Стандартный целевой диапазон для CGM (ADA/ATTD consensus): 70–180 mg/dL,
@@ -1053,13 +1053,14 @@ def _now(snapshot: dict) -> dict:
     Полный снимок весит больше сотни килобайт, а часам из него нужны текущая
     точка, прогноз, активные инсулин с углеводами и график за сутки. Поля те
     же и названы так же, чтобы у страницы и у часов был один формат, а не два.
-    Из серий — суточная и двухсуточная: вторая нужна, чтобы часы положили
-    рядом вчерашнюю кривую в те же часы, а суточная до вчера не достаёт.
-    Недели не нужны: на часах для них нет места, а весят они больше всего.
+    Из серий — только суточная: у часов нет места для недель, а она одна
+    весит почти всю выжимку. Сравнение со «своим обычным» часы берут из
+    ``profile``: медиана и коридор за две недели говорят больше, чем один
+    вчерашний день.
     """
 
     now = {key: snapshot[key] for key in NOW_KEYS}
-    now["series"] = {name: snapshot["series"][name] for name in ("day", "two_days")}
+    now["series"] = {"day": snapshot["series"]["day"]}
     return now
 
 
