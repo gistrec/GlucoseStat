@@ -39,6 +39,7 @@ from daytime import (
     _weighted_percentile,
     _zone,
     local_minutes,
+    _zone_named,
     zone_at,
     zone_name_at,
 )
@@ -61,8 +62,12 @@ PUBLISH_PATH = os.getenv("PUBLISH_PATH") or os.path.join(
 NOW_NAME = "now.json"
 NOW_KEYS = (
     "generated_at", "collector", "target", "latest", "forecast", "active", "events",
-    "sensor", "today", "profile",
+    "sensor", "today", "profile", "gmi",
 )
+
+# Сколько последних приёмов пищи с разбором уходит часам: им нужен один,
+# последний, а пара предыдущих — на случай, если он ещё не дорос до разбора.
+NOW_MEALS = 3
 
 # Стандартный целевой диапазон для CGM (ADA/ATTD consensus): 70–180 mg/dL,
 # те же 3.9–10.0 mmol/L, что показывает сам Libre.
@@ -1075,7 +1080,39 @@ def _now(snapshot: dict) -> dict:
 
     now = {key: snapshot[key] for key in NOW_KEYS}
     now["series"] = {"day": snapshot["series"]["day"]}
+
+    # Дальше — те же ключи, что у страницы, но урезанные до того, что часы
+    # показывают: последняя ночь без мини-кривой, эпизоды с местной полуночи,
+    # последние приёмы пищи без кривых. Целиком это десятки килобайт.
+    nights = snapshot["nights"]
+    now["nights"] = nights and {
+        **{key: value for key, value in nights.items() if key != "nights"},
+        "nights": [
+            {key: value for key, value in night.items() if key != "points"}
+            for night in nights["nights"][-1:]
+        ],
+    }
+
+    midnight = _midnight_epoch(snapshot["generated_at"], snapshot["timezone"])
+    now["lows"] = [item for item in snapshot["lows"] if item["end"] >= midnight]
+    now["highs"] = [item for item in snapshot["highs"] if item["end"] >= midnight]
+
+    analysis = snapshot["analysis"]
+    now["analysis"] = analysis and {
+        "targets": analysis["targets"],
+        "meals": [
+            {key: value for key, value in meal.items() if key not in ("curve", "parts")}
+            for meal in analysis["meals"][-NOW_MEALS:]
+        ],
+    }
     return now
+
+
+def _midnight_epoch(moment: float, zone_name: str) -> float:
+    """Местная полночь суток ``moment`` в поясе снимка, unix-секундами."""
+
+    local = datetime.fromtimestamp(moment, tz=_zone_named(zone_name))
+    return local.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
 
 
 def _write_atomic(path: str, payload: dict) -> None:

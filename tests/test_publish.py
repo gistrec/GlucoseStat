@@ -40,6 +40,7 @@ from publish import (
     _gmi,
     _stats,
     _stored_last_success,
+    _now,
     _trend,
     build_snapshot,
     publish,
@@ -1058,13 +1059,60 @@ class TestPublishCarryForward:
         snapshot = json.loads((tmp_path / "data.json").read_text(encoding="utf-8"))
         now = json.loads((tmp_path / "now.json").read_text(encoding="utf-8"))
 
+        trimmed = {"series", "nights", "lows", "highs", "analysis"}
         assert set(now) == {
             "generated_at", "collector", "target", "latest", "forecast", "active",
-            "events", "sensor", "today", "profile", "series",
-        }
-        assert all(now[key] == snapshot[key] for key in now if key != "series")
+            "events", "sensor", "today", "profile", "gmi",
+        } | trimmed
+        assert all(now[key] == snapshot[key] for key in now if key not in trimmed)
         assert now["series"] == {"day": snapshot["series"]["day"]}
         assert now["collector"]["last_success"] == 1756500000
+
+
+class TestNowTrimming:
+    """Часам — те же ключи, что странице, но урезанные до показанного."""
+
+    def snapshot(self):
+        midnight = datetime(2026, 10, 11, 17, 0, tzinfo=timezone.utc)  # 00:00 в Новокузнецке
+        at = lambda hours: int((midnight + timedelta(hours=hours)).timestamp())
+        return {
+            "generated_at": at(10),
+            "timezone": "Asia/Novokuznetsk",
+            "series": {"day": {"points": []}},
+            "nights": {
+                "counted": 7, "hypo_nights": 4,
+                "nights": [{"date": "2026-10-11", "min": 70}, {"date": "2026-10-12", "min": 57, "points": [[1, 2]]}],
+            },
+            "lows": [{"start": at(-3), "end": at(-2), "min": 60}, {"start": at(2), "end": at(3), "min": 57}],
+            "highs": [{"start": at(-1), "end": at(1), "max": 220}],
+            "analysis": {
+                "targets": {"rise": 50},
+                "meals": [{"t": at(k), "carbs": 10.0 * k, "curve": [[0, 1]], "parts": None} for k in range(1, 6)],
+            },
+            **{key: None for key in ("collector", "target", "latest", "forecast", "active", "events", "sensor", "today", "profile", "gmi")},
+        }
+
+    def test_the_last_night_goes_without_its_curve(self):
+        now = _now(self.snapshot())
+
+        assert now["nights"]["hypo_nights"] == 4
+        assert now["nights"]["nights"] == [{"date": "2026-10-12", "min": 57}]
+
+    def test_episodes_go_from_local_midnight(self):
+        now = _now(self.snapshot())
+
+        # Вчерашний провал позади полуночи — не сегодняшний; подъём, начатый
+        # до неё и кончившийся после, — сегодняшний.
+        assert [item["min"] for item in now["lows"]] == [57]
+        assert len(now["highs"]) == 1
+
+    def test_the_last_meals_go_without_curves(self):
+        now = _now(self.snapshot())
+
+        meals = now["analysis"]["meals"]
+        assert [meal["carbs"] for meal in meals] == [30.0, 40.0, 50.0]
+        assert all("curve" not in meal and "parts" not in meal for meal in meals)
+        assert now["analysis"]["targets"] == {"rise": 50}
 
 
 class TestToday:
