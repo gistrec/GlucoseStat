@@ -1,6 +1,6 @@
 # GlucoseStat
 
-Collects FreeStyle Libre 3 readings from LibreLinkUp into MySQL and renders a public dashboard from them — live at [glucose.gistrec.cloud](https://glucose.gistrec.cloud).
+Collects FreeStyle Libre 3 readings from LibreLinkUp into MySQL and renders a public dashboard from them. The live page is at [glucose.gistrec.cloud](https://glucose.gistrec.cloud).
 
 A single pm2 process does the lot: it polls LibreLinkUp every five minutes, stores whatever is new, rewrites `web/data.json`, and pushes a phone alert if the reading is low. nginx serves `web/` as plain static files, so a page view never touches MySQL and never reaches Abbott.
 
@@ -13,13 +13,13 @@ LibreLinkUp ──poll 5m──▶ main.py ──▶ MySQL ──▶ publish.py 
 
 Copy `.env.example` to `.env` and fill it in:
 
-* `EMAIL`, `PASSWORD` — the LibreLinkUp account the Libre 3 app shares the sensor with.
-* `MYSQL_*` — database connection. The collector creates its table on first start.
-* `MYSQL_SSL_CA` — only for managed databases that require TLS.
-* `FETCH_INTERVAL_MINUTES` — polling interval, defaults to `5`.
-* `LLU_REGION` — which LibreLinkUp region to ask, defaults to `de`. Rarely needed: login follows a regional redirect and keeps the corrected region for as long as the session lasts, so a foreign account costs one extra request per sign-in rather than a setting.
-* `PUSHOVER_TOKEN`, `PUSHOVER_USER` — turn on the [alerts](#alerts). Unset, the collector stores readings and alerts about nothing.
-* `DISPLAY_TZ` — the zone days are sliced in (nights, the usual-day profile, the daily boxes) until the bot records one of its own, defaults to `Europe/Belgrade`. Like `PUBLISH_PATH` below it resolves as the module loads, so it belongs in the environment (the `env` block of `ecosystem.config.js`), not in `.env`. Change it only together with `HOME_TIMEZONE` in `web/js/format.js`.
+* `EMAIL`, `PASSWORD`: the LibreLinkUp account the Libre 3 app shares the sensor with.
+* `MYSQL_*`: database connection. The collector creates its table on first start.
+* `MYSQL_SSL_CA`: only for managed databases that require TLS.
+* `FETCH_INTERVAL_MINUTES`: polling interval, defaults to `5`.
+* `LLU_REGION`: which LibreLinkUp region to ask, defaults to `de`. Rarely needed: login follows a regional redirect and keeps the corrected region for as long as the session lasts, so a foreign account costs one extra request per sign-in rather than a setting.
+* `PUSHOVER_TOKEN`, `PUSHOVER_USER`: turn on the [alerts](#alerts). Unset, the collector stores readings and alerts about nothing.
+* `DISPLAY_TZ`: the zone days are sliced in (nights, the usual-day profile, the daily boxes) until the bot records one of its own, defaults to `Europe/Belgrade`. Like `PUBLISH_PATH` below it resolves as the module loads, so it belongs in the environment (the `env` block of `ecosystem.config.js`), not in `.env`. Change it only together with `HOME_TIMEZONE` in `web/js/format.js`.
 
 ## Running
 
@@ -46,7 +46,7 @@ pm2 start ecosystem.config.js
 
 ## Preview
 
-`preview.py` serves the page from a throwaway copy of `web/` with a synthetic snapshot, so a change can be looked at before it reaches the server — no database, no LibreLinkUp, nothing written to `web/data.json`:
+`preview.py` serves the page from a throwaway copy of `web/` with a synthetic snapshot, so a change can be looked at before it reaches the server. It needs no database and no LibreLinkUp, and writes nothing to `web/data.json`:
 
 ```bash
 ./venv/bin/python preview.py                 # синтетика, открывает браузер
@@ -62,7 +62,7 @@ It fakes a low every eleventh meal and an oversized rise every seventh, because 
 
 ## Tests
 
-The snapshot maths — time in range, GMI, variability, downsampling, trend — is pure functions over a list of readings, and so is the alert decision, so the tests need neither a database nor the network:
+The snapshot maths (time in range, GMI, variability, downsampling, trend) is pure functions over a list of readings, and so is the alert decision, so the tests need neither a database nor the network:
 
 ```bash
 ./venv/bin/pip install -r requirements-dev.txt
@@ -95,7 +95,7 @@ Both disappear while the latest reading is stale: extending a curve that stopped
 
 ### Thinned readings
 
-Readings are thinned into buckets before they reach the browser — but a bucket that dipped below 70 mg/dL publishes its **minimum** instead of its average.
+Readings are thinned into buckets before they reach the browser, but a bucket that dipped below 70 mg/dL publishes its minimum instead of its average.
 
 A two-minute drop to 3.4 mmol/L inside a quarter-hour bucket averages out to 6.2 and disappears; the curve would show calm where there was a low. The error is pushed to the safe side on purpose, and only downwards: highs last hours and land in a bucket whole, so peaks are still averaged.
 
@@ -185,7 +185,7 @@ It is not a lane and not a series: it measures the same quantity as the curve, i
 
 It never joins the sensor series. Time in range, AGP, the night summary and the meal review are all computed from the sensor alone: blood and interstitial fluid are different measurements, and averaging them would make all four numbers quietly untrue.
 
-The colour is zonal — the same `readingColor` the line uses, no sixth hue on the canvas. That is what makes the interesting case readable: on a compression low the sensor dives into red while the diamond stays blue at 5,3, and the disagreement reads before any number does. The hover names both sides and the difference, because two shapes five pixels apart cannot be subtracted by eye.
+The colour is zonal: the same `readingColor` the line uses, no sixth hue on the canvas. That is what makes the interesting case readable: on a compression low the sensor dives into red while the diamond stays blue at 5,3, and the disagreement reads before any number does. The hover names both sides and the difference, because two shapes five pixels apart cannot be subtracted by eye.
 
 The most recent one also stands as the first row beside the current value, above carbohydrates and insulin: `Глюкометр 5,3 · 12 мин назад`. It belongs there rather than among the journal rows because it is about the same quantity as the big number above it.
 
@@ -199,7 +199,7 @@ When the sensor steadily disagrees with the meter, a banner above the current va
 
 Night is the stretch of the day nobody watches. A low at three in the afternoon announces itself; at three in the morning only the sensor notices, and only if someone looks afterwards.
 
-Every other panel on the page hides it. The weekly curve is thinned into 15-minute buckets, so a dip to 3.6 mmol/L that lasted a few minutes is averaged with its neighbours and drawn as 4.3. The night block therefore counts from the **raw** readings in `nights.py`, not from what the chart shows.
+Every other panel on the page hides it. The weekly curve is thinned into 15-minute buckets, so a dip to 3.6 mmol/L that lasted a few minutes is averaged with its neighbours and drawn as 4.3. The night block therefore counts from the raw readings in `nights.py`, not from what the chart shows.
 
 It reports three figures over its own seven-day window: nights with hypoglycaemia, the median of the nightly minimums, and the median drift. The buttons above do not move it, same deal as the meal review and the day profile.
 
@@ -211,7 +211,7 @@ The page names both denominators. Hypoglycaemia counts and the minimum are compu
 
 The drift is computed only over "fasting" nights, where the journal shows no food or bolus within four hours of 03:00 and none during the night itself. An evening with no journal entries at all counts as unknown rather than fasting: an empty evening means "not recorded", not "did not eat". Below three qualifying nights the median is not shown at all, only the count that fell short.
 
-Each night also gets a sparkline. Its buckets carry the **minimum** of the bucket rather than the average, so the lowest point of the drawn line is the same reading as the number printed beside it. Smoothing the dip away is the mistake the block exists to correct.
+Each night also gets a sparkline. Its buckets carry the minimum of the bucket rather than the average, so the lowest point of the drawn line is the same reading as the number printed beside it. Smoothing the dip away is the mistake the block exists to correct.
 
 ## Meal review
 
@@ -312,15 +312,15 @@ The side matters, and getting it wrong would be worse than not checking at all. 
 
 Three numbers guard it, and each of them fails toward alerting:
 
-* **80 mg/dL, not 70.** A meter reading 3,9 confirms a low at the line, it does not refute one. It is the same recovery margin the episode already closes at, and 170 mirrors it above.
-* **15 minutes.** Blood moves a couple of mmol/L in that time, after which the check no longer says anything about now. The episode is *closed*, not frozen, so the next poll after the check goes stale speaks up at once instead of sitting out the 30-minute repeat: checked, quiet, asked again a quarter of an hour later.
-* **Absent means alert.** The journal may not exist and MySQL may be down; the lookup has its own `try` and yields `None`, and the alert then behaves as it did before. Staying silent because the collector could not ask is the failure that must not happen.
+* 80 mg/dL, not 70. A meter reading 3,9 confirms a low at the line, it does not refute one. It is the same recovery margin the episode already closes at, and 170 mirrors it above.
+* 15 minutes. Blood moves a couple of mmol/L in that time, after which the check no longer says anything about now. The episode is *closed*, not frozen, so the next poll after the check goes stale speaks up at once instead of sitting out the 30-minute repeat: checked, quiet, asked again a quarter of an hour later.
+* Absent means alert. The journal may not exist and MySQL may be down; the lookup has its own `try` and yields `None`, and the alert then behaves as it did before. Staying silent because the collector could not ask is the failure that must not happen.
 
 A check below the threshold changes nothing: it confirms the low. The level of the alert is still decided by the sensor: blood decides whether to speak, not how loudly.
 
 ## Staleness
 
-Since nothing fires in those cases, silence is watched from outside the process. Every poll stamps `.last-reading` with the mtime of the newest reading in the database — not with the current time, or a collector that came back after a day off would report the data as fresh the moment it started. Netdata's `filecheck` reads that mtime and alerts when it stops moving:
+Since nothing fires in those cases, silence is watched from outside the process. Every poll stamps `.last-reading` with the mtime of the newest reading in the database, not with the current time, or a collector that came back after a day off would report the data as fresh the moment it started. Netdata's `filecheck` reads that mtime and alerts when it stops moving:
 
 ```
 /etc/netdata/go.d/filecheck.conf     # job "glucose" -> .last-reading
