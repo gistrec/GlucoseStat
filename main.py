@@ -24,7 +24,7 @@ from database.queries import (
 )
 from librelinkup import COOLDOWN_MAX, AuthError, LibreLinkUp, RateLimited, Sensor
 from notify import Notifier
-from publish import publish
+from publish import HeavyCache, publish
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -132,6 +132,7 @@ def run_once(
     fetch_interval: int,
     backoff: int,
     last_success: float | None,
+    cache: HeavyCache | None = None,
 ) -> tuple[int, int, float | None]:
     """Один цикл опроса: скачать, сохранить, оповестить, отметить, опубликовать.
 
@@ -240,7 +241,7 @@ def run_once(
     # внутри try и при недоступности Abbott не вызывался вовсе — страница
     # продолжала показывать старые данные как свежие.
     try:
-        publish(last_success=last_success)
+        publish(last_success=last_success, cache=cache)
     except Exception:
         log.exception("failed to publish the snapshot")
 
@@ -268,10 +269,12 @@ def main() -> None:
 
     backoff = BACKOFF_MIN
     last_success: float | None = None
+    # Тяжёлая часть снимка живёт между циклами здесь — см. HeavyCache.
+    cache = HeavyCache()
 
     while True:
         delay, backoff, last_success = run_once(
-            collector, notifier, fetch_interval, backoff, last_success
+            collector, notifier, fetch_interval, backoff, last_success, cache
         )
         time.sleep(delay)
 

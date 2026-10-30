@@ -1,14 +1,17 @@
 """Postprandial analysis: rise, peak, return, and what gets excluded."""
 
+import random
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from analysis import (
+    NEAREST_TOLERANCE,
     RATIO_FIELDS,
     SNACK_CARBS,
     TARGET_RISE,
     WINDOW,
     Trust,
+    _nearest,
     analyse,
     excursion,
     summarise,
@@ -692,3 +695,42 @@ class TestTrustInAnalyse:
         result = analyse([(START, 60.0)], readings, LATER, HYPO)
 
         assert result["meals"][0]["trust"] is None
+
+
+class TestNearestBisect:
+    """``_nearest`` ищет двоичным поиском — ответ обязан совпасть с перебором,
+    которым он был: и при равном расстоянии с двух сторон, и на повторах
+    метки, и на краях ряда."""
+
+    @staticmethod
+    def brute(readings, moment, tolerance=NEAREST_TOLERANCE):
+        best = None
+        for timestamp, mgdl in readings:
+            distance = abs(timestamp - moment)
+            if distance <= tolerance and (best is None or distance < best[0]):
+                best = (distance, mgdl)
+        return None if best is None else best[1]
+
+    def test_it_matches_the_linear_scan(self):
+        rng = random.Random(7)
+        moments = sorted(
+            START + timedelta(minutes=rng.choice(range(0, 600, 5)) + rng.choice((0, 0, 1)))
+            for _ in range(80)
+        )
+        # Повторы меток с разными значениями — перебор брал первое.
+        readings = [(moment, float(index)) for index, moment in enumerate(moments)]
+
+        for minute in range(-30, 640):
+            moment = START + timedelta(minutes=minute, seconds=rng.choice((0, 30)))
+            assert _nearest(readings, moment) == self.brute(readings, moment), moment
+
+    def test_a_tie_goes_to_the_earlier_reading(self):
+        readings = curve([100.0, 200.0], step_minutes=10)
+
+        assert _nearest(readings, START + timedelta(minutes=5)) == 100.0
+
+    def test_nothing_close_and_nothing_at_all(self):
+        readings = curve([100.0])
+
+        assert _nearest(readings, START + timedelta(minutes=16)) is None
+        assert _nearest([], START) is None

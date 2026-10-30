@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import os
 import tempfile
 from bisect import bisect_left
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from itertools import pairwise
 from statistics import median
@@ -110,6 +111,16 @@ RANGES = {
 # 90 дней — нет из-за цены: сравнение удваивает выборку, и квартал потянул бы
 # полгода минутных показаний на каждую публикацию раз в минуту.
 COMPARED_RANGES = {"week", "two_weeks", "month"}
+
+# Снимок собирается из двух частей. Живая — каждую минуту: текущее значение,
+# прогноз и почасовые панели, где новая точка видна сразу. Тяжёлая — недели и
+# месяцы, GMI, профиль, ночи и разбор еды — раз в HEAVY_INTERVAL: на неё
+# уходило почти всё время сборки, около четырёх секунд CPU в минуту, а за
+# минуту в квартальной сводке не меняется ничего, что видно глазом. Раньше
+# срока тяжёлая пересобирается, если поменялся журнал или пояс, — иначе
+# записанная еда четверть часа не появлялась бы в разборе.
+LIVE_RANGES = {"day", "two_days"}
+HEAVY_INTERVAL = timedelta(minutes=15)
 
 # Окно для оценки тренда. Libre рисует стрелку по последним ~15 минутам;
 # на более коротком окне шум сенсора выдаёт скачки, которых нет.
@@ -813,15 +824,82 @@ def build_snapshot(
     Отдельно от ``publish`` ради ``preview.py``: собирая снимок сам, превью
     показывало бы вчерашнюю форму страницы и молча расходилось бы с боевой —
     именно так оно и проглядело добавленный ключ ``gmi``.
+
+    Снимок — сумма двух частей, живой и тяжёлой (см. ``HEAVY_INTERVAL``):
+    здесь обе собираются из одного и того же сырья, а сборщик берёт тяжёлую
+    из кеша.
     """
 
-    # Пояс, который сейчас у человека (смены из бота): по нему режутся сутки
-    # и подписывается «местный день» на странице и на часах.
-    zones = zones or []
-    current_zone = zone_at(now, zones)
+    heavy = build_heavy(
+        readings, journal, now, origins=origins, zones=zones, sensor_changes=sensor_changes
+    )
+    live = build_live(
+        readings,
+        journal,
+        now,
+        last_success=last_success,
+        latest=latest,
+        fingersticks=fingersticks,
+        sensor_started=sensor_started,
+        sensor_ends=sensor_ends,
+        forecast_rows=forecast_rows,
+        bound_rows=bound_rows,
+        zones=zones,
+    )
+    return merge_snapshot(heavy, live)
+
+
+def merge_snapshot(heavy: dict, live: dict) -> dict:
+    """Сложить тяжёлую и живую части в снимок.
+
+    Серии и статистика есть в обеих — по своим окнам, — и сливаются по
+    имени окна в порядке ``RANGES``: страница перебирает их в нём же.
+    """
+
+    return {
+        **heavy,
+        **live,
+        "series": {
+            name: live["series"].get(name, heavy["series"].get(name)) for name in RANGES
+        },
+        "stats": {
+            name: live["stats"].get(name, heavy["stats"].get(name)) for name in RANGES
+        },
+    }
+
+
+def live_since(now: datetime, sensor_started: datetime | None) -> datetime:
+    """С какого момента нужно сырьё живой части.
+
+    Самое длинное её окно — эпизоды вне нормы (``EPISODE_WINDOW``), но
+    сверка сенсора с глюкометром (``_bias``) идёт по всей жизни сенсора, а
+    она бывает и дольше двух недель. Короче этой границы ``build_live`` даст
+    другой ответ, чем на полном сырье, — это проверяет тест.
+
+    Но не раньше ``full_since``: отметка установки не стирается, когда Abbott
+    перестаёт присылать блок сенсора, и от снятого полгода назад сенсора
+    живая часть читала бы каждую минуту всё больше истории. Прежде полное
+    сырьё тоже кончалось на ``full_since`` — ответ от этого не меняется.
+    """
+
+    since = now - EPISODE_WINDOW
+    if sensor_started is not None:
+        since = min(since, sensor_started)
+    return max(since, full_since(now))
+
+
+def _series_and_stats(
+    readings: list[tuple[datetime, float]],
+    now: datetime,
+    names: set[str],
+    current_zone: ZoneInfo,
+) -> tuple[dict, dict]:
+    """Серии и статистика по окнам ``names`` из ``RANGES``."""
 
     series, stats = {}, {}
     for name, (span, step_minutes) in RANGES.items():
+        if name not in names:
+            continue
         subset = [item for item in readings if item[0] >= now - span]
         if step_minutes is None:
             series[name] = {"kind": "daily", "days": _daily(subset, now, span, current_zone)}
@@ -851,18 +929,31 @@ def build_snapshot(
                 **window_stats,
                 "prev": _compare(window_stats, _stats(prev_subset), span),
             }
+    return series, stats
 
-    meals = [
-        (occurred_at, carbs)
-        for occurred_at, kind, carbs, _ in journal
-        if kind == "meal" and carbs is not None
-    ]
-    # Только короткий инсулин: базальный — суточный фон, к еде он не относится.
-    boluses = [
-        (occurred_at, units)
-        for occurred_at, kind, _, units in journal
-        if kind == "bolus" and units is not None
-    ]
+
+def build_live(
+    readings: list[tuple[datetime, float]],
+    journal: list[tuple[datetime, str, float | None, float | None]],
+    now: datetime,
+    last_success: float | None = None,
+    latest: dict | None = None,
+    fingersticks: list[tuple[datetime, float]] | None = None,
+    sensor_started: datetime | None = None,
+    sensor_ends: datetime | None = None,
+    forecast_rows: list[tuple[datetime, int, float, str]] | None = None,
+    bound_rows: list[tuple[int, float]] | None = None,
+    zones: list[tuple[datetime, str]] | None = None,
+) -> dict:
+    """Живая часть снимка — то, что обязано обновляться каждую минуту.
+
+    Текущее значение и прогноз, почасовые панели с их событиями, эпизодами и
+    дырами, «сегодня» для часов, карточка сенсора. Сырья ей хватает с
+    ``live_since``. Pure, как и ``build_snapshot``.
+    """
+
+    zones = zones or []
+    series, stats = _series_and_stats(readings, now, LIVE_RANGES, zone_at(now, zones))
 
     # Срез под обе полосы эпизодов — один: нарезать его дважды значило бы
     # пройти недельное сырьё лишний раз ради того же списка.
@@ -896,15 +987,6 @@ def build_snapshot(
         # часов. По сырым замерам, а не по серии: её корзины хранят провалы,
         # и время в диапазоне по ним выходит заниженным.
         "today": _stats([item for item in readings if item[0] >= _midnight(now, zones)]),
-        # Своё окно, не выбранное на странице — см. GMI_WINDOW.
-        "gmi": _gmi(readings, now),
-        # Профиль обычного дня — тоже по своему окну (AGP_WINDOW): «обычно»
-        # не зависит от того, какая панель открыта.
-        "profile": day_profile(readings, now, zones),
-        # И ночи — по своему (NIGHTS_WINDOW). Порог гипогликемии передаётся, а
-        # не берётся модулем у себя: «ниже целевого диапазона» на странице и
-        # «ночная гипогликемия» обязаны означать одно число.
-        "nights": night_summary(readings, journal, now, hypo_mgdl=TARGET_LOW_MGDL, zones=zones),
         "events": _events(journal, now - EVENT_WINDOW),
         # Сверки глюкометром — по тому же окну, что события: рисуются они на тех
         # же почасовых панелях, и своя константа для того же окна разъехалась бы
@@ -926,6 +1008,57 @@ def build_snapshot(
         "sensor": _sensor(
             sensor_started, sensor_ends, readings, now, fingersticks or []
         ),
+        # Окно — двух суток (RANGES["two_days"]), а не отдельная константа:
+        # кольца рисуют обе почасовые панели, и второго источника правды для
+        # этого окна заводить незачем.
+        "artifacts": _artifacts(readings, now - RANGES["two_days"][0]),
+    }
+
+
+def build_heavy(
+    readings: list[tuple[datetime, float]],
+    journal: list[tuple[datetime, str, float | None, float | None]],
+    now: datetime,
+    origins: dict[datetime, list[dict]] | None = None,
+    zones: list[tuple[datetime, str]] | None = None,
+    sensor_changes: list[datetime] | None = None,
+) -> dict:
+    """Тяжёлая часть снимка — сводки за недели и месяцы.
+
+    Длинные серии и их статистика, GMI, профиль обычного дня, ночи и разбор
+    еды. Это почти всё время сборки, а за минуту в них не меняется ничего,
+    что видно глазом. Сырья нужно за всё окно ``full_since``. Pure.
+    """
+
+    zones = zones or []
+    series, stats = _series_and_stats(
+        readings, now, set(RANGES) - LIVE_RANGES, zone_at(now, zones)
+    )
+
+    meals = [
+        (occurred_at, carbs)
+        for occurred_at, kind, carbs, _ in journal
+        if kind == "meal" and carbs is not None
+    ]
+    # Только короткий инсулин: базальный — суточный фон, к еде он не относится.
+    boluses = [
+        (occurred_at, units)
+        for occurred_at, kind, _, units in journal
+        if kind == "bolus" and units is not None
+    ]
+
+    return {
+        "series": series,
+        "stats": stats,
+        # Своё окно, не выбранное на странице — см. GMI_WINDOW.
+        "gmi": _gmi(readings, now),
+        # Профиль обычного дня — тоже по своему окну (AGP_WINDOW): «обычно»
+        # не зависит от того, какая панель открыта.
+        "profile": day_profile(readings, now, zones),
+        # И ночи — по своему (NIGHTS_WINDOW). Порог гипогликемии передаётся, а
+        # не берётся модулем у себя: «ниже целевого диапазона» на странице и
+        # «ночная гипогликемия» обязаны означать одно число.
+        "nights": night_summary(readings, journal, now, hypo_mgdl=TARGET_LOW_MGDL, zones=zones),
         # Установки сенсоров — пунктир «новый сенсор» на всех панелях, поэтому
         # окно — самой длинной из них, квартала.
         "sensor_changes": [
@@ -933,10 +1066,6 @@ def build_snapshot(
             for moment in (sensor_changes or [])
             if moment >= now - RANGES["quarter"][0]
         ],
-        # Окно — двух суток (RANGES["two_days"]), а не отдельная константа:
-        # кольца рисуют обе почасовые панели, и второго источника правды для
-        # этого окна заводить незачем.
-        "artifacts": _artifacts(readings, now - RANGES["two_days"][0]),
         "analysis": analyse(
             meals,
             readings,
@@ -947,6 +1076,23 @@ def build_snapshot(
             zones=zones,
         ),
     }
+
+
+def full_since(now: datetime) -> datetime:
+    """С какого момента нужно сырьё всему снимку.
+
+    Удвоенное окно — ради сравнения с предыдущим периодом. Откат этой
+    строки превратил бы месячное сравнение в вечное «сравнивать не с чем»
+    без единого внешнего признака, поэтому на неё есть тест. Сравниваемым
+    окнам — двойная длина, остальным — своя: сейчас это 90 дней квартала,
+    около 130 тысяч строк при минутном опросе. На вес data.json выборка не
+    влияет, серии режутся по своим окнам.
+    """
+
+    return now - max(
+        span * (2 if name in COMPARED_RANGES else 1)
+        for name, (span, _) in RANGES.items()
+    )
 
 
 def _midnight(now: datetime, zones: list[tuple[datetime, str]]) -> datetime:
@@ -990,7 +1136,43 @@ def _stored_last_success(path: str) -> float | None:
         return None
 
 
-def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None:
+@dataclass
+class HeavyCache:
+    """Тяжёлая часть снимка между публикациями (см. ``HEAVY_INTERVAL``).
+
+    Держит её сборщик, а не модуль: глобальный кеш жил бы и между тестами, и
+    в ручном пересборе, которому нужен полный снимок, а не кусок четвертьчасовой
+    давности.
+
+    ``key`` — то, что меняется без всякой связи с часами: журнал, пояс,
+    установки сенсоров и то, чем подтверждено число углеводов у еды (по
+    нему разбор ставит еде уверенность). Запись еды или её удаление в боте обязаны дойти до
+    разбора сразу, а не через четверть часа.
+    """
+
+    built_at: datetime | None = None
+    key: tuple | None = None
+    part: dict | None = None
+
+    def get(self, now: datetime, key: tuple) -> dict | None:
+        if self.part is None or self.built_at is None or self.key != key:
+            return None
+        age = now - self.built_at
+        # Часы назад — после перевода времени на хосте — тоже повод
+        # пересобрать: возраст части тогда ничего не значит.
+        if age < timedelta(0) or age >= HEAVY_INTERVAL:
+            return None
+        return self.part
+
+    def put(self, now: datetime, key: tuple, part: dict) -> None:
+        self.built_at, self.key, self.part = now, key, part
+
+
+def publish(
+    path: str = PUBLISH_PATH,
+    last_success: float | None = None,
+    cache: HeavyCache | None = None,
+) -> None:
     """Write the snapshot atomically so nginx never serves a half-written file.
 
     ``last_success`` is when the collector last reached LibreLinkUp. It is
@@ -1000,6 +1182,10 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
     rather than quietly showing yesterday's glucose as current. When the
     caller does not know it (a standalone run, a freshly restarted collector),
     the mark is inherited from the snapshot being replaced.
+
+    ``cache`` — тяжёлая часть с прошлой публикации. Пока она свежа, из базы
+    читается только сырьё живой части, а не квартал. Без кеша снимок
+    собирается целиком — так его собирает ручной пересбор.
     """
 
     if last_success is None:
@@ -1008,17 +1194,6 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
         last_success = _db_last_success() or _stored_last_success(path)
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    # Удвоенное окно — ради сравнения с предыдущим периодом. Откат этой
-    # строки превратил бы месячное сравнение в вечное «сравнивать не с чем»
-    # без единого внешнего признака, поэтому на неё есть тест. Сравниваемым
-    # окнам — двойная длина, остальным — своя: сейчас это 90 дней квартала,
-    # около 130 тысяч строк при минутном опросе. На вес data.json выборка не
-    # влияет, серии режутся по своим окнам.
-    window = max(
-        span * (2 if name in COMPARED_RANGES else 1)
-        for name, (span, _) in RANGES.items()
-    )
-    readings = readings_since(now - window)
 
     # Журнал ведёт бот, и его может не быть вовсе — тогда список пуст, панели
     # событий на странице просто не появятся.
@@ -1027,6 +1202,36 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
     # Отметку пишет сборщик; на рендерере она приезжает репликацией. Нет
     # её — карточка сенсора покажет только полноту данных.
     sensor_started = read_sensor_start()
+
+    # Смены пояса из бота — время суток приёма для коэффициента.
+    zones = timezone_history()
+    sensor_changes = sensor_starts_since(now - RANGES["quarter"][0])
+
+    # Подтверждения еды читаются каждую минуту, хоть и нужны только тяжёлой
+    # части: уверенность и взвешенность бот меняет, не трогая журнал, и без
+    # них в ключе разбор отставал бы от кнопки на четверть часа. Запрос
+    # маленький — пара сотен строк за две недели.
+    origins = meal_origins_since(now - ANALYSIS_WINDOW)
+    key = (tuple(journal), tuple(zones), tuple(sensor_changes), origins)
+    heavy = cache.get(now, key) if cache is not None else None
+
+    # Квартал читается, только когда тяжёлую часть пересобирать; живой
+    # хватает своего окна — см. ``live_since``.
+    readings = readings_since(
+        full_since(now) if heavy is None else live_since(now, sensor_started)
+    )
+
+    if heavy is None:
+        heavy = build_heavy(
+            readings,
+            journal,
+            now,
+            origins=origins,
+            zones=zones,
+            sensor_changes=sensor_changes,
+        )
+        if cache is not None:
+            cache.put(now, key, heavy)
 
     # Сверки глюкометром — за двое суток для графика и за всю жизнь сенсора
     # для его сверки (``_bias``): страница всё равно режет точки по своему
@@ -1038,12 +1243,11 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
     # Бот пишет прогноз на каждую точку; нет таблицы или строк — пусто, и
     # хвост остаётся линейным. Граница — от той же точки, что и прогноз.
     forecast_rows = latest_forecast()
-    snapshot = build_snapshot(
+    live = build_live(
         readings,
         journal,
         now,
         last_success=last_success,
-        origins=meal_origins_since(now - ANALYSIS_WINDOW),
         fingersticks=fingersticks_since(fingersticks_from),
         # Не из readings: последнее измерение может быть старше окна графиков,
         # и тогда странице нужно показать «данных нет с такого-то числа».
@@ -1055,10 +1259,9 @@ def publish(path: str = PUBLISH_PATH, last_success: float | None = None) -> None
         sensor_ends=read_sensor_end(),
         forecast_rows=forecast_rows,
         bound_rows=forecast_bounds(forecast_rows[0][0]) if forecast_rows else [],
-        # Смены пояса из бота — время суток приёма для коэффициента.
-        zones=timezone_history(),
-        sensor_changes=sensor_starts_since(now - RANGES["quarter"][0]),
+        zones=zones,
     )
+    snapshot = merge_snapshot(heavy, live)
 
     _write_atomic(path, snapshot)
     # Выжимка для часов пишется второй: упади она — живая страница уже

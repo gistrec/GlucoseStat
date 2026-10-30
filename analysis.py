@@ -11,6 +11,7 @@ insulin still active from an earlier dose — none of which is in this data.
 """
 
 import statistics
+from bisect import bisect_left, bisect_right
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
@@ -101,15 +102,34 @@ def _nearest(
     moment: datetime,
     tolerance: timedelta = NEAREST_TOLERANCE,
 ) -> float | None:
-    """Показание, ближайшее к моменту времени, если оно достаточно близко."""
+    """Показание, ближайшее к моменту времени, если оно достаточно близко.
+
+    ``readings`` — по возрастанию времени, как их отдаёт ``readings_since``.
+    Поиск двоичный: перебор всех показаний на каждую еду стоил сборщику
+    секунды CPU в минуту — квартал сырья на полсотни приёмов дважды. При
+    равном расстоянии побеждает более раннее, как и при переборе.
+    """
+
+    index = bisect_left(readings, moment, key=_timestamp)
+    candidates = []
+    if index > 0:
+        # Первое из показаний с той же меткой: перебор брал первое.
+        before = bisect_left(readings, readings[index - 1][0], key=_timestamp)
+        candidates.append(readings[before])
+    if index < len(readings):
+        candidates.append(readings[index])
 
     best: tuple[timedelta, float] | None = None
-    for timestamp, mgdl in readings:
+    for timestamp, mgdl in candidates:
         distance = abs(timestamp - moment)
         if distance <= tolerance and (best is None or distance < best[0]):
             best = (distance, mgdl)
 
     return None if best is None else best[1]
+
+
+def _timestamp(item: tuple[datetime, float]) -> datetime:
+    return item[0]
 
 
 def _merge(
@@ -309,7 +329,13 @@ def excursion(
         # Без опоры подъём не от чего считать: сенсор в этот момент молчал.
         return None
 
-    window = [item for item in readings if started <= item[0] <= cutoff]
+    # Срез, а не фильтр: ``readings`` отсортированы, а фильтр проходил всё
+    # сырьё квартала ради четырёх часов.
+    window = readings[
+        bisect_left(readings, started, key=_timestamp) : bisect_right(
+            readings, cutoff, key=_timestamp
+        )
+    ]
     if not window:
         return None
 
