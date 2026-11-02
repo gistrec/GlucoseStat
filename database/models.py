@@ -6,13 +6,16 @@ from sqlalchemy import (
     Column,
     DateTime,
     Float,
+    ForeignKey,
     Integer,
     MetaData,
     Numeric,
     String,
     Table,
     Text,
+    UniqueConstraint,
 )
+from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import declarative_base
 
 
@@ -162,3 +165,59 @@ class GlucoseReading(Base):
 
     timestamp = Column(DateTime, primary_key=True)
     mgdl = Column(Float, nullable=False)
+
+
+class NightscoutUploader(Base):
+    """Загрузчик, который шлёт показания по Nightscout API v1, — строкой на человека.
+
+    Секрет в базе не лежит: загрузчик присылает SHA-1 от него, а хранится
+    SHA-256 от этого SHA-1. Прочитавший таблицу не получает ни секрета, ни
+    того, что можно подставить в заголовок ``api-secret``.
+    """
+
+    __tablename__ = "nightscout_uploaders"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    owner = Column(String(64), nullable=False, unique=True)
+    secret_digest = Column(String(64), nullable=False, unique=True)
+    # Только показания владельца дашборда попадают в glucose_readings: кривая
+    # на странице одна, и чужое в ней было бы чужими данными у него.
+    feeds_dashboard = Column(Boolean, nullable=False, default=False)
+    # Наивный UTC, как timestamp у показаний.
+    created_at = Column(DateTime, nullable=False)
+    secret_rotated_at = Column(DateTime, nullable=False)
+    last_upload_at = Column(DateTime, nullable=True)
+
+
+class NightscoutEntry(Base):
+    """Показание sgv, принятое по Nightscout API, в том виде, как пришло.
+
+    Ключ дедупликации — загрузчик, прибор и момент измерения в миллисекундах:
+    повтор той же пачки после обрыва связи не плодит строк, а уникальный
+    индекс делает это и при параллельных запросах.
+    """
+
+    __tablename__ = "nightscout_entries"
+    __table_args__ = (
+        UniqueConstraint("uploader_id", "device", "date_ms", name="uq_nightscout_entry"),
+    )
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    uploader_id = Column(Integer, ForeignKey("nightscout_uploaders.id"), nullable=False)
+    # Пустая строка, а не NULL: NULL в уникальном индексе MySQL не равен
+    # самому себе, и повтор без device проходил бы мимо дедупликации.
+    # Сравнение побайтовое: в collation по умолчанию «Ottai» и «ottai» — один
+    # ключ, и повтор с другим регистром молча слился бы с чужим прибором.
+    device = Column(
+        String(64).with_variant(mysql.VARCHAR(64, collation="utf8mb4_bin"), "mysql"),
+        nullable=False,
+        default="",
+    )
+    # Момент измерения: date из запроса как есть и он же наивным UTC.
+    date_ms = Column(BigInteger, nullable=False)
+    measured_at = Column(DateTime, nullable=False)
+    # Когда сервис его принял — отдельно от измерения: история после обрыва
+    # связи приходит часами позже, чем была снята.
+    received_at = Column(DateTime, nullable=False)
+    mgdl = Column(Float, nullable=False)
+    direction = Column(String(32), nullable=True)

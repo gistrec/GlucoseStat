@@ -20,6 +20,7 @@ from statistics import median
 from active import active_now
 from agp import day_profile
 from analysis import analyse
+from database.nightscout import read_dashboard_last_upload
 from database.queries import (
     fingersticks_since,
     forecast_bounds,
@@ -810,6 +811,7 @@ def build_snapshot(
     now: datetime,
     last_success: float | None = None,
     latest: dict | None = None,
+    nightscout_last_upload: float | None = None,
     origins: dict[datetime, list[dict]] | None = None,
     fingersticks: list[tuple[datetime, float]] | None = None,
     sensor_started: datetime | None = None,
@@ -839,6 +841,7 @@ def build_snapshot(
         now,
         last_success=last_success,
         latest=latest,
+        nightscout_last_upload=nightscout_last_upload,
         fingersticks=fingersticks,
         sensor_started=sensor_started,
         sensor_ends=sensor_ends,
@@ -938,6 +941,7 @@ def build_live(
     now: datetime,
     last_success: float | None = None,
     latest: dict | None = None,
+    nightscout_last_upload: float | None = None,
     fingersticks: list[tuple[datetime, float]] | None = None,
     sensor_started: datetime | None = None,
     sensor_ends: datetime | None = None,
@@ -963,6 +967,12 @@ def build_live(
         "generated_at": int(now.replace(tzinfo=timezone.utc).timestamp()),
         "collector": {
             "last_success": int(last_success) if last_success else None,
+            # Последний приём по Nightscout API (nightscout.py), если показания
+            # идут и оттуда: без него страница считала бы данные остановившимися
+            # всякий раз, когда молчит LibreLinkUp.
+            "nightscout_last_upload": int(nightscout_last_upload)
+            if nightscout_last_upload
+            else None,
         },
         "target": {
             "low": TARGET_LOW_MGDL,
@@ -1113,6 +1123,15 @@ def _db_last_success() -> float | None:
     return stored.replace(tzinfo=timezone.utc).timestamp()
 
 
+def _db_nightscout_last_upload() -> float | None:
+    """Последний приём по Nightscout у владельца дашборда, приведённый к epoch."""
+
+    stored = read_dashboard_last_upload()
+    if stored is None:
+        return None
+    return stored.replace(tzinfo=timezone.utc).timestamp()
+
+
 def _stored_last_success(path: str) -> float | None:
     """Прошлое значение ``last_success`` из уже опубликованного снимка.
 
@@ -1248,6 +1267,7 @@ def publish(
         journal,
         now,
         last_success=last_success,
+        nightscout_last_upload=_db_nightscout_last_upload(),
         fingersticks=fingersticks_since(fingersticks_from),
         # Не из readings: последнее измерение может быть старше окна графиков,
         # и тогда странице нужно показать «данных нет с такого-то числа».

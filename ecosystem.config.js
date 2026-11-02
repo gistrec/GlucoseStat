@@ -18,5 +18,20 @@ module.exports = {
         TZ: "UTC",
       },
     },
+    {
+      // Приём показаний по Nightscout API v1 (nightscout.py). Слушает
+      // 127.0.0.1:NIGHTSCOUT_PORT, наружу его выставляет nginx на /api/v1/.
+      name: "glucose-nightscout",
+      script: "nightscout.py",
+      args: "serve",
+      interpreter: "./venv/bin/python",
+      cwd: __dirname,
+      autorestart: true,
+      exp_backoff_restart_delay: 100,
+      max_restarts: Number.MAX_SAFE_INTEGER,
+      env: {
+        TZ: "UTC",
+      },
+    },
   ],
 };

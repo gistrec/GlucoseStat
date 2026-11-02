@@ -180,6 +180,7 @@ class TestPublishWithCache:
         monkeypatch.setattr("publish.last_readings", lambda limit=10: everything[-limit:])
         monkeypatch.setattr("publish.read_sensor_start", lambda: state["sensor_started"])
         monkeypatch.setattr("publish.read_sensor_end", lambda: None)
+        monkeypatch.setattr("publish.read_dashboard_last_upload", lambda: None)
         monkeypatch.setattr("publish.latest_forecast", list)
         monkeypatch.setattr("publish.timezone_history", list)
         monkeypatch.setattr("publish.sensor_starts_since", lambda since: [sensor_started])

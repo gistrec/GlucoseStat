@@ -2,7 +2,7 @@
 
 Collects FreeStyle Libre 3 readings from LibreLinkUp into MySQL and renders a public dashboard from them. The live page is at [glucose.gistrec.cloud](https://glucose.gistrec.cloud).
 
-A single pm2 process does the lot: it polls LibreLinkUp every five minutes, stores whatever is new, rewrites `web/data.json`, and pushes a phone alert if the reading is low. nginx serves `web/` as plain static files, so a page view never touches MySQL and never reaches Abbott.
+A single pm2 process does the lot: it polls LibreLinkUp every five minutes, stores whatever is new, rewrites `web/data.json`, and pushes a phone alert if the reading is low. nginx serves `web/` as plain static files, so a page view never touches MySQL and never reaches Abbott. A second, optional process takes readings over the [Nightscout API](#nightscout-api) from apps that upload there.
 
 ```
 LibreLinkUp ──poll 5m──▶ main.py ──▶ MySQL ──▶ publish.py ──▶ web/data.json ──▶ nginx
@@ -266,6 +266,53 @@ The portion boundaries are fixed at 40 g and 70 g, not recomputed as percentiles
 Finer cuts have nothing to divide: snacks under `SNACK_CARBS` never enter the review, and meals past a hundred grams are rare enough to miss the quorum.
 
 This describes outcomes and stops there. Whether a dose was right also depends on activity, on illness and on insulin still active from an earlier injection. None of that is in this data, and the page says so.
+
+## Nightscout API
+
+`nightscout.py` takes readings the way a Nightscout server does, so an app that reads the sensor and can upload to Nightscout can upload here instead. It is a second pm2 process (`glucose-nightscout`), a stdlib HTTP server on `127.0.0.1:8098` that nginx exposes under `/api/v1/`. There is no separate Nightscout and no MongoDB.
+
+Only the part of API v1 an uploader needs is there:
+
+| Route | Auth | What it does |
+|---|---|---|
+| `POST /api/v1/entries`, `/entries.json` | secret | stores `sgv` entries, answers with them as Nightscout would |
+| `GET /api/v1/entries.json`, `/entries/sgv.json` | secret | the uploader's own entries, newest first; `count` (default 10, at most 1000) and `find[date][$gt\|$gte\|$lt\|$lte]` |
+| `GET /api/v1/entries/current.json` | secret | the newest entry |
+| `GET /api/v1/status.json` | none | `status: ok`, server time, `apiEnabled` |
+| `GET /api/v1/verifyauth` | optional | whether the secret is accepted |
+
+The behaviour follows the handlers of [cgm-remote-monitor](https://github.com/nightscout/cgm-remote-monitor) (`lib/api/entries`, `lib/server/entries.js`, `lib/authorization`), not just the Swagger file:
+
+* **Auth.** The `api-secret` header carries the SHA-1 of the secret in hex, in any case; `?secret=` works too. The plain secret is refused, as Nightscout refuses it. JWT tokens and roles are not supported. Prefer the header: nginx's access log keeps query strings.
+* **Units.** `sgv` is mg/dL whatever units the Nightscout page shows, and that is what `glucose_readings` stores, so nothing is converted. Units are never inferred from the size of a number: `sgv: 5.5` is refused, not read as mmol/L.
+* **Time.** `date` is Unix time in milliseconds and wins; `dateString` is used only when `date` is missing or broken, and it must carry a zone. A `date` in seconds lands in 1970 and is refused, as is anything more than ten minutes in the future.
+* **Shape.** An object or an array of up to 10 000 objects (Nightscout's own limit), a body of at most 4 MB, gzip allowed. A malformed body is a 400. Inside a valid batch, an entry that is not `type: "sgv"` (`mbg`, `cal`, untyped…) or has an implausible value (outside 39–600 mg/dL) is skipped, not refused: the uploader would otherwise resend the batch forever, and resending would not fix it.
+
+Every entry lands in `nightscout_entries` with the measurement time (`measured_at`, `date_ms`) and the time it was received (`received_at`) apart, since history sent after an outage arrives hours late. The key is uploader + `device` + `date_ms` under a unique index, so a resent batch adds nothing, and parallel uploads from one uploader are serialised by a row lock on it (without that, InnoDB deadlocked on the duplicate keys). The answer to a resend lists the same `_id`s.
+
+Each uploader has its own random secret. The database keeps only SHA-256 of its SHA-1, so a reader of the table gets neither the secret nor anything the `api-secret` header would accept, and neither is ever logged. An uploader reads only its own entries. Only the one marked `--dashboard` also writes into `glucose_readings`, the curve the page draws; the first value for a second wins, so a moment LibreLinkUp already stored stays as it was.
+
+```bash
+./venv/bin/python nightscout.py issue owner --dashboard   # prints URL and secret, once
+./venv/bin/python nightscout.py rotate owner               # new secret, the old one stops at once
+./venv/bin/python nightscout.py list                       # uploaders and their last upload
+pm2 start ecosystem.config.js --only glucose-nightscout
+```
+
+The vhost needs one more location (and the app registry in infra a port):
+
+```nginx
+location /api/v1/ {
+	proxy_pass http://127.0.0.1:8098;
+	proxy_set_header Host $host;
+	client_max_body_size 5m;
+	access_log off;  # ?secret= would land here
+}
+```
+
+The snapshot carries the owner's last upload as `collector.nightscout_last_upload`, and the footer says "Nightscout: приём N мин назад" next to the LibreLinkUp mark; the page reads as stale only when both have gone quiet. Readings appear on the page with the collector's next snapshot, within five minutes. Alerts still run only in the collector's loop, and only over what LibreLinkUp returned or the newest row of the database.
+
+Checked against the cgm-remote-monitor source, not against a real uploader. Which routes a given app calls (Ottai on iOS in particular) is untested.
 
 ## Privacy
 

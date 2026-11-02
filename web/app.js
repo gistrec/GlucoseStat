@@ -63,23 +63,37 @@ function applyTheme(id) {
    пять минут независимо от того, отвечает ли Abbott, поэтому «обновлено
    только что» само по себе ничего не говорит о свежести данных. */
 function renderCollectorState() {
-    const lastSuccess = (state.snapshot.collector || {}).last_success;
+    const collector = state.snapshot.collector || {};
+    const lastSuccess = collector.last_success;
+    // Показания приходят ещё и по Nightscout API (nightscout.py): пока он
+    // принимает данные, молчание LibreLinkUp не значит, что данных нет.
+    const nightscout = collector.nightscout_last_upload;
 
-    if (!lastSuccess) {
+    if (!lastSuccess && !nightscout) {
         els.footUpdated.textContent = "Сборщик ещё не получал данные";
         els.footUpdated.className = "foot__warn";
         return;
     }
 
-    const silence = Date.now() - lastSuccess * 1000;
+    const now = Date.now();
+    const silence = now - Math.max(lastSuccess || 0, nightscout || 0) * 1000;
     if (silence > COLLECTOR_SILENT_AFTER_MS) {
-        els.footUpdated.textContent =
-            `Нет связи с LibreLinkUp. Последний успешный опрос — ${formatDateTime(new Date(lastSuccess * 1000))}.`;
+        if (!nightscout) {
+            els.footUpdated.textContent =
+                `Нет связи с LibreLinkUp. Последний успешный опрос — ${formatDateTime(new Date(lastSuccess * 1000))}.`;
+        } else {
+            const parts = [`последний приём по Nightscout — ${formatDateTime(new Date(nightscout * 1000))}`];
+            if (lastSuccess) {
+                parts.push(`опрос LibreLinkUp — ${formatDateTime(new Date(lastSuccess * 1000))}`);
+            }
+            els.footUpdated.textContent = `Новых данных нет: ${parts.join(", ")}.`;
+        }
         els.footUpdated.className = "foot__warn";
         return;
     }
 
-    els.footUpdated.textContent = `Обновлено ${formatAgo(silence)}`;
+    const nightscoutNote = nightscout ? ` · Nightscout: приём ${formatAgo(now - nightscout * 1000)}` : "";
+    els.footUpdated.textContent = `Обновлено ${formatAgo(silence)}${nightscoutNote}`;
     els.footUpdated.className = "";
 }
 
