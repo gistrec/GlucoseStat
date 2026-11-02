@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Drive GlucoseStat's real surfaces — collector process, publish CLI, dashboard page — to observe a change at runtime. Use when verifying a diff rather than running tests.
+description: Drive GlucoseStat's real surfaces — source and publisher processes, publish CLI, dashboard page — to observe a change at runtime. Use when verifying a diff rather than running tests.
 ---
 
 # Verifying GlucoseStat at runtime
@@ -26,33 +26,43 @@ Killing this process mid-run is how you reproduce a database outage.
 `journal_entries` belongs to the bot and `init_schema()` does **not** create
 it — create it by hand when the drive needs journal rows.
 
-## Collector process (`main.py`)
+## Source and publisher processes (`libre.py`, `publisher.py`, `nightscout.py`)
+
+Three pm2 processes in production: `libre.py` polls LibreLinkUp and writes,
+`nightscout.py serve` takes uploads and writes, `publisher.py` reads the
+primary sensor every minute and publishes, alerts, stamps `.last-reading`.
+Drive the ones the diff reaches; they only meet in MySQL.
 
 Stub the two outbound hosts instead of reaching them. A `sitecustomize.py` on
 `PYTHONPATH` that rewrites `https://api-de.libreview.io` and
-`https://api.pushover.net` to a local HTTP server is enough: `main.py`,
-`run_once`, `notify` and the LibreLinkUp client all still run as themselves,
-and no notification can reach the real phone.
+`https://api.pushover.net` to a local HTTP server is enough: `libre.py`,
+`publisher.py`, `notify` and the LibreLinkUp client all still run as
+themselves, and no notification can reach the real phone. A stub that answers
+LibreLinkUp with 500 reproduces an Abbott outage and its backoff.
 
 Plant `.llu-token.json` with a far-future `expires` to skip login. Always set
-`PUBLISH_PATH` to a temp file — otherwise the run overwrites `web/data.json`,
-which is gitignored, so git will neither show the damage nor undo it. On a real
-host that file is the live snapshot nginx serves.
+`PUBLISH_PATH` to a temp file — otherwise the publisher overwrites
+`web/data.json`, which is gitignored, so git will neither show the damage nor
+undo it. On a real host that file is the live snapshot nginx serves.
 
 Export `PUBLISH_PATH` rather than putting it in `.env`: it is read at import
 time, so only an exported value reaches every entry point.
 
 ```bash
-PYTHONPATH=$DRIVE MYSQL_USER=glucose MYSQL_PASSWORD=glucosepw \
+export PYTHONPATH=$DRIVE MYSQL_USER=glucose MYSQL_PASSWORD=glucosepw \
   MYSQL_HOST=127.0.0.1 MYSQL_PORT=13306 MYSQL_DB=glucose \
   PUSHOVER_TOKEN=stub PUSHOVER_USER=stub FETCH_INTERVAL_MINUTES=1 \
-  PUBLISH_PATH=$DRIVE/data.json venv/bin/python main.py
+  PUBLISH_PATH=$DRIVE/data.json NIGHTSCOUT_PORT=18098
+venv/bin/python libre.py &          # EMAIL/PASSWORD too, any values
+venv/bin/python nightscout.py serve &
+venv/bin/python publisher.py &
 ```
 
-The alert path is worth driving on any change near it: serve a low value from
-the stub, kill MySQL, and check that the stub still records a Pushover POST.
-Remember `init_schema()` runs before the loop, so the database has to be up at
-startup — take it down after the first cycle.
+Alerts come from the database, so drive them through it: upload a low reading
+for the primary sensor (or insert one) and check the stub records one Pushover
+POST, and only one on the next minute. Killing MySQL now silences alerts by
+design — check the publisher logs, keeps running and resumes when it is back.
+`init_schema()` runs before each loop, so the database has to be up at start.
 
 Clean up afterwards: `.llu-token.json`, `.alerts.json`, `.last-reading` are
 written into the repo root.
@@ -89,7 +99,7 @@ per-process.
 * macOS has no `timeout`; a command using it exits 127 and the drive proves
   nothing. Run long processes in the background and kill them instead.
 * Check the port is actually free before starting a stub. "Address already in
-  use" kills the stub silently and the collector then just fails to poll,
+  use" kills the stub silently and the source then just fails to poll,
   which looks like a passing result.
 * Always read raw process output. Grepping for the line you hope to see hides
   the run that never happened.
