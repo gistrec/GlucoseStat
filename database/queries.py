@@ -127,6 +127,26 @@ def primary_sensor() -> str:
     return chosen or LIBRE
 
 
+def first_readings() -> dict[str, datetime]:
+    """Первая точка каждого датчика за всю историю: с неё у датчика есть данные.
+
+    MIN по первичному ключу (sensor, timestamp) — по точке на датчик, без
+    сканирования таблицы.
+    """
+
+    try:
+        with session() as db:
+            rows = db.execute(
+                select(GlucoseReading.sensor, func.min(GlucoseReading.timestamp)).group_by(
+                    GlucoseReading.sensor
+                )
+            ).all()
+    except SQLAlchemyError as error:
+        log.warning("first readings unavailable, publishing without them: %s", error)
+        return {}
+    return {sensor: first for sensor, first in rows}
+
+
 def sources_overview() -> list[tuple[str, str, bool, datetime | None]]:
     """(датчик, подпись, основной ли, последний приём) по всем датчикам."""
 
@@ -216,6 +236,29 @@ def read_sensor_end() -> datetime | None:
     """Конец срока сенсора, или None, пока сборщик его не записал."""
 
     return _read_mark("sensor_ends")
+
+
+def sensor_marks(sensor: str) -> tuple[datetime | None, datetime | None]:
+    """Установка и конец срока датчика, или (None, None).
+
+    У Libre их пишет сборщик по ответу Abbott (``sensor_started``,
+    ``sensor_ends``). Остальные датчики дату установки не сообщают — её
+    вводит человек (``nightscout.py sensor``), и лежит она там же, под
+    именами ``<датчик>_started`` и ``<датчик>_ends``.
+    """
+
+    if sensor == LIBRE:
+        return read_sensor_start(), read_sensor_end()
+    return _read_mark(f"{sensor}_started"), _read_mark(f"{sensor}_ends")
+
+
+def store_sensor_marks(sensor: str, started: datetime, ends: datetime) -> None:
+    """Записать установку и конец срока датчика, который их не сообщает."""
+
+    if sensor == LIBRE:
+        raise ValueError("срок Libre пишет сборщик по ответу Abbott")
+    _store_mark(f"{sensor}_started", started)
+    _store_mark(f"{sensor}_ends", ends)
 
 
 def store_sensor(started: datetime, ends: datetime, kind: int | None) -> None:

@@ -296,6 +296,7 @@ Each sensor uploading over the API has its own random secret. The database keeps
 ./venv/bin/python nightscout.py issue ottai --label Ottai   # prints URL and secret, once
 ./venv/bin/python nightscout.py rotate ottai                 # new secret, the old one stops at once
 ./venv/bin/python nightscout.py list                         # sensors and their last upload
+./venv/bin/python nightscout.py sensor ottai --started 2026-11-02T19:53+03:00 --days 14   # lifetime the app does not report
 pm2 start ecosystem.config.js --only glucose-nightscout
 ```
 
@@ -319,6 +320,8 @@ Checked against the cgm-remote-monitor source, not against a real uploader. Whic
 While two sensors are worn at once (Libre over LibreLinkUp, Ottai over the Nightscout API), both go into the one `glucose_readings`, told apart by `sensor`. A table per provider would mean every reader picking the right one; a column means one `WHERE`.
 
 `glucose_sources` lists the sensors, and one of them is primary. Everything on the page is counted from the primary alone: time in range, nights, the meal review, GMI, the forecast tail, the freshness mark and the alerts. Two sets of metrics side by side would be two answers to one question. The other sensor is a thin violet line on the 24- and 48-hour charts (`series.day.others`, `series.two_days.others`), with its own row in the legend and the tooltip, for comparing the two, nothing more.
+
+The sensor card below the statistics shows both, primary first, each with its own lifetime and data completeness (`sensors` in the snapshot; `sensor` keeps the primary alone, for the watch). Only LibreLinkUp reports when a sensor was applied; for the other one it is typed in with `nightscout.py sensor` (stored as `<sensor>_started` and `<sensor>_ends` in `collector_state`, next to Libre's marks), and without it the lifetime reads as unknown. Its completeness counts from its first reading rather than over a week it was not yet worn.
 
 The primary is chosen in GlucoseBot (`/sensor`), which updates `glucose_sources.is_primary`; with no choice, or no table, it is Libre, as it was before there were two. The sensor card's lifetime and the sensor-change lines come from LibreLinkUp, so with another primary the card says the date is unknown and the lines are gone. `now.json` for the watch carries the primary only, in the same shape as before.
 

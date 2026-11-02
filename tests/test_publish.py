@@ -1347,3 +1347,92 @@ def test_the_watch_digest_carries_no_second_sensor():
     assert "others" not in digest["series"]["day"]
     # Полный снимок при этом свой ряд не теряет.
     assert snapshot["series"]["day"]["others"]
+
+
+class TestSensorCards:
+    """Карточка сенсора по каждому датчику, пока их два."""
+
+    now = BASE + timedelta(days=8)
+
+    def build(self, primary="libre", first_seen=None):
+        week = [(self.now - timedelta(minutes=5 * i), 120.0) for i in range(7 * 288)][::-1]
+        young = [item for item in week if item[0] >= self.now - timedelta(days=1)]
+        other = ("ottai", "Ottai", young) if primary == "libre" else ("libre", "Libre", week)
+        main = week if primary == "libre" else young
+        return build_snapshot(
+            main,
+            [],
+            self.now,
+            primary=primary,
+            sources=[("libre", "Libre", primary == "libre", self.now), ("ottai", "Ottai", primary == "ottai", self.now)],
+            others=[other],
+            sensor_started=self.now - timedelta(days=9) if primary == "libre" else None,
+            sensor_ends=self.now + timedelta(days=6) if primary == "libre" else None,
+            marks={"libre": (self.now - timedelta(days=9), self.now + timedelta(days=6))},
+            first_seen=first_seen,
+        )
+
+    def test_one_sensor_gives_no_list(self):
+        snapshot = build_snapshot([(BASE, 120.0)], [], BASE + timedelta(minutes=1))
+
+        assert snapshot["sensors"] == []
+
+    def test_primary_first_then_the_other(self):
+        cards = self.build()["sensors"]
+
+        assert [(card["sensor"], card["primary"]) for card in cards] == [("libre", True), ("ottai", False)]
+        assert cards[0]["label"] == "Libre" and cards[1]["label"] == "Ottai"
+
+    def test_a_young_sensor_counts_from_its_first_point(self):
+        first = self.now - timedelta(days=1)
+        cards = self.build(first_seen={"libre": BASE - timedelta(days=90), "ottai": first})
+
+        ottai = cards["sensors"][1]
+        assert ottai["since"] == int(first.replace(tzinfo=timezone.utc).timestamp())
+        assert ottai["coverage"] > 99
+        # Без даты первой точки та же неделя выглядела бы на шесть седьмых пустой.
+        unclipped = self.build()["sensors"][1]
+        assert unclipped["since"] is None
+        assert unclipped["coverage"] < 20
+
+    def test_libre_keeps_its_lifetime_when_ottai_is_primary(self):
+        cards = self.build(primary="ottai")["sensors"]
+
+        libre = next(card for card in cards if card["sensor"] == "libre")
+        ottai = next(card for card in cards if card["sensor"] == "ottai")
+        assert libre["started"] is not None and libre["lifetime_days"] == 15
+        assert ottai["started"] is None and ottai["primary"] is True
+
+    def test_only_the_primary_carries_a_meter_bias(self):
+        cards = self.build()["sensors"]
+
+        assert cards[1]["bias"] is None
+
+    def test_a_sensor_first_seen_right_now_does_not_divide_by_zero(self):
+        cards = self.build(first_seen={"ottai": self.now})["sensors"]
+
+        assert cards[1]["coverage"] is not None
+
+    def test_the_watch_digest_does_not_carry_the_list(self):
+        from publish import _now
+
+        assert "sensors" not in _now(self.build())
+
+
+def test_a_typed_in_lifetime_reaches_the_other_card():
+    now = BASE + timedelta(days=2)
+    other = [(now - timedelta(minutes=5 * i), 110.0) for i in range(100)][::-1]
+    started = now - timedelta(days=1)
+    snapshot = build_snapshot(
+        other,
+        [],
+        now,
+        primary="libre",
+        sources=[("libre", "Libre", True, now), ("ottai", "Ottai", False, now)],
+        others=[("ottai", "Ottai", other)],
+        marks={"ottai": (started, started + timedelta(days=14))},
+    )
+
+    ottai = snapshot["sensors"][1]
+    assert ottai["lifetime_days"] == 14
+    assert ottai["started"] == int(started.replace(tzinfo=timezone.utc).timestamp())

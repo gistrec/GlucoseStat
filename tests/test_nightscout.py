@@ -22,7 +22,7 @@ from sqlalchemy.orm import sessionmaker
 
 from database import nightscout as storage
 from database import queries
-from database.models import Base, GlucoseReading, GlucoseSource
+from database.models import Base, CollectorState, GlucoseReading, GlucoseSource
 from nightscout import (
     MAX_BODY_BYTES,
     MAX_ITEMS,
@@ -551,3 +551,46 @@ def test_libre_is_reserved_even_before_its_row_exists(db):
 
     with pytest.raises(storage.SourceExists):
         storage.issue_source("libre", "Libre", digest_of_secret("sneakySecret12345"), NOW)
+
+
+def test_first_readings_names_each_sensors_first_point(db):
+    queries.store_readings([(NOW - timedelta(days=30), 120.0), (NOW, 121.0)], sensor="libre")
+    queries.store_readings([(NOW - timedelta(hours=5), 110.0)], sensor="ottai")
+
+    assert queries.first_readings() == {
+        "libre": NOW - timedelta(days=30),
+        "ottai": NOW - timedelta(hours=5),
+    }
+
+
+class TestSensorMarks:
+    def test_a_typed_in_lifetime_lands_under_the_sensors_names(self, db, monkeypatch):
+        # _store_mark — MySQL-шный upsert; здесь важны имена, под которыми
+        # лежат отметки, а чтение проверяется ниже по готовым строкам.
+        written = {}
+        monkeypatch.setattr("database.queries._store_mark", lambda name, when: written.update({name: when}))
+        started = NOW - timedelta(days=1)
+
+        queries.store_sensor_marks("ottai", started, started + timedelta(days=14))
+
+        assert written == {"ottai_started": started, "ottai_ends": started + timedelta(days=14)}
+
+    def test_marks_are_read_back_by_the_sensors_names(self, db):
+        started = NOW - timedelta(days=1)
+        with db() as session:
+            session.add_all(
+                [
+                    CollectorState(name="ottai_started", occurred_at=started),
+                    CollectorState(name="ottai_ends", occurred_at=started + timedelta(days=14)),
+                ]
+            )
+            session.commit()
+
+        assert queries.sensor_marks("ottai") == (started, started + timedelta(days=14))
+
+    def test_libre_marks_are_the_collectors_and_cannot_be_typed(self, db):
+        with pytest.raises(ValueError):
+            queries.store_sensor_marks("libre", NOW, NOW + timedelta(days=15))
+
+    def test_an_unknown_sensor_has_no_marks(self, db):
+        assert queries.sensor_marks("dexcom") == (None, None)
