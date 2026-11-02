@@ -206,7 +206,7 @@ function title(item) {
     if (item.primary) {
         const badge = document.createElement("span");
         badge.className = "sensor__aside";
-        badge.textContent = "основной — по нему вся статистика";
+        badge.textContent = "основной — по нему считается статистика";
         element.append(badge);
     }
     return element;
