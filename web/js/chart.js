@@ -675,13 +675,13 @@ export function drawChart() {
     ) {
         legendItems.push(
             primaryLabel
-                ? { ...SERIES.glucose, line: true, label: `${SERIES.glucose.label} · ${primaryLabel}` }
+                ? { ...SERIES.glucose, line: true, label: sensorLabel(primaryLabel) }
                 : { ...SERIES.glucose, line: true }
         );
         // Второй датчик — сразу за основным: это та же величина, снятая
         // другим прибором, а не отметка на кривой.
         for (const other of others) {
-            legendItems.push({ ...SERIES.otherSensor, label: other.label });
+            legendItems.push({ ...SERIES.otherSensor, label: sensorLabel(other.label) });
         }
         // «Обычно» — сразу за измерением: коридор, с которым его сравнивают,
         // а не отметка на самой кривой, как всё, что ниже.
@@ -1768,6 +1768,13 @@ function otherSensors(series) {
     return (series.others || []).filter((other) => other.points && other.points.length);
 }
 
+/* «Датчик Libre», «Датчик Ottai»: при двух датчиках оба ряда — измерения, и
+   «Измерение» у одного из них ничего бы не различало. «Датчик», а не имя
+   голым словом, — в пару к «Глюкометру» в той же легенде. */
+function sensorLabel(name) {
+    return `Датчик ${name}`;
+}
+
 /* Подпись основного датчика — нужна, только когда рядом есть второй. */
 function primarySensorLabel() {
     const collector = state.snapshot.collector || {};
@@ -1895,9 +1902,12 @@ export function showTip(clientX) {
         // «Измерение» у любой точки, свежей и старой: одно слово на всю ось.
         // «Сейчас» у свежей было отвергнуто — две метки для одного ряда
         // читаются как два ряда.
-        const name = state.geometry.primaryLabel ? ` · ${state.geometry.primaryLabel}` : "";
+        // При двух датчиках строка называет свой, как и легенда.
+        const name = state.geometry.primaryLabel
+            ? sensorLabel(state.geometry.primaryLabel)
+            : SERIES.glucose.label;
         rows.push(
-            tipRow(SERIES.glucose, `Измерение${name} ${formatMmol(point[1])} ${SERIES.glucose.unit}`)
+            tipRow(SERIES.glucose, `${name} ${formatMmol(point[1])} ${SERIES.glucose.unit}`)
         );
     }
 
@@ -1912,7 +1922,7 @@ export function showTip(clientX) {
                 rows.push(
                     tipRow(
                         SERIES.otherSensor,
-                        `${other.label} ${formatMmol(near[1])} ${SERIES.otherSensor.unit}`
+                        `${sensorLabel(other.label)} ${formatMmol(near[1])} ${SERIES.otherSensor.unit}`
                     )
                 );
             }
