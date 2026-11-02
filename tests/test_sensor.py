@@ -199,6 +199,7 @@ class TestSnapshotCarriesIt:
             "ends",
             "lifetime_days",
             "window_days",
+            "since",
             "coverage",
             "quiet",
             "quiet_minutes",

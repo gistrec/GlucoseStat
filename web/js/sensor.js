@@ -35,7 +35,14 @@ export function renderSensor() {
         return;
     }
 
-    els.sensorCard.replaceChildren(lifeHalf(sensor), dataHalf(sensor));
+    // Два датчика — по строке на каждый, основной первым; один — прежняя
+    // карточка без заголовка.
+    const sensors = state.snapshot.sensors || [];
+    els.sensorCard.replaceChildren(
+        ...(sensors.length > 1
+            ? sensors.flatMap((item) => [title(item), lifeHalf(item), dataHalf(item)])
+            : [lifeHalf(sensor), dataHalf(sensor)])
+    );
     setFoldSummary("sensor", sensorSummary(sensor));
     els.sensor.hidden = false;
 }
@@ -101,10 +108,17 @@ function lifeHalf(sensor) {
         // Дату установки знает только Abbott, и присылает он её не всегда.
         // Пустая половина честнее выдуманной: полнота данных рядом считается
         // по самим показаниям и остаётся верной.
+        // Дату установки сообщает только LibreLinkUp: у датчика, что шлёт по
+        // Nightscout, её нет вовсе, и это не «ещё не видел».
+        const libre = !sensor.sensor || sensor.sensor === "libre";
         half.append(
             label("Срок сенсора"),
             value("Неизвестен", "muted"),
-            hint("Сборщик ещё не видел даты установки")
+            hint(
+                libre
+                    ? "Сборщик ещё не видел даты установки"
+                    : `${sensor.label} не сообщает дату установки`
+            )
         );
         return half;
     }
@@ -162,8 +176,14 @@ function dataHalf(sensor) {
     const half = document.createElement("div");
     half.className = "sensor__half";
 
+    // Датчик моложе недели считается с первой точки: до неё его не было, а
+    // не он молчал.
     half.append(
-        label(`Полнота данных за ${sensor.window_days} ${plural(sensor.window_days, "день", "дня", "дней")}`),
+        label(
+            sensor.since
+                ? `Полнота данных с ${formatShortDay(new Date(sensor.since * 1000))}`
+                : `Полнота данных за ${sensor.window_days} ${plural(sensor.window_days, "день", "дня", "дней")}`
+        ),
         value(percent(sensor.coverage))
     );
 
@@ -175,6 +195,21 @@ function dataHalf(sensor) {
         )
     );
     return half;
+}
+
+/* Заголовок строки датчика: «Датчик Libre · основной» — те же слова, что в
+   легенде графика. Строка на всю ширину сетки, над двумя половинами. */
+function title(item) {
+    const element = document.createElement("p");
+    element.className = "sensor__title";
+    element.textContent = `Датчик ${item.label}`;
+    if (item.primary) {
+        const badge = document.createElement("span");
+        badge.className = "sensor__aside";
+        badge.textContent = "основной — по нему вся статистика";
+        element.append(badge);
+    }
+    return element;
 }
 
 function label(text, aside) {

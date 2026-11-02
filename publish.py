@@ -33,6 +33,8 @@ from database.queries import (
     read_sensor_start,
     primary_sensor,
     readings_since,
+    first_readings,
+    sensor_marks,
     sources_overview,
     sensor_starts_since,
     timezone_history,
@@ -339,6 +341,7 @@ def _sensor(
     readings: list[tuple[datetime, float]],
     now: datetime,
     fingersticks: list[tuple[datetime, float]] | None = None,
+    known_since: datetime | None = None,
 ) -> dict:
     """Сенсор: когда надет, когда кончится и сколько данных от него дошло.
 
@@ -362,9 +365,16 @@ def _sensor(
     Полнота — доля окна, покрытая показаниями. Не доля ожидаемых замеров:
     шаг выгрузки у Libre плавает между минутой и пятью, и «пришло 1823 из
     2016» говорило бы больше о частоте опроса, чем о том, были ли данные.
+
+    ``known_since`` — первая точка этого датчика за всю историю. Датчик,
+    подключённый позавчера, не молчал пять дней до того: его тогда не было.
+    Окно для него начинается с первой точки, и страница называет эту дату.
     """
 
     window_start = now - SENSOR_WINDOW
+    clipped = known_since is not None and known_since > window_start
+    if clipped:
+        window_start = known_since
     silence = SENSOR_SILENCE.total_seconds()
 
     # Промежутки, в которые данных не было: между замерами, до первого замера
@@ -394,7 +404,9 @@ def _sensor(
         silent_seconds += overlap
         count += 1
 
-    total = SENSOR_WINDOW.total_seconds()
+    # Секунда — не ноль: датчик, чья первая точка ровно «сейчас», делить на
+    # ноль не должен.
+    total = max((now - window_start).total_seconds(), 1.0)
     if started and not ends:
         ends = started + timedelta(days=SENSOR_LIFETIME_FALLBACK_DAYS)
 
@@ -410,11 +422,43 @@ def _sensor(
         # разойтись с датой, которая стоит рядом.
         "lifetime_days": (ends - started).days if started and ends else None,
         "window_days": SENSOR_WINDOW.days,
+        # Начало окна, когда датчик моложе недели; иначе null — окно полное.
+        "since": int(window_start.replace(tzinfo=timezone.utc).timestamp()) if clipped else None,
         "coverage": round(100 * (1 - silent_seconds / total), 1),
         "quiet": count,
         "quiet_minutes": round(silent_seconds / 60),
         "bias": _bias(started, readings, fingersticks or []),
     }
+
+
+def _sensors(
+    primary: str,
+    primary_card: dict,
+    sources: list[tuple[str, str, bool, datetime | None]],
+    others: list[tuple[str, str, list[tuple[datetime, float]]]],
+    now: datetime,
+    marks: dict[str, tuple[datetime | None, datetime | None]] | None = None,
+    first_seen: dict[str, datetime] | None = None,
+) -> list[dict]:
+    """Карточка сенсора по каждому датчику, основной первым.
+
+    Пусто, пока датчик один: тогда страница рисует прежнюю карточку из
+    ``sensor``. Срок — из ``marks``: у Libre его пишет сборщик, у остальных
+    вводит человек (``nightscout.py sensor``); нет отметки — «неизвестен». Расхождение с глюкометром — только у основного: по нему
+    плашка над текущим значением, а сверки и считаются с ним.
+    """
+
+    if not others:
+        return []
+    labels = {sensor: label for sensor, label, _primary, _received in sources}
+    cards = [{**primary_card, "sensor": primary, "label": labels.get(primary, primary), "primary": True}]
+    for sensor, label, readings in others:
+        started, ends = (marks or {}).get(sensor, (None, None))
+        card = _sensor(
+            started, ends, readings, now, [], known_since=(first_seen or {}).get(sensor)
+        )
+        cards.append({**card, "sensor": sensor, "label": label, "primary": False})
+    return cards
 
 
 def _artifacts(readings: list[tuple[datetime, float]], since: datetime) -> list[dict]:
@@ -816,6 +860,8 @@ def build_snapshot(
     primary: str = LIBRE,
     sources: list[tuple[str, str, bool, datetime | None]] | None = None,
     others: list[tuple[str, str, list[tuple[datetime, float]]]] | None = None,
+    marks: dict[str, tuple[datetime | None, datetime | None]] | None = None,
+    first_seen: dict[str, datetime] | None = None,
     origins: dict[datetime, list[dict]] | None = None,
     fingersticks: list[tuple[datetime, float]] | None = None,
     sensor_started: datetime | None = None,
@@ -848,6 +894,8 @@ def build_snapshot(
         primary=primary,
         sources=sources,
         others=others,
+        marks=marks,
+        first_seen=first_seen,
         fingersticks=fingersticks,
         sensor_started=sensor_started,
         sensor_ends=sensor_ends,
@@ -950,6 +998,8 @@ def build_live(
     primary: str = LIBRE,
     sources: list[tuple[str, str, bool, datetime | None]] | None = None,
     others: list[tuple[str, str, list[tuple[datetime, float]]]] | None = None,
+    marks: dict[str, tuple[datetime | None, datetime | None]] | None = None,
+    first_seen: dict[str, datetime] | None = None,
     fingersticks: list[tuple[datetime, float]] | None = None,
     sensor_started: datetime | None = None,
     sensor_ends: datetime | None = None,
@@ -988,6 +1038,15 @@ def build_live(
     # Срез под обе полосы эпизодов — один: нарезать его дважды значило бы
     # пройти недельное сырьё лишний раз ради того же списка.
     episode_readings = [item for item in readings if item[0] >= now - EPISODE_WINDOW]
+
+    primary_card = _sensor(
+        sensor_started,
+        sensor_ends,
+        readings,
+        now,
+        fingersticks or [],
+        known_since=(first_seen or {}).get(primary),
+    )
 
     return {
         "generated_at": int(now.replace(tzinfo=timezone.utc).timestamp()),
@@ -1048,8 +1107,10 @@ def build_live(
         # Сам сенсор: сколько ему осталось и сколько данных от него дошло.
         # Отметка установки приходит снаружи, как и last_success: снимок
         # собирается без базы, иначе его не собрал бы preview.py.
-        "sensor": _sensor(
-            sensor_started, sensor_ends, readings, now, fingersticks or []
+        "sensor": primary_card,
+        # По карточке на каждый датчик, пока их носят два (см. ``_sensors``).
+        "sensors": _sensors(
+            primary, primary_card, sources or [], others or [], now, marks, first_seen
         ),
         # Окно — двух суток (RANGES["two_days"]), а не отдельная константа:
         # кольца рисуют обе почасовые панели, и второго источника правды для
@@ -1249,10 +1310,18 @@ def publish(
 
     # Отметку пишет сборщик; на рендерере она приезжает репликацией. Нет
     # её — карточка сенсора покажет только полноту данных.
-    # Срок и замены знает только LibreLinkUp: у другого основного датчика
-    # карточка скажет «неизвестен», а линии замен Libre на его кривой лгали бы.
+    # Срок каждого датчика: у Libre — от сборщика, у остальных — введённый
+    # руками (``nightscout.py sensor``). Нужен и неосновным: у них своя карточка.
+    def marks_of(sensor: str) -> tuple[datetime | None, datetime | None]:
+        if sensor == LIBRE:
+            return read_sensor_start(), read_sensor_end()
+        return sensor_marks(sensor)
+
+    marks = {sensor: marks_of(sensor) for sensor, *_rest in sources} or {LIBRE: marks_of(LIBRE)}
+    sensor_started, sensor_ends = marks.get(primary, (None, None))
+    # Линии замен на графике — из истории сенсоров Libre: на кривой другого
+    # основного датчика они лгали бы.
     libre = primary == LIBRE
-    sensor_started = read_sensor_start() if libre else None
 
     # Смены пояса из бота — время суток приёма для коэффициента.
     zones = timezone_history()
@@ -1274,9 +1343,11 @@ def publish(
         full_since(now) if heavy is None else live_since(now, sensor_started),
         sensor=primary,
     )
-    longest_live = max(RANGES[name][0] for name in LIVE_RANGES)
+    # Неделя, а не только почасовые окна: по ней считается полнота данных в
+    # карточке второго датчика; кривые режут своё окно сами.
+    others_since = now - max(SENSOR_WINDOW, *(RANGES[name][0] for name in LIVE_RANGES))
     others = [
-        (sensor, label, readings_since(now - longest_live, sensor=sensor))
+        (sensor, label, readings_since(others_since, sensor=sensor))
         for sensor, label, _is_primary, _received in sources
         if sensor != primary
     ]
@@ -1319,7 +1390,9 @@ def publish(
         # null — и страница молча гасит прогноз со стрелкой тренда.
         latest=_trend(last_readings(40, sensor=primary)),
         sensor_started=sensor_started,
-        sensor_ends=read_sensor_end() if libre else None,
+        sensor_ends=sensor_ends,
+        marks=marks,
+        first_seen=first_readings() if others else None,
         forecast_rows=forecast_rows,
         bound_rows=forecast_bounds(forecast_rows[0][0]) if forecast_rows else [],
         zones=zones,

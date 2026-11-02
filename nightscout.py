@@ -603,6 +603,17 @@ def main(argv: list[str] | None = None) -> int:
     rotate = commands.add_parser("rotate", help="перевыпустить секрет; прежний перестаёт работать")
     rotate.add_argument("sensor", type=_sensor_name)
     commands.add_parser("list", help="датчики и время последнего приёма")
+    mark = commands.add_parser(
+        "sensor", help="установка и срок датчика, который их не сообщает (Ottai)"
+    )
+    mark.add_argument("sensor", type=_sensor_name)
+    mark.add_argument(
+        "--started",
+        required=True,
+        type=_moment,
+        help="когда поставлен, с поясом: 2026-11-02T19:53+03:00",
+    )
+    mark.add_argument("--days", required=True, type=int, help="срок в днях: 14")
     args = parser.parse_args(argv)
 
     if args.command in (None, "serve"):
@@ -629,6 +640,23 @@ def main(argv: list[str] | None = None) -> int:
             _print_credentials(secret)
         return 0
 
+    if args.command == "sensor":
+        from database import queries
+
+        if args.sensor not in {info.sensor for info in storage.list_sources()}:
+            print(f"Датчика {args.sensor!r} нет — см. nightscout.py list")
+            return 1
+        if args.sensor == "libre":
+            print("Срок Libre пишет сборщик по ответу Abbott — руками его не задают.")
+            return 1
+        ends = args.started + timedelta(days=args.days)
+        queries.store_sensor_marks(args.sensor, args.started, ends)
+        print(
+            f"{args.sensor}: поставлен {args.started:%Y-%m-%d %H:%M} UTC, "
+            f"срок до {ends:%Y-%m-%d %H:%M} UTC ({args.days} дн)"
+        )
+        return 0
+
     if args.command == "rotate":
         secret = new_secret()
         if not storage.rotate_secret(args.sensor, digest_of_secret(secret), now):
@@ -652,6 +680,19 @@ def _sensor_name(value: str) -> str:
     if not SENSOR_NAME.match(value):
         raise argparse.ArgumentTypeError("имя датчика: a-z, 0-9, _ и -, до 16 символов")
     return value
+
+
+def _moment(value: str) -> datetime:
+    """ISO-время с поясом → наивный UTC, как всё в базе. Без пояса — отказ:
+    «19:53» по Москве и по Белграду — разные часы."""
+
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("нужно ISO-время: 2026-11-02T19:53+03:00") from None
+    if moment.tzinfo is None:
+        raise argparse.ArgumentTypeError("укажите пояс: 2026-11-02T19:53+03:00")
+    return moment.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _secret_from_stdin() -> str:

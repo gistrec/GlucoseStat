@@ -1763,6 +1763,24 @@ body {
     }
 }
 
+/* Заголовок датчика, пока их два: на всю ширину сетки, второй отделён
+   чертой от половин первого. */
+.sensor__title {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: baseline;
+    margin: 0;
+    font-weight: 600;
+    color: var(--fg);
+}
+
+.sensor__title:not(:first-child) {
+    border-top: 1px solid var(--panel-chrome);
+    padding-top: 16px;
+}
+
 .sensor__label {
     display: flex;
     flex-wrap: wrap;

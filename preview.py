@@ -258,6 +258,13 @@ def synthetic_snapshot(now: datetime | None = None) -> dict:
         primary="libre",
         sources=[("libre", "Libre", True, now), ("ottai", "Ottai", False, now - timedelta(minutes=2))],
         others=[("ottai", "Ottai", other)],
+        # Второй датчик подключён двое суток назад: его карточка считает
+        # полноту с первой точки, а не за неделю.
+        marks={
+            "libre": (now - timedelta(days=9), now + timedelta(days=6)),
+            "ottai": (now - timedelta(days=2), now + timedelta(days=12)),
+        },
+        first_seen={"ottai": other[0][0]} if other else None,
         origins=origins,
         fingersticks=fingersticks,
         # Сенсор на девятые сутки: срок ещё не кончился, но полоса уже
