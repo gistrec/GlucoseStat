@@ -20,6 +20,7 @@ from statistics import median
 from active import active_now
 from agp import day_profile
 from analysis import analyse
+from database.models import LIBRE
 from database.queries import (
     fingersticks_since,
     forecast_bounds,
@@ -30,7 +31,9 @@ from database.queries import (
     read_last_success,
     read_sensor_end,
     read_sensor_start,
+    primary_sensor,
     readings_since,
+    sources_overview,
     sensor_starts_since,
     timezone_history,
 )
@@ -810,6 +813,9 @@ def build_snapshot(
     now: datetime,
     last_success: float | None = None,
     latest: dict | None = None,
+    primary: str = LIBRE,
+    sources: list[tuple[str, str, bool, datetime | None]] | None = None,
+    others: list[tuple[str, str, list[tuple[datetime, float]]]] | None = None,
     origins: dict[datetime, list[dict]] | None = None,
     fingersticks: list[tuple[datetime, float]] | None = None,
     sensor_started: datetime | None = None,
@@ -839,6 +845,9 @@ def build_snapshot(
         now,
         last_success=last_success,
         latest=latest,
+        primary=primary,
+        sources=sources,
+        others=others,
         fingersticks=fingersticks,
         sensor_started=sensor_started,
         sensor_ends=sensor_ends,
@@ -938,6 +947,9 @@ def build_live(
     now: datetime,
     last_success: float | None = None,
     latest: dict | None = None,
+    primary: str = LIBRE,
+    sources: list[tuple[str, str, bool, datetime | None]] | None = None,
+    others: list[tuple[str, str, list[tuple[datetime, float]]]] | None = None,
     fingersticks: list[tuple[datetime, float]] | None = None,
     sensor_started: datetime | None = None,
     sensor_ends: datetime | None = None,
@@ -955,6 +967,24 @@ def build_live(
     zones = zones or []
     series, stats = _series_and_stats(readings, now, LIVE_RANGES, zone_at(now, zones))
 
+    # Неосновные датчики — второй кривой и только на почасовых окнах: там
+    # видно, как два сенсора расходятся. Статистики по ним нет: метрики
+    # считаются по одному датчику, иначе на странице было бы два TIR.
+    for name in LIVE_RANGES:
+        span, step_minutes = RANGES[name]
+        series[name]["others"] = [
+            {
+                "sensor": sensor,
+                "label": label,
+                "points": _downsample(
+                    [item for item in other if item[0] >= now - span],
+                    step_minutes,
+                    TARGET_LOW_MGDL,
+                ),
+            }
+            for sensor, label, other in (others or [])
+        ]
+
     # Срез под обе полосы эпизодов — один: нарезать его дважды значило бы
     # пройти недельное сырьё лишний раз ради того же списка.
     episode_readings = [item for item in readings if item[0] >= now - EPISODE_WINDOW]
@@ -963,6 +993,19 @@ def build_live(
         "generated_at": int(now.replace(tzinfo=timezone.utc).timestamp()),
         "collector": {
             "last_success": int(last_success) if last_success else None,
+            # Датчик, по которому посчитано всё на странице, и когда приходили
+            # данные от каждого: без них страница звала бы данные остановившимися
+            # всякий раз, когда молчит LibreLinkUp, а показания идут по Nightscout.
+            "primary": primary,
+            "sources": {
+                sensor: {
+                    "label": label,
+                    "last_received": int(received.replace(tzinfo=timezone.utc).timestamp())
+                    if received is not None
+                    else None,
+                }
+                for sensor, label, _is_primary, received in (sources or [])
+            },
         },
         "target": {
             "low": TARGET_LOW_MGDL,
@@ -1195,31 +1238,48 @@ def publish(
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
+    # Всё на странице считается по основному датчику — тому, что выбран в
+    # боте (/sensor). Остальные — вторая кривая на почасовых окнах.
+    primary = primary_sensor()
+    sources = sources_overview()
+
     # Журнал ведёт бот, и его может не быть вовсе — тогда список пуст, панели
     # событий на странице просто не появятся.
     journal = journal_since(now - ANALYSIS_WINDOW)
 
     # Отметку пишет сборщик; на рендерере она приезжает репликацией. Нет
     # её — карточка сенсора покажет только полноту данных.
-    sensor_started = read_sensor_start()
+    # Срок и замены знает только LibreLinkUp: у другого основного датчика
+    # карточка скажет «неизвестен», а линии замен Libre на его кривой лгали бы.
+    libre = primary == LIBRE
+    sensor_started = read_sensor_start() if libre else None
 
     # Смены пояса из бота — время суток приёма для коэффициента.
     zones = timezone_history()
-    sensor_changes = sensor_starts_since(now - RANGES["quarter"][0])
+    sensor_changes = sensor_starts_since(now - RANGES["quarter"][0]) if libre else []
 
     # Подтверждения еды читаются каждую минуту, хоть и нужны только тяжёлой
     # части: уверенность и взвешенность бот меняет, не трогая журнал, и без
     # них в ключе разбор отставал бы от кнопки на четверть часа. Запрос
     # маленький — пара сотен строк за две недели.
     origins = meal_origins_since(now - ANALYSIS_WINDOW)
-    key = (tuple(journal), tuple(zones), tuple(sensor_changes), origins)
+    # Датчик — в ключе: переключили основной в боте, и тяжёлая часть
+    # пересобирается сразу, а не через четверть часа на чужих данных.
+    key = (primary, tuple(journal), tuple(zones), tuple(sensor_changes), origins)
     heavy = cache.get(now, key) if cache is not None else None
 
     # Квартал читается, только когда тяжёлую часть пересобирать; живой
     # хватает своего окна — см. ``live_since``.
     readings = readings_since(
-        full_since(now) if heavy is None else live_since(now, sensor_started)
+        full_since(now) if heavy is None else live_since(now, sensor_started),
+        sensor=primary,
     )
+    longest_live = max(RANGES[name][0] for name in LIVE_RANGES)
+    others = [
+        (sensor, label, readings_since(now - longest_live, sensor=sensor))
+        for sensor, label, _is_primary, _received in sources
+        if sensor != primary
+    ]
 
     if heavy is None:
         heavy = build_heavy(
@@ -1248,15 +1308,18 @@ def publish(
         journal,
         now,
         last_success=last_success,
+        primary=primary,
+        sources=sources,
+        others=others,
         fingersticks=fingersticks_since(fingersticks_from),
         # Не из readings: последнее измерение может быть старше окна графиков,
         # и тогда странице нужно показать «данных нет с такого-то числа».
         # Сорок строк, а не десять: выборка обязана накрыть TREND_WINDOW при
         # минутном опросе, иначе точки старше 15 минут в ней нет, rate выходит
         # null — и страница молча гасит прогноз со стрелкой тренда.
-        latest=_trend(last_readings(40)),
+        latest=_trend(last_readings(40, sensor=primary)),
         sensor_started=sensor_started,
-        sensor_ends=read_sensor_end(),
+        sensor_ends=read_sensor_end() if libre else None,
         forecast_rows=forecast_rows,
         bound_rows=forecast_bounds(forecast_rows[0][0]) if forecast_rows else [],
         zones=zones,
@@ -1282,7 +1345,9 @@ def _now(snapshot: dict) -> dict:
     """
 
     now = {key: snapshot[key] for key in NOW_KEYS}
-    now["series"] = {"day": snapshot["series"]["day"]}
+    # Без второй кривой: часам она не нужна, а выжимка выросла бы почти вдвое.
+    day = {key: value for key, value in snapshot["series"]["day"].items() if key != "others"}
+    now["series"] = {"day": day}
 
     # Дальше — те же ключи, что у страницы, но урезанные до того, что часы
     # показывают: последняя ночь без мини-кривой, эпизоды с местной полуночи,

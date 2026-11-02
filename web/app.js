@@ -63,23 +63,46 @@ function applyTheme(id) {
    пять минут независимо от того, отвечает ли Abbott, поэтому «обновлено
    только что» само по себе ничего не говорит о свежести данных. */
 function renderCollectorState() {
-    const lastSuccess = (state.snapshot.collector || {}).last_success;
+    const collector = state.snapshot.collector || {};
+    const lastSuccess = collector.last_success;
+    // Датчики и когда от каждого приходили данные (опрос LibreLinkUp, приём
+    // по Nightscout API). Свежесть страницы — по основному: метрики считаны
+    // по нему, и молчание второго их не старит.
+    const sources = collector.sources || {};
+    const primary = collector.primary || "libre";
+    const names = Object.keys(sources);
+    const received = (name) =>
+        name === "libre" && lastSuccess ? lastSuccess : (sources[name] || {}).last_received;
+    const label = (name) => (sources[name] || {}).label || name;
+    const primaryAt = received(primary);
 
-    if (!lastSuccess) {
+    if (!primaryAt) {
         els.footUpdated.textContent = "Сборщик ещё не получал данные";
         els.footUpdated.className = "foot__warn";
         return;
     }
 
-    const silence = Date.now() - lastSuccess * 1000;
+    const now = Date.now();
+    const silence = now - primaryAt * 1000;
+    // Один датчик — прежние слова; два — каждый своей подписью.
+    const several = names.length > 1;
     if (silence > COLLECTOR_SILENT_AFTER_MS) {
         els.footUpdated.textContent =
-            `Нет связи с LibreLinkUp. Последний успешный опрос — ${formatDateTime(new Date(lastSuccess * 1000))}.`;
+            !several && primary === "libre"
+                ? `Нет связи с LibreLinkUp. Последний успешный опрос — ${formatDateTime(new Date(primaryAt * 1000))}.`
+                : `Нет данных от основного датчика (${label(primary)}). Последний приём — ${formatDateTime(new Date(primaryAt * 1000))}.`;
         els.footUpdated.className = "foot__warn";
         return;
     }
 
-    els.footUpdated.textContent = `Обновлено ${formatAgo(silence)}`;
+    const others = several
+        ? names
+              .filter((name) => name !== primary && received(name))
+              .map((name) => ` · ${label(name)}: ${formatAgo(now - received(name) * 1000)}`)
+              .join("")
+        : "";
+    const primaryNote = several ? ` (${label(primary)})` : "";
+    els.footUpdated.textContent = `Обновлено ${formatAgo(silence)}${primaryNote}${others}`;
     els.footUpdated.className = "";
 }
 

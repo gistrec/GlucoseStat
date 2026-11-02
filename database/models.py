@@ -6,6 +6,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     Float,
+    Index,
     Integer,
     MetaData,
     Numeric,
@@ -17,6 +18,10 @@ from sqlalchemy.orm import declarative_base
 
 
 Base = declarative_base()
+
+# Датчик, который был единственным до появления второго: старые строки
+# glucose_readings получают его по DEFAULT миграции.
+LIBRE = "libre"
 
 # Журнал событий принадлежит боту GlucoseBot — он его создаёт и в него пишет.
 # Здесь только чтение, и метаданные намеренно отдельные: попади таблица в
@@ -147,18 +152,54 @@ class SensorRecord(Base):
 
 
 class GlucoseReading(Base):
-    """Single glucose reading as published by LibreLinkUp.
+    """Показание сенсора — любого: датчик записан в ``sensor``.
 
-    ``timestamp`` is naive UTC. MySQL DATETIME carries no zone, so the
-    collector normalises to UTC before writing — see ``main.py``.
+    Одна таблица на все датчики, а не по таблице на провайдера: показание —
+    одна и та же сущность, откуда бы оно ни пришло. Метрики считаются по
+    основному датчику (``GlucoseSource.is_primary``), остальные — вторая кривая.
 
-    ``mgdl`` is always mg/dL. The API's ``Value`` follows the account's
-    display units (mmol/L for a European account), ``ValueInMgPerDl`` does
-    not; storing the latter keeps rows comparable regardless of how the
-    LibreLinkUp profile is configured.
+    ``timestamp`` — момент измерения, наивный UTC. MySQL DATETIME зоны не
+    несёт, поэтому всё приводится к UTC до записи — см. ``main.py``.
+    ``received_at`` — когда сервис его получил: история после обрыва связи
+    приходит часами позже, чем была снята. Пусто у строк до этой колонки.
+
+    ``mgdl`` — всегда мг/дл. У LibreLinkUp ``Value`` следует единицам
+    аккаунта, ``ValueInMgPerDl`` — нет; у Nightscout ``sgv`` — мг/дл всегда.
     """
 
     __tablename__ = "glucose_readings"
+    __table_args__ = (Index("ix_glucose_readings_timestamp", "timestamp"),)
 
+    # Ключ — датчик и секунда: повтор того же замера ничего не добавляет, а два
+    # датчика в одну секунду — два показания, а не одно.
+    sensor = Column(String(16), primary_key=True, default=LIBRE)
     timestamp = Column(DateTime, primary_key=True)
     mgdl = Column(Float, nullable=False)
+    received_at = Column(DateTime, nullable=True)
+    direction = Column(String(32), nullable=True)
+
+
+class GlucoseSource(Base):
+    """Датчик, от которого приходят показания, — строкой на датчик.
+
+    Здесь же выбор основного: по нему считаются все метрики, алерты и прогноз
+    бота. Переключает его бот (``/sensor``) одним UPDATE; создаёт таблицу этот
+    репозиторий.
+
+    У датчиков, что шлют по Nightscout API, — свой секрет. В базе он не лежит:
+    загрузчик присылает SHA-1 от него, а хранится SHA-256 от этого SHA-1, так
+    что прочитавший таблицу не получает ничего, что подошло бы в ``api-secret``.
+    """
+
+    __tablename__ = "glucose_sources"
+
+    sensor = Column(String(16), primary_key=True)
+    label = Column(String(32), nullable=False)
+    # 'librelinkup' или 'nightscout' — как показания сюда попадают.
+    kind = Column(String(16), nullable=False)
+    secret_digest = Column(String(64), nullable=True, unique=True)
+    is_primary = Column(Boolean, nullable=False, default=False)
+    # Наивный UTC, как timestamp у показаний.
+    created_at = Column(DateTime, nullable=False)
+    secret_rotated_at = Column(DateTime, nullable=True)
+    last_received_at = Column(DateTime, nullable=True)

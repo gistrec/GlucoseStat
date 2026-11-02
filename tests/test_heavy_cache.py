@@ -158,7 +158,7 @@ class TestPublishWithCache:
         everything = history(now + timedelta(minutes=1))
         state = {"journal": journal(now), "origins": {}, "reads": [], "builds": 0}
 
-        def readings_since(since):
+        def readings_since(since, sensor="libre"):
             state["reads"].append(since)
             return [item for item in everything if item[0] >= since]
 
@@ -177,9 +177,11 @@ class TestPublishWithCache:
             "publish.fingersticks_since",
             lambda since: [item for item in fingersticks if item[0] >= since],
         )
-        monkeypatch.setattr("publish.last_readings", lambda limit=10: everything[-limit:])
+        monkeypatch.setattr("publish.last_readings", lambda limit=10, **kw: everything[-limit:])
         monkeypatch.setattr("publish.read_sensor_start", lambda: state["sensor_started"])
         monkeypatch.setattr("publish.read_sensor_end", lambda: None)
+        monkeypatch.setattr("publish.primary_sensor", lambda: "libre")
+        monkeypatch.setattr("publish.sources_overview", lambda: [])
         monkeypatch.setattr("publish.latest_forecast", list)
         monkeypatch.setattr("publish.timezone_history", list)
         monkeypatch.setattr("publish.sensor_starts_since", lambda since: [sensor_started])

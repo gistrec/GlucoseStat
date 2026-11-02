@@ -13,9 +13,13 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 from database.connection import init_schema
+from database.models import LIBRE
 from database.queries import (
+    ensure_libre_source,
     last_readings,
     latest_fingerstick,
+    mark_received,
+    primary_sensor,
     store_last_success,
     store_readings,
     store_sensor,
@@ -47,6 +51,11 @@ BACKOFF_MAX = 30 * 60
 # Минута, как при обычном сбое, тут не годится: такие отказы держатся
 # десятками минут, и частые попытки только продлевают блокировку.
 RATE_LIMIT_MIN = 5 * 60
+
+# Шаг цикла. Опрос LibreLinkUp идёт по своему расписанию и со своей паузой,
+# а снимок и тревога — каждый шаг: показания приходят ещё и по Nightscout
+# API, и пауза Abbott в полчаса не должна прятать их со страницы.
+TICK = 60
 
 logging.basicConfig(
     level=logging.INFO,
@@ -133,10 +142,12 @@ def run_once(
     backoff: int,
     last_success: float | None,
     cache: HeavyCache | None = None,
+    poll: bool = True,
 ) -> tuple[int, int, float | None]:
     """Один цикл опроса: скачать, сохранить, оповестить, отметить, опубликовать.
 
-    Возвращает (пауза до следующего цикла, следующий backoff, last_success).
+    Возвращает (пауза до следующего опроса, следующий backoff, last_success).
+    ``poll=False`` — шаг без опроса Abbott: только тревога, отметки и снимок.
     Никогда не бросает: сборщик переживает всё — сеть, MySQL, смену пароля.
     Отдельной функцией ради тестов: цикл ``while True`` не проверить, а
     порядок «тревога не зависит от базы» — ровно то, что нельзя сломать молча.
@@ -145,14 +156,23 @@ def run_once(
     # Показания этого опроса, пока они в руках: если скачать удалось, а
     # записать — нет, тревога всё равно должна подняться.
     fetched: list[tuple[datetime, float]] = []
+    delay = fetch_interval
 
     try:
-        fetched = collector.poll()
-        added = store_readings(fetched)
-        last_success = time.time()
-        log.info("stored %d new readings", added)
-        backoff = BACKOFF_MIN
-        delay = fetch_interval
+        if poll:
+            fetched = collector.poll()
+            received = datetime.now(timezone.utc).replace(tzinfo=None)
+            added = store_readings(fetched, sensor=LIBRE, received_at=received)
+            last_success = time.time()
+            log.info("stored %d new readings", added)
+            backoff = BACKOFF_MIN
+            delay = fetch_interval
+            # Отметка приёма для футера — своим try: без неё теряется подпись,
+            # а не показания и не сброс паузы.
+            try:
+                mark_received(LIBRE, received)
+            except Exception:
+                log.exception("failed to mark the libre source")
     except RateLimited as error:
         # Тот же потолок, что у файла блокировки: разойдись они — цикл
         # спал бы дольше, чем действует запрет, и попытка не состоялась
@@ -171,8 +191,16 @@ def run_once(
     # Метка свежести считается по свежайшей строке в базе, а не по ответу
     # Abbott: она отвечает за весь конвейер, включая запись, и при лежащей
     # MySQL обязана устареть — чтобы внешний мониторинг это заметил.
+    # Метрики, тревога и метка свежести — по основному датчику: тому, что
+    # выбран в боте (/sensor). Не прочитали выбор — Libre, как до него.
     try:
-        latest = last_readings(1)
+        primary = primary_sensor()
+    except Exception:
+        log.exception("failed to read the primary sensor")
+        primary = LIBRE
+
+    try:
+        latest = last_readings(1, sensor=primary)
     except Exception:
         log.exception("failed to read the latest reading")
         latest = []
@@ -195,7 +223,9 @@ def run_once(
         # notify отсеет по возрасту, вместо того чтобы поднять тревогу по
         # позавчерашней гипогликемии.
         try:
-            notifier.check(fetched or latest, verified=verified)
+            # Свежий ответ Abbott годится, только когда основной — Libre.
+            current = fetched if primary == LIBRE and fetched else latest
+            notifier.check(current, verified=verified)
         except Exception:
             log.exception("failed to check the alert thresholds")
 
@@ -259,6 +289,10 @@ def main() -> None:
     fetch_interval = int(os.getenv("FETCH_INTERVAL_MINUTES", "5")) * 60
 
     init_schema()
+    try:
+        ensure_libre_source(datetime.now(timezone.utc).replace(tzinfo=None))
+    except Exception:
+        log.exception("failed to register the libre source")
     collector = Collector(
         email,
         password,
@@ -272,11 +306,15 @@ def main() -> None:
     # Тяжёлая часть снимка живёт между циклами здесь — см. HeavyCache.
     cache = HeavyCache()
 
+    next_poll = 0.0
     while True:
+        due = time.monotonic() >= next_poll
         delay, backoff, last_success = run_once(
-            collector, notifier, fetch_interval, backoff, last_success, cache
+            collector, notifier, fetch_interval, backoff, last_success, cache, poll=due
         )
-        time.sleep(delay)
+        if due:
+            next_poll = time.monotonic() + delay
+        time.sleep(max(1.0, min(TICK, next_poll - time.monotonic())))
 
 
 if __name__ == "__main__":

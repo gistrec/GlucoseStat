@@ -3,14 +3,17 @@
 import logging
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
+from sqlalchemy import insert as core_insert
 from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.exc import ProgrammingError, SQLAlchemyError
 
 from .connection import session
 from .models import (
+    LIBRE,
     CollectorState,
     GlucoseReading,
+    GlucoseSource,
     SensorRecord,
     glucose_forecast_bounds,
     glucose_forecasts,
@@ -24,7 +27,11 @@ from .models import (
 log = logging.getLogger("glucose.queries")
 
 
-def store_readings(readings: list[tuple[datetime, float]]) -> int:
+def store_readings(
+    readings: list[tuple[datetime, float]],
+    sensor: str = LIBRE,
+    received_at: datetime | None = None,
+) -> int:
     """Insert readings, skipping the ones already stored.
 
     LibreLinkUp replays its whole graph window on every poll, so all but the
@@ -36,16 +43,107 @@ def store_readings(readings: list[tuple[datetime, float]]) -> int:
     if not readings:
         return 0
 
-    rows = [{"timestamp": timestamp, "mgdl": mgdl} for timestamp, mgdl in readings]
+    rows = [
+        {"sensor": sensor, "timestamp": timestamp, "mgdl": mgdl, "received_at": received_at}
+        for timestamp, mgdl in readings
+    ]
 
     # .values(rows), а не executemany: одним multi-row INSERT сохраняется
     # rowcount, по которому видно, сколько строк реально новых.
-    statement = insert(GlucoseReading).prefix_with("IGNORE").values(rows)
+    statement = (
+        core_insert(GlucoseReading)
+        .prefix_with("IGNORE", dialect="mysql")
+        .prefix_with("OR IGNORE", dialect="sqlite")
+        .values(rows)
+    )
 
     with session() as db:
         result = db.execute(statement)
         db.commit()
         return result.rowcount
+
+
+def ensure_libre_source(now: datetime) -> None:
+    """Завести строку LibreLinkUp в реестре датчиков, если её ещё нет.
+
+    Основной — только когда основного нет вовсе: на свежей базе это
+    единственный датчик, а выбор, сделанный в боте, перезаписывать нельзя.
+    """
+
+    with session() as db:
+        exists = db.execute(
+            select(GlucoseSource.sensor).where(GlucoseSource.sensor == LIBRE)
+        ).first()
+        if exists is None:
+            has_primary = db.execute(
+                select(GlucoseSource.sensor).where(GlucoseSource.is_primary.is_(True))
+            ).first()
+            # Не mysql-диалектный insert: строку заводят и тесты на SQLite.
+            db.execute(
+                core_insert(GlucoseSource)
+                .prefix_with("IGNORE", dialect="mysql")
+                .prefix_with("OR IGNORE", dialect="sqlite")
+                .values(
+                    sensor=LIBRE,
+                    label="Libre",
+                    kind="librelinkup",
+                    is_primary=has_primary is None,
+                    created_at=now,
+                )
+            )
+            db.commit()
+
+
+def mark_received(sensor: str, when: datetime) -> None:
+    """Отметить, что от датчика только что пришли данные."""
+
+    with session() as db:
+        db.execute(
+            update(GlucoseSource)
+            .where(GlucoseSource.sensor == sensor)
+            .values(last_received_at=when)
+        )
+        db.commit()
+
+
+def primary_sensor() -> str:
+    """Датчик, по которому считаются метрики; Libre, пока выбора нет.
+
+    Без таблицы или строки — тоже Libre: так страница и алерты работают как
+    до второго датчика, а не падают оттого, что реестр ещё не завели.
+    """
+
+    try:
+        with session() as db:
+            chosen = db.execute(
+                select(GlucoseSource.sensor)
+                .where(GlucoseSource.is_primary.is_(True))
+                .order_by(GlucoseSource.sensor)
+                .limit(1)
+            ).scalar_one_or_none()
+    except SQLAlchemyError as error:
+        log.warning("sensor registry unavailable, assuming %s: %s", LIBRE, error)
+        return LIBRE
+    return chosen or LIBRE
+
+
+def sources_overview() -> list[tuple[str, str, bool, datetime | None]]:
+    """(датчик, подпись, основной ли, последний приём) по всем датчикам."""
+
+    try:
+        with session() as db:
+            rows = db.execute(
+                select(
+                    GlucoseSource.sensor,
+                    GlucoseSource.label,
+                    GlucoseSource.is_primary,
+                    GlucoseSource.last_received_at,
+                ).order_by(GlucoseSource.sensor)
+            ).all()
+    except SQLAlchemyError as error:
+        log.warning("sensor registry unavailable, publishing without it: %s", error)
+        return []
+    return [(row.sensor, row.label, bool(row.is_primary), row.last_received_at) for row in rows]
 
 
 def _store_mark(name: str, when: datetime) -> None:
@@ -158,12 +256,13 @@ def sensor_starts_since(start: datetime) -> list[datetime]:
         return []
 
 
-def readings_since(start: datetime) -> list[tuple[datetime, float]]:
-    """Return readings at or after ``start``, oldest first."""
+def readings_since(start: datetime, sensor: str = LIBRE) -> list[tuple[datetime, float]]:
+    """Return one sensor's readings at or after ``start``, oldest first."""
 
     with session() as db:
         rows = db.execute(
             select(GlucoseReading.timestamp, GlucoseReading.mgdl)
+            .where(GlucoseReading.sensor == sensor)
             .where(GlucoseReading.timestamp >= start)
             .order_by(GlucoseReading.timestamp)
         ).all()
@@ -171,7 +270,7 @@ def readings_since(start: datetime) -> list[tuple[datetime, float]]:
     return [(row.timestamp, row.mgdl) for row in rows]
 
 
-def last_readings(limit: int = 10) -> list[tuple[datetime, float]]:
+def last_readings(limit: int = 10, sensor: str = LIBRE) -> list[tuple[datetime, float]]:
     """Return the newest readings, oldest first, ignoring how old they are.
 
     The dashboard needs the current value even when the sensor has been off
@@ -182,6 +281,7 @@ def last_readings(limit: int = 10) -> list[tuple[datetime, float]]:
     with session() as db:
         rows = db.execute(
             select(GlucoseReading.timestamp, GlucoseReading.mgdl)
+            .where(GlucoseReading.sensor == sensor)
             .order_by(GlucoseReading.timestamp.desc())
             .limit(limit)
         ).all()

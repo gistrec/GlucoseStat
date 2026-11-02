@@ -2,7 +2,7 @@
 
 Collects FreeStyle Libre 3 readings from LibreLinkUp into MySQL and renders a public dashboard from them. The live page is at [glucose.gistrec.cloud](https://glucose.gistrec.cloud).
 
-A single pm2 process does the lot: it polls LibreLinkUp every five minutes, stores whatever is new, rewrites `web/data.json`, and pushes a phone alert if the reading is low. nginx serves `web/` as plain static files, so a page view never touches MySQL and never reaches Abbott.
+A single pm2 process does the lot: it polls LibreLinkUp every five minutes, stores whatever is new, rewrites `web/data.json`, and pushes a phone alert if the reading is low. nginx serves `web/` as plain static files, so a page view never touches MySQL and never reaches Abbott. A second, optional process takes readings over the [Nightscout API](#nightscout-api) from apps that upload there.
 
 ```
 LibreLinkUp ──poll 5m──▶ main.py ──▶ MySQL ──▶ publish.py ──▶ web/data.json ──▶ nginx
@@ -266,6 +266,63 @@ The portion boundaries are fixed at 40 g and 70 g, not recomputed as percentiles
 Finer cuts have nothing to divide: snacks under `SNACK_CARBS` never enter the review, and meals past a hundred grams are rare enough to miss the quorum.
 
 This describes outcomes and stops there. Whether a dose was right also depends on activity, on illness and on insulin still active from an earlier injection. None of that is in this data, and the page says so.
+
+## Nightscout API
+
+`nightscout.py` takes readings the way a Nightscout server does, so an app that reads the sensor and can upload to Nightscout can upload here instead. It is a second pm2 process (`glucose-nightscout`), a stdlib HTTP server on `127.0.0.1:8098` that nginx exposes under `/api/v1/`. There is no separate Nightscout and no MongoDB.
+
+Only the part of API v1 an uploader needs is there:
+
+| Route | Auth | What it does |
+|---|---|---|
+| `POST /api/v1/entries`, `/entries.json` | secret | stores `sgv` entries, answers with them as Nightscout would |
+| `GET /api/v1/entries.json`, `/entries/sgv.json` | secret | the uploader's own entries, newest first; `count` (default 10, at most 1000) and `find[date][$gt\|$gte\|$lt\|$lte]` |
+| `GET /api/v1/entries/current.json` | secret | the newest entry |
+| `GET /api/v1/status.json` | none | `status: ok`, server time, `apiEnabled` |
+| `GET /api/v1/verifyauth` | optional | whether the secret is accepted |
+
+The behaviour follows the handlers of [cgm-remote-monitor](https://github.com/nightscout/cgm-remote-monitor) (`lib/api/entries`, `lib/server/entries.js`, `lib/authorization`), not just the Swagger file:
+
+* **Auth.** The `api-secret` header carries the SHA-1 of the secret in hex, in any case; `?secret=` works too. The plain secret is refused, as Nightscout refuses it. JWT tokens and roles are not supported. Prefer the header: nginx's access log keeps query strings.
+* **Units.** `sgv` is mg/dL whatever units the Nightscout page shows, and that is what `glucose_readings` stores, so nothing is converted. Units are never inferred from the size of a number: `sgv: 5.5` is refused, not read as mmol/L.
+* **Time.** `date` is Unix time in milliseconds and wins; `dateString` is used only when `date` is missing or broken, and it must carry a zone. A `date` in seconds lands in 1970 and is refused, as is anything more than ten minutes in the future.
+* **Shape.** An object or an array of up to 10 000 objects (Nightscout's own limit), a body of at most 4 MB, gzip allowed. A malformed body is a 400. Inside a valid batch, an entry that is not `type: "sgv"` (`mbg`, `cal`, untyped…) or has an implausible value (outside 39–600 mg/dL) is skipped, not refused: the uploader would otherwise resend the batch forever, and resending would not fix it.
+
+Readings land in the same `glucose_readings` as LibreLinkUp's, under the sensor the secret belongs to (`sensor`, see [Two sensors](#two-sensors)). The measurement time (`timestamp`) and the time it was received (`received_at`) are kept apart, since history sent after an outage arrives hours late. The key is sensor + second, so a resent batch adds nothing and the first value for a moment stays; parallel uploads for one sensor are serialised by a row lock on its `glucose_sources` row (without it, InnoDB deadlocked on the duplicate keys). `date` in answers is a whole second, and a resend gets the same `_id`s. `device` is accepted and not stored: the secret already says which sensor this is.
+
+Each sensor uploading over the API has its own random secret. The database keeps only SHA-256 of its SHA-1, so a reader of the table gets neither the secret nor anything the `api-secret` header would accept, and neither is ever logged. A secret reads and writes only its own sensor's readings, and LibreLinkUp's sensor can never be given one.
+
+```bash
+./venv/bin/python nightscout.py issue ottai --label Ottai   # prints URL and secret, once
+./venv/bin/python nightscout.py rotate ottai                 # new secret, the old one stops at once
+./venv/bin/python nightscout.py list                         # sensors and their last upload
+pm2 start ecosystem.config.js --only glucose-nightscout
+```
+
+The vhost needs one more location (and the app registry in infra a port):
+
+```nginx
+location /api/v1/ {
+	proxy_pass http://127.0.0.1:8098;
+	proxy_set_header Host $host;
+	client_max_body_size 5m;
+	access_log off;  # ?secret= would land here
+}
+```
+
+Readings reach the page within a minute: the collector publishes on every one-minute step, and its LibreLinkUp polls keep their own schedule and their own backoff, so half an hour of Abbott trouble no longer freezes the page.
+
+Checked against the cgm-remote-monitor source, not against a real uploader. Which routes a given app calls (Ottai on iOS in particular) is untested.
+
+## Two sensors
+
+While two sensors are worn at once (Libre over LibreLinkUp, Ottai over the Nightscout API), both go into the one `glucose_readings`, told apart by `sensor`. A table per provider would mean every reader picking the right one; a column means one `WHERE`.
+
+`glucose_sources` lists the sensors, and one of them is primary. Everything on the page is counted from the primary alone: time in range, nights, the meal review, GMI, the forecast tail, the freshness mark and the alerts. Two sets of metrics side by side would be two answers to one question. The other sensor is a thin violet line on the 24- and 48-hour charts (`series.day.others`, `series.two_days.others`), with its own row in the legend and the tooltip, for comparing the two, nothing more.
+
+The primary is chosen in GlucoseBot (`/sensor`), which updates `glucose_sources.is_primary`; with no choice, or no table, it is Libre, as it was before there were two. The sensor card's lifetime and the sensor-change lines come from LibreLinkUp, so with another primary the card says the date is unknown and the lines are gone. `now.json` for the watch carries the primary only, in the same shape as before.
+
+`glucose_sources` is created by `init_schema()`; the column on `glucose_readings` is not, since `create_all` never alters a table. Run `migrations/2026-11-sensor-column.sql` once before deploying: old rows become `libre` by default, and the extra index on `timestamp` keeps readers that do not filter by sensor yet fast.
 
 ## Privacy
 

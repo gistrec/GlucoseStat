@@ -622,7 +622,7 @@ class TestPublishWindow:
 
         captured = {}
 
-        def spy(since):
+        def spy(since, sensor="libre"):
             captured["since"] = since
             return []
 
@@ -630,9 +630,11 @@ class TestPublishWindow:
         monkeypatch.setattr("publish.journal_since", lambda since: [])
         monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
         monkeypatch.setattr("publish.fingersticks_since", lambda since: [])
-        monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
+        monkeypatch.setattr("publish.last_readings", lambda limit=10, **kw: [])
         monkeypatch.setattr("publish.read_sensor_start", lambda: None)
         monkeypatch.setattr("publish.read_sensor_end", lambda: None)
+        monkeypatch.setattr("publish.primary_sensor", lambda: "libre")
+        monkeypatch.setattr("publish.sources_overview", lambda: [])
         monkeypatch.setattr("publish.latest_forecast", list)
         monkeypatch.setattr("publish.timezone_history", list)
         monkeypatch.setattr("publish.sensor_starts_since", lambda since: [])
@@ -912,13 +914,15 @@ class TestLastSuccessSource:
 
     @staticmethod
     def _stub_queries(monkeypatch):
-        monkeypatch.setattr("publish.readings_since", lambda since: [])
+        monkeypatch.setattr("publish.readings_since", lambda since, **kw: [])
         monkeypatch.setattr("publish.journal_since", lambda since: [])
         monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
         monkeypatch.setattr("publish.fingersticks_since", lambda since: [])
-        monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
+        monkeypatch.setattr("publish.last_readings", lambda limit=10, **kw: [])
         monkeypatch.setattr("publish.read_sensor_start", lambda: None)
         monkeypatch.setattr("publish.read_sensor_end", lambda: None)
+        monkeypatch.setattr("publish.primary_sensor", lambda: "libre")
+        monkeypatch.setattr("publish.sources_overview", lambda: [])
         monkeypatch.setattr("publish.latest_forecast", list)
         monkeypatch.setattr("publish.timezone_history", list)
         monkeypatch.setattr("publish.sensor_starts_since", lambda since: [])
@@ -992,13 +996,15 @@ class TestPublishCarryForward:
         """Разовый пересбор снимка не должен вешать на живую страницу красное
         «сборщик ещё не получал данные» под свежими цифрами."""
 
-        monkeypatch.setattr("publish.readings_since", lambda since: [])
+        monkeypatch.setattr("publish.readings_since", lambda since, **kw: [])
         monkeypatch.setattr("publish.journal_since", lambda since: [])
         monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
         monkeypatch.setattr("publish.fingersticks_since", lambda since: [])
-        monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
+        monkeypatch.setattr("publish.last_readings", lambda limit=10, **kw: [])
         monkeypatch.setattr("publish.read_sensor_start", lambda: None)
         monkeypatch.setattr("publish.read_sensor_end", lambda: None)
+        monkeypatch.setattr("publish.primary_sensor", lambda: "libre")
+        monkeypatch.setattr("publish.sources_overview", lambda: [])
         monkeypatch.setattr("publish.latest_forecast", list)
         monkeypatch.setattr("publish.timezone_history", list)
         monkeypatch.setattr("publish.sensor_starts_since", lambda since: [])
@@ -1017,13 +1023,15 @@ class TestPublishCarryForward:
     def test_a_failed_write_leaves_no_half_snapshot_behind(self, tmp_path, monkeypatch):
         """Каталог раздаёт nginx: недописанный снимок в нём остаться не должен."""
 
-        monkeypatch.setattr("publish.readings_since", lambda since: [])
+        monkeypatch.setattr("publish.readings_since", lambda since, **kw: [])
         monkeypatch.setattr("publish.journal_since", lambda since: [])
         monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
         monkeypatch.setattr("publish.fingersticks_since", lambda since: [])
-        monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
+        monkeypatch.setattr("publish.last_readings", lambda limit=10, **kw: [])
         monkeypatch.setattr("publish.read_sensor_start", lambda: None)
         monkeypatch.setattr("publish.read_sensor_end", lambda: None)
+        monkeypatch.setattr("publish.primary_sensor", lambda: "libre")
+        monkeypatch.setattr("publish.sources_overview", lambda: [])
         monkeypatch.setattr("publish.latest_forecast", list)
         monkeypatch.setattr("publish.timezone_history", list)
         monkeypatch.setattr("publish.sensor_starts_since", lambda since: [])
@@ -1043,13 +1051,15 @@ class TestPublishCarryForward:
     def test_writes_a_watch_digest_beside_the_snapshot(self, tmp_path, monkeypatch):
         """Часам (GlucoseWatch) — выжимка рядом со снимком, теми же полями."""
 
-        monkeypatch.setattr("publish.readings_since", lambda since: [])
+        monkeypatch.setattr("publish.readings_since", lambda since, **kw: [])
         monkeypatch.setattr("publish.journal_since", lambda since: [])
         monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
         monkeypatch.setattr("publish.fingersticks_since", lambda since: [])
-        monkeypatch.setattr("publish.last_readings", lambda limit=10: [])
+        monkeypatch.setattr("publish.last_readings", lambda limit=10, **kw: [])
         monkeypatch.setattr("publish.read_sensor_start", lambda: None)
         monkeypatch.setattr("publish.read_sensor_end", lambda: None)
+        monkeypatch.setattr("publish.primary_sensor", lambda: "libre")
+        monkeypatch.setattr("publish.sources_overview", lambda: [])
         monkeypatch.setattr("publish.latest_forecast", list)
         monkeypatch.setattr("publish.timezone_history", list)
         monkeypatch.setattr("publish.sensor_starts_since", lambda since: [])
@@ -1065,7 +1075,9 @@ class TestPublishCarryForward:
             "events", "sensor", "today", "profile", "gmi",
         } | trimmed
         assert all(now[key] == snapshot[key] for key in now if key not in trimmed)
-        assert now["series"] == {"day": snapshot["series"]["day"]}
+        # Ряд суток — как в снимке, только без второго датчика (others).
+        day = {k: v for k, v in snapshot["series"]["day"].items() if k != "others"}
+        assert now["series"] == {"day": day}
         assert now["collector"]["last_success"] == 1756500000
 
 
@@ -1284,3 +1296,54 @@ class TestForecast:
             readings(120, 130), [], now, forecast_rows=self.rows(now - timedelta(minutes=2))
         )
         assert with_rows["forecast"]["points"][0][1] == 131
+
+
+class TestOtherSensors:
+    """Второй датчик — кривой на почасовых окнах, без своих метрик."""
+
+    def snapshot(self):
+        now = BASE + timedelta(hours=2)
+        primary = [(BASE + timedelta(minutes=5 * i), 120.0) for i in range(24)]
+        other = [(BASE + timedelta(minutes=5 * i), 140.0) for i in range(24)]
+        return build_snapshot(
+            primary,
+            [],
+            now,
+            primary="libre",
+            sources=[("libre", "Libre", True, now), ("ottai", "Ottai", False, now)],
+            others=[("ottai", "Ottai", other)],
+        )
+
+    def test_others_ride_only_on_the_hourly_windows(self):
+        series = self.snapshot()["series"]
+
+        for name in ("day", "two_days"):
+            assert [other["sensor"] for other in series[name]["others"]] == ["ottai"]
+            assert series[name]["others"][0]["points"]
+        assert "others" not in series["week"]
+
+    def test_metrics_come_from_the_primary_alone(self):
+        stats = self.snapshot()["stats"]["day"]
+
+        # 120 у основного, 140 у второго: среднее — ровно основное.
+        assert stats["avg"] == 120.0
+        assert stats["max"] == 120
+        assert stats["count"] == 24
+
+    def test_the_collector_block_names_the_primary_and_every_source(self):
+        collector = self.snapshot()["collector"]
+
+        assert collector["primary"] == "libre"
+        assert set(collector["sources"]) == {"libre", "ottai"}
+        assert collector["sources"]["ottai"]["label"] == "Ottai"
+
+
+def test_the_watch_digest_carries_no_second_sensor():
+    from publish import _now
+
+    snapshot = TestOtherSensors().snapshot()
+    digest = _now(snapshot)
+
+    assert "others" not in digest["series"]["day"]
+    # Полный снимок при этом свой ряд не теряет.
+    assert snapshot["series"]["day"]["others"]

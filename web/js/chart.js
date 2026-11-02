@@ -570,10 +570,14 @@ export function drawChart() {
     const gaps = daily ? [] : seriesGaps(series, points, tail);
     const artifacts = daily ? [] : seriesArtifacts();
     const sugars = daily ? [] : seriesSugars();
+    // Неосновные датчики — только на почасовых окнах (их кладёт туда снимок).
+    const others = daily ? [] : otherSensors(series);
+    const primaryLabel = others.length ? primarySensorLabel() : null;
 
     // Один предикат «есть ли что рисовать» на оба ранних выхода: у дневного
     // вида points не существует вовсе, и points.length здесь бы падал.
-    const hasData = daily ? days.some((day) => day.count > 0) : points.length > 0;
+    // Второй датчик — тоже данные: молчит основной, а кривая другого идёт.
+    const hasData = daily ? days.some((day) => day.count > 0) : points.length > 0 || others.length > 0;
 
     els.chartEmpty.hidden = hasData;
     els.canvas.setAttribute(
@@ -634,6 +638,7 @@ export function drawChart() {
             ? days.filter((day) => day.count).flatMap((day) => [toMmol(day.p25), toMmol(day.p75)])
             : [
                   ...points.map((p) => toMmol(p[1])),
+                  ...others.flatMap((other) => other.points.map((p) => toMmol(p[1]))),
                   ...runs.flatMap((run) => run.flatMap((slot) => [toMmol(slot.p25), toMmol(slot.p75)])),
                   // Конец хвоста — в кадре наравне с кривой: обрезанный рамкой
                   // прогноз читался бы как «дальше неизвестно», а не «выше».
@@ -659,6 +664,7 @@ export function drawChart() {
     if (
         !daily &&
         (lanes.length ||
+            others.length ||
             runs.length ||
             tail ||
             lowsShown ||
@@ -667,7 +673,16 @@ export function drawChart() {
             artifacts.length ||
             sugars.length)
     ) {
-        legendItems.push({ ...SERIES.glucose, line: true });
+        legendItems.push(
+            primaryLabel
+                ? { ...SERIES.glucose, line: true, label: `${SERIES.glucose.label} · ${primaryLabel}` }
+                : { ...SERIES.glucose, line: true }
+        );
+        // Второй датчик — сразу за основным: это та же величина, снятая
+        // другим прибором, а не отметка на кривой.
+        for (const other of others) {
+            legendItems.push({ ...SERIES.otherSensor, label: other.label });
+        }
         // «Обычно» — сразу за измерением: коридор, с которым его сравнивают,
         // а не отметка на самой кривой, как всё, что ниже.
         if (runs.length) {
@@ -874,6 +889,8 @@ export function drawChart() {
             muted,
             axisAlpha
         );
+        // Под основной: метрики и цвета зон — по ней, второй датчик для сверки.
+        drawOtherSensors(ctx, others, series, x, y);
         drawSeriesLine(ctx, series, points, x, y, padding, plotWidth, plotHeight);
         drawSensorChanges(
             ctx,
@@ -922,6 +939,9 @@ export function drawChart() {
     state.geometry = {
         kind: daily ? "daily" : "points",
         points,
+        others,
+        primaryLabel,
+        step: series.step,
         days,
         boxWidth,
         // Слоты профиля, дожившие до холста: подсказка не вправе говорить
@@ -1743,6 +1763,56 @@ export function renderLegend(items) {
     els.legend.hidden = false;
 }
 
+/* Ряды неосновных датчиков из снимка, у которых есть что рисовать. */
+function otherSensors(series) {
+    return (series.others || []).filter((other) => other.points && other.points.length);
+}
+
+/* Подпись основного датчика — нужна, только когда рядом есть второй. */
+function primarySensorLabel() {
+    const collector = state.snapshot.collector || {};
+    const source = (collector.sources || {})[collector.primary];
+    return source ? source.label : collector.primary || null;
+}
+
+function nearestIn(points, t, reach) {
+    let best = null;
+    for (const point of points) {
+        const distance = Math.abs(point[0] - t);
+        if (best === null || distance < best[0]) best = [distance, point];
+    }
+    return best && best[0] <= reach ? best[1] : null;
+}
+
+/* Кривые неосновных датчиков: тонкая ломаная своего цвета, с разрывами по
+   тому же порогу, что у основной (seriesGapSeconds). Без окраски зон — по
+   ней ничего не считается, и красный «ниже нормы» на ней спорил бы с
+   основной кривой за одно и то же событие. */
+function drawOtherSensors(ctx, others, series, x, y) {
+    if (!others.length) return;
+    const gapSeconds = seriesGapSeconds(series);
+    ctx.save();
+    ctx.strokeStyle = readColor(SERIES.otherSensor.token, SERIES.otherSensor.fallback);
+    ctx.lineWidth = 1.25;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.globalAlpha = 0.9;
+    for (const other of others) {
+        ctx.beginPath();
+        other.points.forEach(([t, mgdl], i) => {
+            const px = x(t);
+            const py = y(toMmol(mgdl));
+            if (i === 0 || t - other.points[i - 1][0] > gapSeconds) {
+                ctx.moveTo(px, py);
+            } else {
+                ctx.lineTo(px, py);
+            }
+        });
+        ctx.stroke();
+    }
+    ctx.restore();
+}
+
 export function nearestPoint(t) {
     if (!state.geometry || !state.geometry.points.length) return null;
 
@@ -1825,9 +1895,28 @@ export function showTip(clientX) {
         // «Измерение» у любой точки, свежей и старой: одно слово на всю ось.
         // «Сейчас» у свежей было отвергнуто — две метки для одного ряда
         // читаются как два ряда.
+        const name = state.geometry.primaryLabel ? ` · ${state.geometry.primaryLabel}` : "";
         rows.push(
-            tipRow(SERIES.glucose, `Измерение ${formatMmol(point[1])} ${SERIES.glucose.unit}`)
+            tipRow(SERIES.glucose, `Измерение${name} ${formatMmol(point[1])} ${SERIES.glucose.unit}`)
         );
+    }
+
+    // Второй датчик — своей строкой под основным, если у него есть точка
+    // рядом с курсором: в пределах полутора шагов, а не получаса, иначе его
+    // молчание подписывалось бы чужим значением.
+    if (!gap && !future) {
+        const reach = (state.geometry.step || 5) * 60 * 1.5;
+        for (const other of state.geometry.others || []) {
+            const near = nearestIn(other.points, state.hoverTime, reach);
+            if (near) {
+                rows.push(
+                    tipRow(
+                        SERIES.otherSensor,
+                        `${other.label} ${formatMmol(near[1])} ${SERIES.otherSensor.unit}`
+                    )
+                );
+            }
+        }
     }
 
     if (future && state.hoverTime <= tail.to.t) {
