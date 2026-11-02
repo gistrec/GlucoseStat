@@ -1791,8 +1791,9 @@ function nearestIn(points, t, reach) {
     return best && best[0] <= reach ? best[1] : null;
 }
 
-/* Кривые неосновных датчиков: тонкая ломаная своего цвета, с разрывами по
-   тому же порогу, что у основной (seriesGapSeconds). Без окраски зон — по
+/* Кривые неосновных датчиков: ломаная той же толщины, что основная, но
+   всегда фиолетовая, с разрывами по тому же порогу (seriesGapSeconds).
+   Тоньше и полупрозрачной она терялась на подложке зон. Без окраски зон — по
    ней ничего не считается, и красный «ниже нормы» на ней спорил бы с
    основной кривой за одно и то же событие. */
 function drawOtherSensors(ctx, others, series, x, y) {
@@ -1800,10 +1801,9 @@ function drawOtherSensors(ctx, others, series, x, y) {
     const gapSeconds = seriesGapSeconds(series);
     ctx.save();
     ctx.strokeStyle = readColor(SERIES.otherSensor.token, SERIES.otherSensor.fallback);
-    ctx.lineWidth = 1.25;
+    ctx.lineWidth = 1.75;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
-    ctx.globalAlpha = 0.9;
     for (const other of others) {
         ctx.beginPath();
         other.points.forEach(([t, mgdl], i) => {
