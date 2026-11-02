@@ -296,7 +296,7 @@ Each sensor uploading over the API has its own random secret. The database keeps
 ./venv/bin/python nightscout.py issue ottai --label Ottai   # prints URL and secret, once
 ./venv/bin/python nightscout.py rotate ottai                 # new secret, the old one stops at once
 ./venv/bin/python nightscout.py list                         # sensors and their last upload
-./venv/bin/python nightscout.py sensor ottai --started 2026-11-02T19:53+03:00 --days 14   # lifetime the app does not report
+./venv/bin/python nightscout.py sensor ottai --started 2026-11-02T19:53+03:00 --days 15   # lifetime the app does not report
 pm2 start ecosystem.config.js --only glucose-nightscout
 ```
 
