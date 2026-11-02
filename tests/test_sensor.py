@@ -3,9 +3,9 @@
 from datetime import timedelta, timezone
 
 from conftest import BASE
-from test_main import FakeCollector
+from test_libre import FakeCollector
 
-import main
+import libre
 from librelinkup import (
     SENSOR_LIFETIME_FALLBACK_DAYS,
     SENSOR_MODELS,
@@ -298,24 +298,23 @@ class TestBias:
         assert snapshot["sensor"]["bias"]["pairs"] == 5
 
 
-def test_the_collector_stores_both_marks(monkeypatch):
-    """run_once кладёт в базу и установку, и конец срока по модели прибора."""
+def test_the_libre_source_stores_both_marks(monkeypatch):
+    """libre.run_once кладёт в базу и установку, и конец срока по модели прибора."""
 
     starts, ends, history = [], [], []
-    monkeypatch.setattr(main, "store_readings", lambda rows: len(rows))
-    monkeypatch.setattr(main, "last_readings", lambda limit=10: [])
-    monkeypatch.setattr(main, "store_last_success", lambda when: None)
-    monkeypatch.setattr(main, "publish", lambda **kwargs: None)
-    monkeypatch.setattr(main, "store_sensor_start", lambda when: starts.append(when))
-    monkeypatch.setattr(main, "store_sensor_end", lambda when: ends.append(when))
-    monkeypatch.setattr(main, "store_sensor", lambda *row: history.append(row))
+    monkeypatch.setattr(libre, "store_readings", lambda rows, **kw: len(rows))
+    monkeypatch.setattr(libre, "mark_received", lambda sensor, when: None)
+    monkeypatch.setattr(libre, "store_last_success", lambda when: None)
+    monkeypatch.setattr(libre, "store_sensor_start", lambda when: starts.append(when))
+    monkeypatch.setattr(libre, "store_sensor_end", lambda when: ends.append(when))
+    monkeypatch.setattr(libre, "store_sensor", lambda *row: history.append(row))
 
     class Known:
         started = BASE - timedelta(days=2)
         kind = 4
         lifetime_days = 15
 
-    main.run_once(FakeCollector([(BASE, 110.0)], sensor=Known()), None, 300, 60, None)
+    libre.run_once(FakeCollector([(BASE, 110.0)], sensor=Known()), 300, 60, None)
 
     assert starts == [Known.started]
     assert ends == [Known.started + timedelta(days=15)]
@@ -327,24 +326,23 @@ def test_a_broken_history_does_not_cost_the_current_sensor(monkeypatch):
     """Сбой записи истории не мешает отметкам текущего сенсора."""
 
     starts = []
-    monkeypatch.setattr(main, "store_readings", lambda rows: len(rows))
-    monkeypatch.setattr(main, "last_readings", lambda limit=10: [])
-    monkeypatch.setattr(main, "store_last_success", lambda when: None)
-    monkeypatch.setattr(main, "publish", lambda **kwargs: None)
-    monkeypatch.setattr(main, "store_sensor_start", lambda when: starts.append(when))
-    monkeypatch.setattr(main, "store_sensor_end", lambda when: None)
+    monkeypatch.setattr(libre, "store_readings", lambda rows, **kw: len(rows))
+    monkeypatch.setattr(libre, "mark_received", lambda sensor, when: None)
+    monkeypatch.setattr(libre, "store_last_success", lambda when: None)
+    monkeypatch.setattr(libre, "store_sensor_start", lambda when: starts.append(when))
+    monkeypatch.setattr(libre, "store_sensor_end", lambda when: None)
 
     def broken(*row):
         raise RuntimeError("no table")
 
-    monkeypatch.setattr(main, "store_sensor", broken)
+    monkeypatch.setattr(libre, "store_sensor", broken)
 
     class Known:
         started = BASE - timedelta(days=2)
         kind = 4
         lifetime_days = 15
 
-    main.run_once(FakeCollector([(BASE, 110.0)], sensor=Known()), None, 300, 60, None)
+    libre.run_once(FakeCollector([(BASE, 110.0)], sensor=Known()), 300, 60, None)
 
     assert starts == [Known.started]
 

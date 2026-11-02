@@ -2,11 +2,12 @@
 
 Collects FreeStyle Libre 3 readings from LibreLinkUp into MySQL and renders a public dashboard from them. The live page is at [glucose.gistrec.cloud](https://glucose.gistrec.cloud).
 
-A single pm2 process does the lot: it polls LibreLinkUp every five minutes, stores whatever is new, rewrites `web/data.json`, and pushes a phone alert if the reading is low. nginx serves `web/` as plain static files, so a page view never touches MySQL and never reaches Abbott. A second, optional process takes readings over the [Nightscout API](#nightscout-api) from apps that upload there.
+Three pm2 processes share the work. Two are sources and only write to MySQL: `glucose-libre` polls LibreLinkUp every five minutes, and `glucose-nightscout` takes readings over the [Nightscout API](#nightscout-api) from apps that upload there. The third, `glucose-publisher`, works from the database once a minute: it rewrites `web/data.json` and pushes a phone alert if the primary sensor reads low. nginx serves `web/` as plain static files, so a page view never touches MySQL and never reaches Abbott.
 
 ```
-LibreLinkUp ──poll 5m──▶ main.py ──▶ MySQL ──▶ publish.py ──▶ web/data.json ──▶ nginx
-                             └──────────────▶ notify.py ───▶ Pushover
+LibreLinkUp ──poll 5m──▶ libre.py ──────┐
+Ottai app ──POST /api/v1──▶ nightscout.py ┴─▶ MySQL ──1m──▶ publisher.py ─┬─▶ web/data.json ──▶ nginx
+                                                                          └─▶ Pushover
 ```
 
 ## Configuration
@@ -14,11 +15,11 @@ LibreLinkUp ──poll 5m──▶ main.py ──▶ MySQL ──▶ publish.py 
 Copy `.env.example` to `.env` and fill it in:
 
 * `EMAIL`, `PASSWORD`: the LibreLinkUp account the Libre 3 app shares the sensor with.
-* `MYSQL_*`: database connection. The collector creates its table on first start.
+* `MYSQL_*`: database connection, for all three. Each creates the tables it is missing on start.
 * `MYSQL_SSL_CA`: only for managed databases that require TLS.
 * `FETCH_INTERVAL_MINUTES`: polling interval, defaults to `5`.
 * `LLU_REGION`: which LibreLinkUp region to ask, defaults to `de`. Rarely needed: login follows a regional redirect and keeps the corrected region for as long as the session lasts, so a foreign account costs one extra request per sign-in rather than a setting.
-* `PUSHOVER_TOKEN`, `PUSHOVER_USER`: turn on the [alerts](#alerts). Unset, the collector stores readings and alerts about nothing.
+* `PUSHOVER_TOKEN`, `PUSHOVER_USER`: turn on the [alerts](#alerts) in the publisher. Unset, it publishes and alerts about nothing.
 * `DISPLAY_TZ`: the zone days are sliced in (nights, the usual-day profile, the daily boxes) until the bot records one of its own, defaults to `Europe/Belgrade`. Like `PUBLISH_PATH` below it resolves as the module loads, so it belongs in the environment (the `env` block of `ecosystem.config.js`), not in `.env`. Change it only together with `HOME_TIMEZONE` in `web/js/format.js`.
 
 ## Running
@@ -26,11 +27,13 @@ Copy `.env.example` to `.env` and fill it in:
 ```bash
 python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
-./venv/bin/python main.py          # collector loop
-./venv/bin/python publish.py       # one-off snapshot rebuild
+./venv/bin/python libre.py         # LibreLinkUp source loop
+./venv/bin/python nightscout.py    # Nightscout API source (see below)
+./venv/bin/python publisher.py     # snapshot, alerts and freshness mark, every minute
+./venv/bin/python publish.py       # one-off snapshot rebuild, no alerts
 ```
 
-Both read `.env` themselves. The snapshot lands in `web/data.json`; to send it somewhere else, export `PUBLISH_PATH`. Beside it goes `now.json`, the digest the watch app ([GlucoseWatch](https://github.com/gistrec/GlucoseWatch)) reads, so a field renamed or dropped here breaks the watch: changes to it have to stay compatible. It carries `generated_at`, `collector`, `target`, `latest`, `forecast`, `active`, `events`, `sensor`, `today` (the stats from local midnight, by the zone the bot last recorded), `profile` (the two-week median and corridor the watch draws behind today's curve), `gmi`, and of the series only `day`. Three more keys are cut down to what the watch shows: `nights` keeps the last night without its sparkline, `lows` and `highs` only today's episodes, and `analysis` the meal targets and the last three meals without their curves. Every field has the same name and shape as in the full snapshot.
+All of them read `.env` themselves. The snapshot lands in `web/data.json`; to send it somewhere else, export `PUBLISH_PATH`. Beside it goes `now.json`, the digest the watch app ([GlucoseWatch](https://github.com/gistrec/GlucoseWatch)) reads, so a field renamed or dropped here breaks the watch: changes to it have to stay compatible. It carries `generated_at`, `collector`, `target`, `latest`, `forecast`, `active`, `events`, `sensor`, `today` (the stats from local midnight, by the zone the bot last recorded), `profile` (the two-week median and corridor the watch draws behind today's curve), `gmi`, and of the series only `day`. Three more keys are cut down to what the watch shows: `nights` keeps the last night without its sparkline, `lows` and `highs` only today's episodes, and `analysis` the meal targets and the last three meals without their curves. Every field has the same name and shape as in the full snapshot.
 
 The path resolves as the module loads, before any `.env` is read, so a line in that file reaches nothing at all. That includes the manual rebuild, which would still overwrite the file nginx serves:
 
@@ -43,6 +46,8 @@ In production it runs under pm2:
 ```bash
 pm2 start ecosystem.config.js
 ```
+
+`startOrReload` never removes an app the file no longer lists. A host still running the old single `glucose-collector` keeps it alive next to the new three, polling Abbott twice and alerting twice, so delete it once: `pm2 delete glucose-collector && pm2 startOrReload ecosystem.config.js && pm2 save`.
 
 ## Preview
 
@@ -115,7 +120,7 @@ Where the sensor went quiet, the hourly windows draw a grey band instead of just
 
 The threshold is the one that breaks the curve: three missed readings in a row, since a single miss is an ordinary upload delay.
 
-The collector counts these windows from the raw readings, for the same reason it counts the low episodes there. A bucket edge would move the boundary by its own step, and one silence would be "1 ч 45 мин" on the daily panel and "1 ч 50 мин" on the 48-hour one.
+The publisher counts these windows from the raw readings, for the same reason it counts the low episodes there. A bucket edge would move the boundary by its own step, and one silence would be "1 ч 45 мин" on the daily panel and "1 ч 50 мин" on the 48-hour one.
 
 A silence still running has no right edge: the page draws it from the last reading to the moment of the snapshot. It draws nothing while the forecast tail is there, since that tail only exists beside a fresh reading.
 
@@ -123,7 +128,7 @@ The weekly and monthly panels get no bands: an hour is three pixels wide there, 
 
 ### Sensor changes
 
-The collector keeps a row per sensor in the `sensors` table, and every chart marks each change from the last 90 days with a dashed "новый сенсор" line.
+The LibreLinkUp source keeps a row per sensor in the `sensors` table, and every chart marks each change from the last 90 days with a dashed "новый сенсор" line.
 
 ### Sensor noise
 
@@ -137,9 +142,9 @@ The days left are the question the page can answer before the app does. A sensor
 
 The activation moment comes from LibreLinkUp, in the same `graph` response as the readings. The lifetime does not, and cannot: Abbott reports when a sensor was applied, never how long it will run. What the payload does carry is a product-type number, and `SENSOR_MODELS` is where that number turns into days.
 
-The table is empty on purpose. Abbott publishes no such numbering, and a guess in it would repeat the bug that made this card call a Libre 3 Plus a plain Libre 3 and end its life a day early. The collector logs the number it actually sees, once per process, which is how a row gets added; until then the lifetime is the fallback constant.
+The table is empty on purpose. Abbott publishes no such numbering, and a guess in it would repeat the bug that made this card call a Libre 3 Plus a plain Libre 3 and end its life a day early. The LibreLinkUp source logs the number it actually sees, once per process, which is how a row gets added; until then the lifetime is the fallback constant.
 
-The collector stores both the start and the computed end in `collector_state`, so a renderer on a read replica would publish the same dates without needing to know the model. The days left are counted in the browser, since a number baked into a snapshot would be yesterday's by morning.
+The LibreLinkUp source stores both the start and the computed end in `collector_state`, so a renderer on a read replica would publish the same dates without needing to know the model. The days left are counted in the browser, since a number baked into a snapshot would be yesterday's by morning.
 
 The serial number sitting next to all this in Abbott's payload is dropped where it is parsed. The card names no model at all: the one in the page header is written by a human, where it reads as a claim rather than as data. Abbott does not always send the block; then the card says the date is unknown rather than guessing one.
 
@@ -163,7 +168,7 @@ The sensor, nights, meal review and carb ratio sections fold down to a heading a
 
 ## Meals and insulin
 
-The events come from the journal that [GlucoseBot](https://github.com/gistrec/GlucoseBot) writes: carbohydrates estimated from a photo and confirmed by hand, and insulin doses logged by hand. The collector only reads that table, never creates it: if the bot was never deployed, `journal_since` returns nothing and the page renders as before.
+The events come from the journal that [GlucoseBot](https://github.com/gistrec/GlucoseBot) writes: carbohydrates estimated from a photo and confirmed by hand, and insulin doses logged by hand. The publisher only reads that table, never creates it: if the bot was never deployed, `journal_since` returns nothing and the page renders as before.
 
 Events are drawn as two lanes under the glucose line, sharing its time axis: carbohydrates in grams and insulin in units, each growing from its own baseline. Not a second vertical scale on the same plot: the alignment of two y-axes is arbitrary, and a chart built that way invents a correlation that isn't in the data.
 
@@ -311,7 +316,7 @@ location /api/v1/ {
 }
 ```
 
-Readings reach the page within a minute: the collector publishes on every one-minute step, and its LibreLinkUp polls keep their own schedule and their own backoff, so half an hour of Abbott trouble no longer freezes the page.
+Readings reach the page within a minute: the publisher runs on its own one-minute step, separate from the LibreLinkUp source and its backoff, so half an hour of Abbott trouble does not freeze the page.
 
 Checked against the cgm-remote-monitor source, not against a real uploader. Which routes a given app calls (Ottai on iOS in particular) is untested.
 
@@ -331,11 +336,11 @@ The primary is chosen in GlucoseBot (`/sensor`), which updates `glucose_sources.
 
 The LibreLinkUp payload also contains the patient's name, date of birth and sensor serial, and none of that belongs on a public URL, so `data.json` carries none of it.
 
-It does carry the meal and insulin events, which are more personal than the curve itself: they show when the day starts, when it ends, and what the treatment looks like. The page is `noindex` but it is not access-controlled. If that is not acceptable, put the events behind basic auth in nginx or drop `journal_entries` from the collector's reach.
+It does carry the meal and insulin events, which are more personal than the curve itself: they show when the day starts, when it ends, and what the treatment looks like. The page is `noindex` but it is not access-controlled. If that is not acceptable, put the events behind basic auth in nginx or drop `journal_entries` from the publisher's reach.
 
 ## Alerts
 
-With Pushover configured, every poll checks the newest reading against four thresholds, two on each side:
+With Pushover configured, the publisher checks the primary sensor's newest reading in the database once a minute against four thresholds, two on each side:
 
 | Reading | Level | Priority |
 |---|---|---|
@@ -352,7 +357,7 @@ Each level names its own sound instead of leaving it to whatever default tone th
 
 Both priorities get past an iPhone's mute switch: Pushover has held an Apple Critical Alerts entitlement since February 2020, though the bypass is a separate toggle per priority in the iOS app. Verified live on 14.09.2026: with Critical Alerts enabled for High and Emergency, both ring through silent mode.
 
-The same reading arrives on every poll, so the collector remembers the episode in `.alerts.json`. It lives in a file rather than in memory because pm2 restarts the process on any failure, and a forgotten episode means the phone buzzes again about a low it already reported. Within one episode it repeats at most every 30 minutes, and it escalates immediately if the level turns critical.
+The same reading is seen on every step, so the publisher remembers the episode in `.alerts.json`. It lives in a file rather than in memory because pm2 restarts the process on any failure, and a forgotten episode means the phone buzzes again about a low it already reported. Within one episode it repeats at most every 30 minutes, and it escalates immediately if the level turns critical.
 
 An episode closes only ten past the threshold: at 80 mg/dL coming up, at 170 coming down. Without that margin a reading hovering around the line would open a new episode, and send a new alert, every other poll. The margin is read from the side the episode opened on: 175 mg/dL ends a low episode and does not end a high one, though it is the same number.
 
@@ -360,7 +365,9 @@ A reversal is a new episode, not a deepening. Coming out of a hypo and overshoot
 
 Readings older than 15 minutes never alert. Otherwise a restart would fire an alarm over last week's hypo, still sitting in the database as the latest row.
 
-This is an addition to the alarms of the Libre app, not a replacement: nothing fires while Abbott is unreachable, the sensor is off, or the collector is down.
+This is an addition to the alarms of the sensor's app, not a replacement: nothing fires while the primary sensor's source is not delivering, the sensor is off, the publisher is down, or MySQL is.
+
+The last one is a choice. Until November 2026 a Libre alert fired from the fresh LibreLinkUp answer before it was written, so a low already in hand did not wait for the database. A second sensor's readings exist only in the database, though, and two alerting processes for two sources would mean two episode files and a double ring on every switch. MySQL lives on the same host, and the freshness mark below goes stale when it is down.
 
 ### Silenced by blood
 
@@ -374,13 +381,13 @@ Three numbers guard it, and each of them fails toward alerting:
 
 * 80 mg/dL, not 70. A meter reading 3,9 confirms a low at the line, it does not refute one. It is the same recovery margin the episode already closes at, and 170 mirrors it above.
 * 15 minutes. Blood moves a couple of mmol/L in that time, after which the check no longer says anything about now. The episode is *closed*, not frozen, so the next poll after the check goes stale speaks up at once instead of sitting out the 30-minute repeat: checked, quiet, asked again a quarter of an hour later.
-* Absent means alert. The journal may not exist and MySQL may be down; the lookup has its own `try` and yields `None`, and the alert then behaves as it did before. Staying silent because the collector could not ask is the failure that must not happen.
+* Absent means alert. The journal may not exist and MySQL may be down; the lookup has its own `try` and yields `None`, and the alert then behaves as it did before. Staying silent because the publisher could not ask is the failure that must not happen.
 
 A check below the threshold changes nothing: it confirms the low. The level of the alert is still decided by the sensor: blood decides whether to speak, not how loudly.
 
 ## Staleness
 
-Since nothing fires in those cases, silence is watched from outside the process. Every poll stamps `.last-reading` with the mtime of the newest reading in the database, not with the current time, or a collector that came back after a day off would report the data as fresh the moment it started. Netdata's `filecheck` reads that mtime and alerts when it stops moving:
+Since nothing fires in those cases, silence is watched from outside the process. Every minute the publisher stamps `.last-reading` with the mtime of the primary sensor's newest reading in the database, not with the current time, or a process that came back after a day off would report the data as fresh the moment it started. Netdata's `filecheck` reads that mtime and alerts when it stops moving:
 
 ```
 /etc/netdata/go.d/filecheck.conf     # job "glucose" -> .last-reading
@@ -391,27 +398,25 @@ An hour-long gap is not always a fault: LibreLinkUp reports nothing at all while
 
 ## Roles
 
-The two entry points are two roles, and only one of them may run twice:
+The entry points are four roles, and only one of them may run twice:
 
-| | collector — `main.py` | renderer — `publish.py` |
-|---|---|---|
-| Runs as | a pm2 loop, polling Abbott | a one-shot command, on a schedule |
-| Copies | **exactly one**, anywhere | as many as there are hosts serving the page |
-| Database | writes | reads only |
-| Needs | the whole `.env` | the `MYSQL_*` block |
-| Local state | `.llu-token.json`, `.alerts.json` | none |
+| | source — `libre.py` | source — `nightscout.py` | publisher — `publisher.py` | renderer — `publish.py` |
+|---|---|---|---|---|
+| Runs as | a pm2 loop, polling Abbott | a pm2 HTTP server | a pm2 loop, every minute | a one-shot command |
+| Copies | **exactly one** | one per host behind nginx | **exactly one** | as many as hosts serving the page |
+| Database | writes | writes | reads | reads |
+| Needs | LibreLinkUp account, `MYSQL_*` | `MYSQL_*` | `MYSQL_*`, Pushover | `MYSQL_*` |
+| Local state | `.llu-token.json` | none | `.alerts.json`, `.last-reading` | none |
 
-The collector is a singleton for three separate reasons, any one of which is enough:
+The LibreLinkUp source is a singleton because Abbott hands out one session per account, so two logins evict each other, and a replica would refuse its writes anyway.
 
-* a replica refuses its writes;
-* LibreLinkUp hands out one session per account, so two logins evict each other;
-* `.alerts.json` is per-process, so two copies would each alert about the same low.
+The publisher is a singleton because `.alerts.json` is per-process: two copies would each alert about the same low. Without Pushover set it alerts about nothing, and then it is just a renderer that runs itself.
 
-The renderer is not. A second host with a read replica can rebuild the snapshot from its own copy of the data and serve its own `web/data.json`.
+The renderer is not a singleton. A second host with a read replica can rebuild the snapshot from its own copy of the data and serve its own `web/data.json`.
 
-Production does not do that. One host runs the collector and serves the page; visitors from Russia, where the Finnish origin is throttled, reach it through a proxy on a Russian host over WireGuard, so there is one `data.json` and one place to deploy.
+Production does not do that. One host runs all three processes and serves the page; visitors from Russia, where the Finnish origin is throttled, reach it through a proxy on a Russian host over WireGuard, so there is one `data.json` and one place to deploy.
 
-This is why `last_success`, the moment the collector last reached LibreLinkUp, lives in the `collector_state` table rather than only in the collector's memory. A renderer on another machine would have no memory to inherit it from, and without it the page there could never say "the numbers stopped moving". Nothing else tells fresh glucose from yesterday's.
+This is why `last_success`, the moment the source last reached LibreLinkUp, lives in the `collector_state` table rather than in a process's memory. The publisher is another process and reads it from there, as would a renderer on another machine; without it the page could never say "the numbers stopped moving". Nothing else tells fresh glucose from yesterday's.
 
 ## Notes
 
@@ -421,7 +426,7 @@ The API returns two timestamps per reading, and only `FactoryTimestamp` is UTC; 
 
 Everything LibreLinkUp reports is stored, including a sensor's warm-up hour, during which a freshly applied sensor sits at 500 mg/dL with `isHigh` set. Expect one such spike per sensor change. The only values dropped are those outside the sensor's own 40–500 mg/dL scale, which are not readings at all.
 
-Abbott answers a burst of logins with HTTP 476 and a `Retry-After` of up to a day. The collector caps its wait at 10 minutes rather than honouring that literally: the block often lifts sooner, and a day of silence costs more than a few extra attempts.
+Abbott answers a burst of logins with HTTP 476 and a `Retry-After` of up to a day. The LibreLinkUp source caps its wait at 10 minutes rather than honouring that literally: the block often lifts sooner, and a day of silence costs more than a few extra attempts.
 
 An empty graph response is normal: LibreLinkUp only reports while a sensor is active, so with no sensor on, `graph` returns nothing and the page reports the data as stale.
 
