@@ -239,6 +239,15 @@ def synthetic_snapshot(now: datetime | None = None) -> dict:
 
     fingersticks.sort()
 
+    # Второй датчик за двое суток: тот же сахар, чуть позже и чуть выше, как
+    # расходятся два сенсора на одной руке. Без него вторую кривую на
+    # почасовых окнах превью не показало бы вовсе.
+    other = [
+        (moment + timedelta(minutes=4), mgdl * 1.06 + 4)
+        for moment, mgdl in readings
+        if moment >= now - timedelta(days=2) and moment + timedelta(minutes=4) <= now
+    ]
+
     # Снимок собирает publish, а не этот файл. Своя сборка молча расходилась бы
     # с боевой при каждом новом ключе — так превью и проглядело gmi.
     return build_snapshot(
@@ -246,6 +255,9 @@ def synthetic_snapshot(now: datetime | None = None) -> dict:
         journal,
         now,
         last_success=now.replace(tzinfo=timezone.utc).timestamp(),
+        primary="libre",
+        sources=[("libre", "Libre", True, now), ("ottai", "Ottai", False, now - timedelta(minutes=2))],
+        others=[("ottai", "Ottai", other)],
         origins=origins,
         fingersticks=fingersticks,
         # Сенсор на девятые сутки: срок ещё не кончился, но полоса уже

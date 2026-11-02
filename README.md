@@ -288,14 +288,14 @@ The behaviour follows the handlers of [cgm-remote-monitor](https://github.com/ni
 * **Time.** `date` is Unix time in milliseconds and wins; `dateString` is used only when `date` is missing or broken, and it must carry a zone. A `date` in seconds lands in 1970 and is refused, as is anything more than ten minutes in the future.
 * **Shape.** An object or an array of up to 10 000 objects (Nightscout's own limit), a body of at most 4 MB, gzip allowed. A malformed body is a 400. Inside a valid batch, an entry that is not `type: "sgv"` (`mbg`, `cal`, untyped…) or has an implausible value (outside 39–600 mg/dL) is skipped, not refused: the uploader would otherwise resend the batch forever, and resending would not fix it.
 
-Every entry lands in `nightscout_entries` with the measurement time (`measured_at`, `date_ms`) and the time it was received (`received_at`) apart, since history sent after an outage arrives hours late. The key is uploader + `device` + `date_ms` under a unique index, so a resent batch adds nothing, and parallel uploads from one uploader are serialised by a row lock on it (without that, InnoDB deadlocked on the duplicate keys). The answer to a resend lists the same `_id`s.
+Readings land in the same `glucose_readings` as LibreLinkUp's, under the sensor the secret belongs to (`sensor`, see [Two sensors](#two-sensors)). The measurement time (`timestamp`) and the time it was received (`received_at`) are kept apart, since history sent after an outage arrives hours late. The key is sensor + second, so a resent batch adds nothing and the first value for a moment stays; parallel uploads for one sensor are serialised by a row lock on its `glucose_sources` row (without it, InnoDB deadlocked on the duplicate keys). `date` in answers is a whole second, and a resend gets the same `_id`s. `device` is accepted and not stored: the secret already says which sensor this is.
 
-Each uploader has its own random secret. The database keeps only SHA-256 of its SHA-1, so a reader of the table gets neither the secret nor anything the `api-secret` header would accept, and neither is ever logged. An uploader reads only its own entries. Only the one marked `--dashboard` also writes into `glucose_readings`, the curve the page draws; the first value for a second wins, so a moment LibreLinkUp already stored stays as it was.
+Each sensor uploading over the API has its own random secret. The database keeps only SHA-256 of its SHA-1, so a reader of the table gets neither the secret nor anything the `api-secret` header would accept, and neither is ever logged. A secret reads and writes only its own sensor's readings, and LibreLinkUp's sensor can never be given one.
 
 ```bash
-./venv/bin/python nightscout.py issue owner --dashboard   # prints URL and secret, once
-./venv/bin/python nightscout.py rotate owner               # new secret, the old one stops at once
-./venv/bin/python nightscout.py list                       # uploaders and their last upload
+./venv/bin/python nightscout.py issue ottai --label Ottai   # prints URL and secret, once
+./venv/bin/python nightscout.py rotate ottai                 # new secret, the old one stops at once
+./venv/bin/python nightscout.py list                         # sensors and their last upload
 pm2 start ecosystem.config.js --only glucose-nightscout
 ```
 
@@ -310,9 +310,19 @@ location /api/v1/ {
 }
 ```
 
-The snapshot carries the owner's last upload as `collector.nightscout_last_upload`, and the footer says "Nightscout: приём N мин назад" next to the LibreLinkUp mark; the page reads as stale only when both have gone quiet. Readings appear on the page with the collector's next snapshot, within five minutes. Alerts still run only in the collector's loop, and only over what LibreLinkUp returned or the newest row of the database.
+Readings reach the page within a minute: the collector publishes on every one-minute step, and its LibreLinkUp polls keep their own schedule and their own backoff, so half an hour of Abbott trouble no longer freezes the page.
 
 Checked against the cgm-remote-monitor source, not against a real uploader. Which routes a given app calls (Ottai on iOS in particular) is untested.
+
+## Two sensors
+
+While two sensors are worn at once (Libre over LibreLinkUp, Ottai over the Nightscout API), both go into the one `glucose_readings`, told apart by `sensor`. A table per provider would mean every reader picking the right one; a column means one `WHERE`.
+
+`glucose_sources` lists the sensors, and one of them is primary. Everything on the page is counted from the primary alone: time in range, nights, the meal review, GMI, the forecast tail, the freshness mark and the alerts. Two sets of metrics side by side would be two answers to one question. The other sensor is a thin violet line on the 24- and 48-hour charts (`series.day.others`, `series.two_days.others`), with its own row in the legend and the tooltip, for comparing the two, nothing more.
+
+The primary is chosen in GlucoseBot (`/sensor`), which updates `glucose_sources.is_primary`; with no choice, or no table, it is Libre, as it was before there were two. The sensor card's lifetime and the sensor-change lines come from LibreLinkUp, so with another primary the card says the date is unknown and the lines are gone. `now.json` for the watch carries the primary only, in the same shape as before.
+
+`glucose_sources` is created by `init_schema()`; the column on `glucose_readings` is not, since `create_all` never alters a table. Run `migrations/2026-11-sensor-column.sql` once before deploying: old rows become `libre` by default, and the extra index on `timestamp` keeps readers that do not filter by sensor yet fast.
 
 ## Privacy
 

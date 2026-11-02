@@ -1,20 +1,22 @@
 """Хранение того, что принимает Nightscout API v1 (см. ``nightscout.py``).
 
-Отдельно от ``queries.py``: там чтение для снимка и запись сборщика, здесь —
-загрузчики, их секреты и сырые показания, пришедшие по HTTP.
+Показания ложатся в ту же ``glucose_readings``, что и у LibreLinkUp, с
+датчиком источника в ``sensor``; источники и их секреты — в
+``glucose_sources``. Своей таблицы у транспорта нет: показание остаётся
+показанием, откуда бы оно ни пришло.
 """
 
 import logging
 import random
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
-from sqlalchemy import func, insert, select, update
-from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy import insert, select, update
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from .connection import session
-from .models import GlucoseReading, NightscoutEntry, NightscoutUploader
+from .models import GlucoseReading, GlucoseSource
 
 
 log = logging.getLogger("glucose.nightscout")
@@ -24,60 +26,57 @@ log = logging.getLogger("glucose.nightscout")
 CHUNK = 1000
 
 # Взаимоблокировка и ожидание блокировки — у InnoDB это нормальный исход двух
-# параллельных INSERT IGNORE по одному уникальному ключу, а не ошибка данных.
+# параллельных INSERT IGNORE по одному ключу, а не ошибка данных.
 RETRYABLE_MYSQL_ERRORS = (1205, 1213)
 ATTEMPTS = 4
+
+KIND = "nightscout"
 
 
 @dataclass(frozen=True)
 class Sgv:
     """Показание sgv, уже проверенное и приведённое к единицам базы."""
 
-    device: str
-    date_ms: int
-    # Наивный UTC, с точностью до секунды — как DATETIME в MySQL.
+    # Наивный UTC, с точностью до секунды — как DATETIME в MySQL и ключ
+    # glucose_readings.
     measured_at: datetime
     mgdl: float
     direction: str | None
 
 
 @dataclass(frozen=True)
-class Uploader:
-    id: int
-    owner: str
-    feeds_dashboard: bool
+class Source:
+    sensor: str
+    label: str
 
 
 @dataclass(frozen=True)
-class StoredSgv:
-    id: int
-    sgv: Sgv
+class SourceInfo:
+    sensor: str
+    label: str
+    kind: str
+    is_primary: bool
+    secret_rotated_at: datetime | None
+    last_received_at: datetime | None
 
 
-@dataclass(frozen=True)
-class UploaderInfo:
-    owner: str
-    feeds_dashboard: bool
-    created_at: datetime
-    secret_rotated_at: datetime
-    last_upload_at: datetime | None
+class SourceExists(Exception):
+    pass
 
 
-def find_uploader(secret_digest: str) -> Uploader | None:
-    """Загрузчик по дайджесту секрета, или None, если такого нет."""
+def find_source(secret_digest: str) -> Source | None:
+    """Датчик по дайджесту секрета, или None, если такого нет."""
 
     with session() as db:
         row = db.execute(
-            select(
-                NightscoutUploader.id,
-                NightscoutUploader.owner,
-                NightscoutUploader.feeds_dashboard,
-            ).where(NightscoutUploader.secret_digest == secret_digest)
+            select(GlucoseSource.sensor, GlucoseSource.label)
+            .where(GlucoseSource.secret_digest == secret_digest)
+            .where(GlucoseSource.kind == KIND)
         ).first()
 
     if row is None:
         return None
-    return Uploader(id=row.id, owner=row.owner, feeds_dashboard=bool(row.feeds_dashboard))
+    return Source(sensor=row.sensor, label=row.label)
 
 
 def _insert_ignore(table):
@@ -92,38 +91,33 @@ def _retryable(error: OperationalError) -> bool:
     return code in RETRYABLE_MYSQL_ERRORS
 
 
-def store_entries(
-    uploader: Uploader, entries: list[Sgv], received_at: datetime
-) -> tuple[list[StoredSgv], int]:
-    """Записать показания загрузчика, пропустив уже записанные.
+def store_entries(source: Source, entries: list[Sgv], received_at: datetime) -> int:
+    """Записать показания датчика, пропустив уже записанные.
 
-    Возвращает записи с их id (и новые, и найденные повторы — как Nightscout
-    отвечает на повтор той же записью) и число реально добавленных строк.
-    Отметка последнего приёма ставится в той же транзакции.
+    Повтор того же момента — первая запись остаётся. Возвращает число реально
+    добавленных строк. Отметка приёма ставится в той же транзакции.
     """
 
     if not entries:
-        return [], 0
+        return 0
 
-    # Один и тот же порядок ключей у параллельных запросов — меньше шансов,
-    # что InnoDB поймает их на взаимной блокировке.
-    ordered = sorted(entries, key=lambda item: (item.device, item.date_ms))
-    rows = [
-        {
-            "uploader_id": uploader.id,
-            "device": item.device,
-            "date_ms": item.date_ms,
-            "measured_at": item.measured_at,
-            "received_at": received_at,
-            "mgdl": item.mgdl,
-            "direction": item.direction,
-        }
-        for item in ordered
-    ]
+    rows = {}
+    for item in sorted(entries, key=lambda entry: entry.measured_at):
+        rows.setdefault(
+            item.measured_at,
+            {
+                "sensor": source.sensor,
+                "timestamp": item.measured_at,
+                "mgdl": item.mgdl,
+                "received_at": received_at,
+                "direction": item.direction,
+            },
+        )
+    ordered = list(rows.values())
 
     for attempt in range(1, ATTEMPTS + 1):
         try:
-            return _store_once(uploader, ordered, rows, received_at)
+            return _store_once(source, ordered, received_at)
         except OperationalError as error:
             if attempt == ATTEMPTS or not _retryable(error):
                 raise
@@ -133,149 +127,126 @@ def store_entries(
     raise AssertionError("unreachable")
 
 
-def _store_once(uploader, ordered, rows, received_at):
+def _store_once(source: Source, rows: list[dict], received_at: datetime) -> int:
     added = 0
     with session() as db:
-        # Пачки одного загрузчика пишутся по очереди. Без этого параллельные
+        # Пачки одного датчика пишутся по очереди. Без этого параллельные
         # INSERT IGNORE по одним и тем же ключам берут разделяемые блокировки
         # на дубликатах и ловят друг друга на взаимной блокировке — на живом
         # MySQL это случалось на каждой второй гонке из восьми запросов.
         db.execute(
-            select(NightscoutUploader.id)
-            .where(NightscoutUploader.id == uploader.id)
+            select(GlucoseSource.sensor)
+            .where(GlucoseSource.sensor == source.sensor)
             .with_for_update()
         )
         for start in range(0, len(rows), CHUNK):
-            result = db.execute(_insert_ignore(NightscoutEntry).values(rows[start : start + CHUNK]))
+            result = db.execute(_insert_ignore(GlucoseReading).values(rows[start : start + CHUNK]))
             added += max(result.rowcount, 0)
 
-        if uploader.feeds_dashboard:
-            # Кривая дашборда: первая запись на секунду остаётся, повтор того
-            # же момента из LibreLinkUp или отсюда — пропускается.
-            readings = {}
-            for item in ordered:
-                readings.setdefault(item.measured_at, item.mgdl)
-            dashboard = [{"timestamp": moment, "mgdl": mgdl} for moment, mgdl in readings.items()]
-            for start in range(0, len(dashboard), CHUNK):
-                db.execute(_insert_ignore(GlucoseReading).values(dashboard[start : start + CHUNK]))
-
         db.execute(
-            update(NightscoutUploader)
-            .where(NightscoutUploader.id == uploader.id)
-            .values(last_upload_at=received_at)
+            update(GlucoseSource)
+            .where(GlucoseSource.sensor == source.sensor)
+            .values(last_received_at=received_at)
         )
-
-        low = min(item.date_ms for item in ordered)
-        high = max(item.date_ms for item in ordered)
-        ids = {
-            (row.device, row.date_ms): row.id
-            for row in db.execute(
-                select(NightscoutEntry.id, NightscoutEntry.device, NightscoutEntry.date_ms)
-                .where(NightscoutEntry.uploader_id == uploader.id)
-                .where(NightscoutEntry.date_ms.between(low, high))
-            )
-        }
         db.commit()
+    return added
 
-    stored = [StoredSgv(id=ids[(item.device, item.date_ms)], sgv=item) for item in ordered]
-    return stored, added
+
+@dataclass(frozen=True)
+class StoredReading:
+    measured_at: datetime
+    mgdl: float
+    direction: str | None
 
 
 def list_entries(
-    uploader_id: int,
+    sensor: str,
     count: int,
     after_ms: int | None = None,
     before_ms: int | None = None,
     inclusive_after: bool = False,
     inclusive_before: bool = False,
-) -> list[StoredSgv]:
-    """Показания одного загрузчика, свежие первыми, как отдаёт Nightscout."""
+) -> list[StoredReading]:
+    """Показания одного датчика, свежие первыми, как отдаёт Nightscout."""
 
-    query = select(NightscoutEntry).where(NightscoutEntry.uploader_id == uploader_id)
+    def moment(value_ms: int) -> datetime:
+        return datetime.fromtimestamp(value_ms / 1000, timezone.utc).replace(tzinfo=None)
+
+    column = GlucoseReading.timestamp
+    query = select(GlucoseReading).where(GlucoseReading.sensor == sensor)
+    # Время в базе — до секунды, граница в миллисекундах: «после 12:00:00.500»
+    # значит «с 12:00:01», «до 12:00:00.500» — «по 12:00:00».
     if after_ms is not None:
-        column = NightscoutEntry.date_ms
-        query = query.where(column >= after_ms if inclusive_after else column > after_ms)
+        bound = moment(after_ms)
+        whole = after_ms % 1000 == 0
+        if inclusive_after and whole:
+            query = query.where(column >= bound)
+        else:
+            query = query.where(column > bound.replace(microsecond=0))
     if before_ms is not None:
-        column = NightscoutEntry.date_ms
-        query = query.where(column <= before_ms if inclusive_before else column < before_ms)
-    query = query.order_by(NightscoutEntry.date_ms.desc(), NightscoutEntry.id.desc()).limit(count)
+        bound = moment(before_ms)
+        whole = before_ms % 1000 == 0
+        if inclusive_before or not whole:
+            query = query.where(column <= bound.replace(microsecond=0))
+        else:
+            query = query.where(column < bound)
+    query = query.order_by(column.desc()).limit(count)
 
     with session() as db:
         rows = db.execute(query).scalars().all()
 
     return [
-        StoredSgv(
-            id=row.id,
-            sgv=Sgv(
-                device=row.device,
-                date_ms=row.date_ms,
-                measured_at=row.measured_at,
-                mgdl=row.mgdl,
-                direction=row.direction,
-            ),
-        )
+        StoredReading(measured_at=row.timestamp, mgdl=row.mgdl, direction=row.direction)
         for row in rows
     ]
 
 
-def issue_uploader(owner: str, secret_digest: str, feeds_dashboard: bool, now: datetime) -> None:
-    """Завести загрузчика. Существующий — ошибка: перевыпуск это ``rotate``."""
+def issue_source(sensor: str, label: str, secret_digest: str, now: datetime) -> None:
+    """Завести датчик, шлющий по Nightscout. Существующий — ошибка: это ``rotate``."""
 
-    with session() as db:
-        db.add(
-            NightscoutUploader(
-                owner=owner,
-                secret_digest=secret_digest,
-                feeds_dashboard=feeds_dashboard,
-                created_at=now,
-                secret_rotated_at=now,
+    try:
+        with session() as db:
+            db.add(
+                GlucoseSource(
+                    sensor=sensor,
+                    label=label,
+                    kind=KIND,
+                    secret_digest=secret_digest,
+                    is_primary=False,
+                    created_at=now,
+                    secret_rotated_at=now,
+                )
             )
-        )
-        db.commit()
+            db.commit()
+    except IntegrityError:
+        raise SourceExists(sensor) from None
 
 
-def rotate_secret(owner: str, secret_digest: str, now: datetime) -> bool:
-    """Заменить секрет загрузчика; прежний перестаёт работать сразу."""
+def rotate_secret(sensor: str, secret_digest: str, now: datetime) -> bool:
+    """Заменить секрет датчика; прежний перестаёт работать сразу."""
 
     with session() as db:
         result = db.execute(
-            update(NightscoutUploader)
-            .where(NightscoutUploader.owner == owner)
+            update(GlucoseSource)
+            .where(GlucoseSource.sensor == sensor)
+            .where(GlucoseSource.kind == KIND)
             .values(secret_digest=secret_digest, secret_rotated_at=now)
         )
         db.commit()
         return result.rowcount == 1
 
 
-def list_uploaders() -> list[UploaderInfo]:
+def list_sources() -> list[SourceInfo]:
     with session() as db:
-        rows = db.execute(select(NightscoutUploader).order_by(NightscoutUploader.id)).scalars()
+        rows = db.execute(select(GlucoseSource).order_by(GlucoseSource.sensor)).scalars()
         return [
-            UploaderInfo(
-                owner=row.owner,
-                feeds_dashboard=bool(row.feeds_dashboard),
-                created_at=row.created_at,
+            SourceInfo(
+                sensor=row.sensor,
+                label=row.label,
+                kind=row.kind,
+                is_primary=bool(row.is_primary),
                 secret_rotated_at=row.secret_rotated_at,
-                last_upload_at=row.last_upload_at,
+                last_received_at=row.last_received_at,
             )
             for row in rows
         ]
-
-
-def read_dashboard_last_upload() -> datetime | None:
-    """Последний приём по Nightscout у владельца дашборда, или None.
-
-    None и тогда, когда таблицы нет: её создаёт init_schema() сборщика или
-    сервера приёма, а рендерер на реплике и не может.
-    """
-
-    try:
-        with session() as db:
-            return db.execute(
-                select(func.max(NightscoutUploader.last_upload_at)).where(
-                    NightscoutUploader.feeds_dashboard.is_(True)
-                )
-            ).scalar_one_or_none()
-    except SQLAlchemyError as error:
-        log.warning("nightscout uploads unavailable, publishing without them: %s", error)
-        return None

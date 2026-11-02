@@ -65,35 +65,44 @@ function applyTheme(id) {
 function renderCollectorState() {
     const collector = state.snapshot.collector || {};
     const lastSuccess = collector.last_success;
-    // Показания приходят ещё и по Nightscout API (nightscout.py): пока он
-    // принимает данные, молчание LibreLinkUp не значит, что данных нет.
-    const nightscout = collector.nightscout_last_upload;
+    // Датчики и когда от каждого приходили данные (опрос LibreLinkUp, приём
+    // по Nightscout API). Свежесть страницы — по основному: метрики считаны
+    // по нему, и молчание второго их не старит.
+    const sources = collector.sources || {};
+    const primary = collector.primary || "libre";
+    const names = Object.keys(sources);
+    const received = (name) =>
+        name === "libre" && lastSuccess ? lastSuccess : (sources[name] || {}).last_received;
+    const label = (name) => (sources[name] || {}).label || name;
+    const primaryAt = received(primary);
 
-    if (!lastSuccess && !nightscout) {
+    if (!primaryAt) {
         els.footUpdated.textContent = "Сборщик ещё не получал данные";
         els.footUpdated.className = "foot__warn";
         return;
     }
 
     const now = Date.now();
-    const silence = now - Math.max(lastSuccess || 0, nightscout || 0) * 1000;
+    const silence = now - primaryAt * 1000;
+    // Один датчик — прежние слова; два — каждый своей подписью.
+    const several = names.length > 1;
     if (silence > COLLECTOR_SILENT_AFTER_MS) {
-        if (!nightscout) {
-            els.footUpdated.textContent =
-                `Нет связи с LibreLinkUp. Последний успешный опрос — ${formatDateTime(new Date(lastSuccess * 1000))}.`;
-        } else {
-            const parts = [`последний приём по Nightscout — ${formatDateTime(new Date(nightscout * 1000))}`];
-            if (lastSuccess) {
-                parts.push(`опрос LibreLinkUp — ${formatDateTime(new Date(lastSuccess * 1000))}`);
-            }
-            els.footUpdated.textContent = `Новых данных нет: ${parts.join(", ")}.`;
-        }
+        els.footUpdated.textContent =
+            !several && primary === "libre"
+                ? `Нет связи с LibreLinkUp. Последний успешный опрос — ${formatDateTime(new Date(primaryAt * 1000))}.`
+                : `Нет данных от основного датчика (${label(primary)}). Последний приём — ${formatDateTime(new Date(primaryAt * 1000))}.`;
         els.footUpdated.className = "foot__warn";
         return;
     }
 
-    const nightscoutNote = nightscout ? ` · Nightscout: приём ${formatAgo(now - nightscout * 1000)}` : "";
-    els.footUpdated.textContent = `Обновлено ${formatAgo(silence)}${nightscoutNote}`;
+    const others = several
+        ? names
+              .filter((name) => name !== primary && received(name))
+              .map((name) => ` · ${label(name)}: ${formatAgo(now - received(name) * 1000)}`)
+              .join("")
+        : "";
+    const primaryNote = several ? ` (${label(primary)})` : "";
+    els.footUpdated.textContent = `Обновлено ${formatAgo(silence)}${primaryNote}${others}`;
     els.footUpdated.className = "";
 }
 

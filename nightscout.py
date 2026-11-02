@@ -1,9 +1,9 @@
 """Приём показаний по Nightscout API v1 — без отдельного сервера Nightscout.
 
 Приложение, читающее сенсор, получает адрес сервиса и секрет и шлёт показания
-сюда, как шлёт их в Nightscout. Они ложатся в ``nightscout_entries`` как
-пришли, а показания владельца дашборда — ещё и в ``glucose_readings``, откуда
-их берёт снимок страницы.
+сюда, как шлёт их в Nightscout. Секрет называет датчик (``glucose_sources``),
+и показания ложатся в общую ``glucose_readings`` с этим датчиком в ``sensor``.
+Метрики страницы считаются по основному датчику; остальные — вторая кривая.
 
 Поведение сверено с cgm-remote-monitor (lib/api/entries, lib/server/entries.js,
 lib/authorization, lib/server/enclave.js), а не только со Swagger:
@@ -16,6 +16,7 @@ lib/authorization, lib/server/enclave.js), а не только со Swagger:
   показывает сахар; ``date`` — Unix-время в миллисекундах. Единицы по величине
   числа не угадываются: секунды вместо миллисекунд дают 1970 год и отказ.
 * Тело — объект или массив объектов, не больше 10 000 записей.
+* ``device`` принимается и не хранится: какой это датчик, говорит секрет.
 
 Записи других типов (``mbg``, ``cal``…) принимаются без ошибки, чтобы
 загрузчик не повторял пачку вечно, но показаниями не становятся.
@@ -43,7 +44,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlsplit
 
-from database.nightscout import Sgv, StoredSgv, Uploader
+from database.nightscout import Sgv, Source, StoredReading
 
 
 log = logging.getLogger("glucose.nightscout")
@@ -82,7 +83,6 @@ DIRECTIONS = frozenset(
     }
 )
 
-DEVICE_MAX = 64
 DEFAULT_COUNT = 10
 MAX_COUNT = 1000
 
@@ -140,14 +140,16 @@ def digest_of_secret(secret: str) -> str:
 def _number(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)):
-        number = float(value)
-    elif isinstance(value, str):
-        try:
+    try:
+        if isinstance(value, (int, float)):
+            number = float(value)
+        elif isinstance(value, str):
             number = float(value.strip())
-        except ValueError:
+        else:
             return None
-    else:
+    except (ValueError, OverflowError):
+        # OverflowError — целое на сотни цифр: оно не число датчика, а пропуск
+        # записи, и не 500 на всю пачку, которую загрузчик повторял бы вечно.
         return None
     return number if math.isfinite(number) else None
 
@@ -200,13 +202,8 @@ def parse_entry(entry: dict, now: datetime) -> tuple[Sgv | None, str | None]:
     if not isinstance(direction, str) or direction not in DIRECTIONS:
         direction = None
 
-    device = entry.get("device")
-    device = device.strip()[:DEVICE_MAX] if isinstance(device, str) else ""
-
     return (
         Sgv(
-            device=device,
-            date_ms=date_ms,
             measured_at=measured.replace(microsecond=0),
             mgdl=mgdl,
             direction=direction,
@@ -247,28 +244,30 @@ def parse_entries(body: Any, now: datetime) -> tuple[list[Sgv], dict[str, int]]:
     return accepted, skipped
 
 
-def entry_json(stored: StoredSgv) -> dict:
-    """Запись в форме Nightscout."""
+def entry_json(sensor: str, reading: Sgv | StoredReading) -> dict:
+    """Запись в форме Nightscout.
 
-    sgv = stored.sgv
-    moment = datetime.fromtimestamp(sgv.date_ms / 1000, timezone.utc)
+    Время в базе — до секунды, поэтому и ``date`` кратна тысяче. ``_id`` —
+    24 hex-символа, как ObjectId у Nightscout: датчик и секунда измерения,
+    то есть ключ строки, — повтор той же записи получает тот же ``_id``.
+    """
+
+    moment = reading.measured_at.replace(tzinfo=timezone.utc)
+    seconds = int(moment.timestamp())
     iso = moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    value: int | float = int(sgv.mgdl) if float(sgv.mgdl).is_integer() else sgv.mgdl
+    value: int | float = int(reading.mgdl) if float(reading.mgdl).is_integer() else reading.mgdl
+    prefix = hashlib.sha1(sensor.encode("utf-8")).hexdigest()[:12]
     result = {
-        # ObjectId у Nightscout — 24 hex-символа; клиенты, что разбирают _id,
-        # ждут именно эту форму.
-        "_id": f"{stored.id:024x}",
+        "_id": f"{prefix}{seconds:012x}",
         "type": "sgv",
         "sgv": value,
-        "date": sgv.date_ms,
+        "date": seconds * 1000,
         "dateString": iso,
         "sysTime": iso,
         "utcOffset": 0,
     }
-    if sgv.direction is not None:
-        result["direction"] = sgv.direction
-    if sgv.device:
-        result["device"] = sgv.device
+    if reading.direction is not None:
+        result["direction"] = reading.direction
     return result
 
 
@@ -279,9 +278,9 @@ def entry_json(stored: StoredSgv) -> dict:
 class Backend:
     """Всё, что обработчику нужно от внешнего мира, — чтобы тесты могли подменить."""
 
-    find_uploader: Callable[[str], Uploader | None]
-    store_entries: Callable[[Uploader, list[Sgv], datetime], tuple[list[StoredSgv], int]]
-    list_entries: Callable[..., list[StoredSgv]]
+    find_source: Callable[[str], Source | None]
+    store_entries: Callable[[Source, list[Sgv], datetime], int]
+    list_entries: Callable[..., list[StoredReading]]
     now: Callable[[], datetime]
 
     @classmethod
@@ -289,7 +288,7 @@ class Backend:
         from database import nightscout as storage
 
         return cls(
-            find_uploader=storage.find_uploader,
+            find_source=storage.find_source,
             store_entries=storage.store_entries,
             list_entries=storage.list_entries,
             now=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
@@ -380,7 +379,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # ── Авторизация ──
 
-    def _uploader(self, query: dict[str, list[str]]) -> Uploader | None:
+    def _source(self, query: dict[str, list[str]]) -> Source | None:
         supplied = self.headers.get("api-secret")
         if not supplied and query.get("secret"):
             supplied = query["secret"][0]
@@ -389,13 +388,13 @@ class Handler(BaseHTTPRequestHandler):
         digest = digest_of_header(supplied)
         if digest is None:
             return None
-        return self.backend.find_uploader(digest)
+        return self.backend.find_source(digest)
 
-    def _require_uploader(self, query: dict[str, list[str]]) -> Uploader | None:
-        uploader = self._uploader(query)
-        if uploader is None:
+    def _require_source(self, query: dict[str, list[str]]) -> Source | None:
+        source = self._source(query)
+        if source is None:
             self._send_status(401, "Unauthorized", "Invalid/Missing")
-        return uploader
+        return source
 
     # ── Тело ──
 
@@ -484,7 +483,7 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def _verifyauth(self, query: dict[str, list[str]]) -> None:
-        ok = self._uploader(query) is not None
+        ok = self._source(query) is not None
         self._send_json(
             200,
             {
@@ -501,8 +500,8 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def _list(self, query: dict[str, list[str]], current: bool) -> None:
-        uploader = self._require_uploader(query)
-        if uploader is None:
+        source = self._require_source(query)
+        if source is None:
             return
         wanted = query.get("find[type]")
         if wanted and wanted[0] != "sgv":
@@ -512,26 +511,26 @@ class Handler(BaseHTTPRequestHandler):
         if count == 0:
             self._send_json(200, [])
             return
-        rows = self.backend.list_entries(uploader.id, count, **_date_filter(query))
-        self._send_json(200, [entry_json(row) for row in rows])
+        rows = self.backend.list_entries(source.sensor, count, **_date_filter(query))
+        self._send_json(200, [entry_json(source.sensor, row) for row in rows])
 
     def _post(self, query: dict[str, list[str]]) -> None:
         # Авторизация до чтения тела: чужой запрос не стоит нам разбора 4 МБ.
-        uploader = self._require_uploader(query)
-        if uploader is None:
+        source = self._require_source(query)
+        if source is None:
             return
         body = self._read_json()
         now = self.backend.now()
         accepted, skipped = parse_entries(body, now)
-        stored, added = self.backend.store_entries(uploader, accepted, now) if accepted else ([], 0)
+        added = self.backend.store_entries(source, accepted, now) if accepted else 0
         log.info(
-            "uploader %d: %d sgv received, %d new, skipped %s",
-            uploader.id,
+            "sensor %s: %d sgv received, %d new, skipped %s",
+            source.sensor,
             len(accepted),
             added,
             skipped or "nothing",
         )
-        self._send_json(200, [entry_json(row) for row in stored])
+        self._send_json(200, [entry_json(source.sensor, item) for item in accepted])
 
 
 def _reject_constant(name: str) -> Any:
@@ -593,16 +592,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Nightscout API v1 для GlucoseStat")
     commands = parser.add_subparsers(dest="command")
     commands.add_parser("serve", help="запустить HTTP-сервер (по умолчанию)")
-    issue = commands.add_parser("issue", help="завести загрузчика и выдать секрет")
-    issue.add_argument("owner")
+    issue = commands.add_parser("issue", help="завести датчик и выдать ему секрет")
+    issue.add_argument("sensor", type=_sensor_name, help="имя датчика: ottai, dexcom…")
+    issue.add_argument("--label", help="подпись на графике, по умолчанию — имя с заглавной")
     issue.add_argument(
-        "--dashboard",
+        "--secret-stdin",
         action="store_true",
-        help="показания этого загрузчика идут на кривую дашборда",
+        help="взять секрет из stdin вместо нового случайного",
     )
     rotate = commands.add_parser("rotate", help="перевыпустить секрет; прежний перестаёт работать")
-    rotate.add_argument("owner")
-    commands.add_parser("list", help="загрузчики и время последнего приёма")
+    rotate.add_argument("sensor", type=_sensor_name)
+    commands.add_parser("list", help="датчики и время последнего приёма")
     args = parser.parse_args(argv)
 
     if args.command in (None, "serve"):
@@ -616,29 +616,49 @@ def main(argv: list[str] | None = None) -> int:
     now = _utc_now()
 
     if args.command == "issue":
-        secret = new_secret()
-        storage.issue_uploader(args.owner, digest_of_secret(secret), args.dashboard, now)
-        _print_credentials(secret)
+        secret = _secret_from_stdin() if args.secret_stdin else new_secret()
+        label = args.label or args.sensor.capitalize()
+        try:
+            storage.issue_source(args.sensor, label, digest_of_secret(secret), now)
+        except storage.SourceExists:
+            print(f"Датчик {args.sensor!r} уже есть. Новый секрет: nightscout.py rotate {args.sensor}")
+            return 1
+        if args.secret_stdin:
+            print(f"URL: {public_url()}\nСекрет принят, датчик {args.sensor!r} заведён.")
+        else:
+            _print_credentials(secret)
         return 0
 
     if args.command == "rotate":
         secret = new_secret()
-        if not storage.rotate_secret(args.owner, digest_of_secret(secret), now):
-            print(f"Загрузчика {args.owner!r} нет. Завести: nightscout.py issue {args.owner}")
+        if not storage.rotate_secret(args.sensor, digest_of_secret(secret), now):
+            print(f"Датчика {args.sensor!r} с приёмом по Nightscout нет — см. nightscout.py list")
             return 1
         _print_credentials(secret)
         return 0
 
     print(f"URL: {public_url()}")
-    for info in storage.list_uploaders():
-        last = info.last_upload_at.isoformat(sep=" ") + " UTC" if info.last_upload_at else "ещё не было"
-        flag = " [дашборд]" if info.feeds_dashboard else ""
-        print(
-            f"{info.owner}{flag}: секрет от {info.secret_rotated_at.isoformat(sep=' ')} UTC, "
-            f"последний приём — {last}"
-        )
+    for info in storage.list_sources():
+        last = info.last_received_at.isoformat(sep=" ") + " UTC" if info.last_received_at else "ещё не было"
+        flag = " [основной]" if info.is_primary else ""
+        print(f"{info.sensor} ({info.label}, {info.kind}){flag}: последний приём — {last}")
     return 0
 
+
+SENSOR_NAME = re.compile(r"^[a-z0-9_-]{1,16}$")
+
+
+def _sensor_name(value: str) -> str:
+    if not SENSOR_NAME.match(value):
+        raise argparse.ArgumentTypeError("имя датчика: a-z, 0-9, _ и -, до 16 символов")
+    return value
+
+
+def _secret_from_stdin() -> str:
+    secret = sys.stdin.readline().strip()
+    if len(secret) < 12:
+        raise SystemExit("Секрет короче 12 символов — Nightscout такой не примет.")
+    return secret
 
 if __name__ == "__main__":
     sys.exit(main())

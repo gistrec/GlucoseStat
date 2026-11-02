@@ -101,6 +101,8 @@ class TestRunOnce:
         monkeypatch.setattr("main.stamp_freshness", lambda readings: None)
         monkeypatch.setattr("main.store_last_success", lambda when: None)
         monkeypatch.setattr("main.latest_fingerstick", lambda: None)
+        monkeypatch.setattr("main.primary_sensor", lambda: "libre")
+        monkeypatch.setattr("main.mark_received", lambda sensor, when: None)
 
     def test_db_outage_does_not_silence_the_alert(self, monkeypatch):
         def down(*args, **kwargs):
@@ -127,8 +129,8 @@ class TestRunOnce:
 
         blood = (BASE, 95.0)
         self.quiet(monkeypatch)
-        monkeypatch.setattr("main.store_readings", lambda readings: 0)
-        monkeypatch.setattr("main.last_readings", lambda n: [])
+        monkeypatch.setattr("main.store_readings", lambda readings, **kw: 0)
+        monkeypatch.setattr("main.last_readings", lambda n, **kw: [])
         monkeypatch.setattr("main.latest_fingerstick", lambda: blood)
 
         low = [(BASE, 50.0)]
@@ -143,8 +145,8 @@ class TestRunOnce:
         # устаревшее значение notify отсеет по возрасту, а не по пустоте.
         stored = [(BASE, 120.0)]
         self.quiet(monkeypatch)
-        monkeypatch.setattr("main.store_readings", lambda readings: 0)
-        monkeypatch.setattr("main.last_readings", lambda n: stored)
+        monkeypatch.setattr("main.store_readings", lambda readings, **kw: 0)
+        monkeypatch.setattr("main.last_readings", lambda n, **kw: stored)
 
         notifier = RecordingNotifier()
         delay, backoff, _ = run_once(
@@ -164,8 +166,8 @@ class TestRunOnce:
         stored = []
         fetched = [(BASE, 120.0)]
         self.quiet(monkeypatch)
-        monkeypatch.setattr("main.store_readings", lambda readings: len(readings))
-        monkeypatch.setattr("main.last_readings", lambda n: fetched)
+        monkeypatch.setattr("main.store_readings", lambda readings, **kw: len(readings))
+        monkeypatch.setattr("main.last_readings", lambda n, **kw: fetched)
         monkeypatch.setattr("main.store_last_success", stored.append)
 
         run_once(FakeCollector(fetched), None, 300, BACKOFF_MIN, None)
@@ -179,8 +181,8 @@ class TestRunOnce:
         # Иначе страница объявит сборщика живым ровно когда он молчит.
         stored = []
         self.quiet(monkeypatch)
-        monkeypatch.setattr("main.store_readings", lambda readings: 0)
-        monkeypatch.setattr("main.last_readings", lambda n: [])
+        monkeypatch.setattr("main.store_readings", lambda readings, **kw: 0)
+        monkeypatch.setattr("main.last_readings", lambda n, **kw: [])
         monkeypatch.setattr("main.store_last_success", stored.append)
 
         run_once(FakeCollector(RuntimeError("network down")), None, 300, BACKOFF_MIN, None)
@@ -192,8 +194,8 @@ class TestRunOnce:
     ):
         fetched = [(BASE, 120.0), (BASE + timedelta(minutes=5), 90.0)]
         published = {}
-        monkeypatch.setattr("main.store_readings", lambda readings: len(readings))
-        monkeypatch.setattr("main.last_readings", lambda n: fetched[-1:])
+        monkeypatch.setattr("main.store_readings", lambda readings, **kw: len(readings))
+        monkeypatch.setattr("main.last_readings", lambda n, **kw: fetched[-1:])
         monkeypatch.setattr("main.publish", lambda **kwargs: published.update(kwargs))
         monkeypatch.setattr("main.stamp_freshness", lambda readings: None)
         monkeypatch.setattr("main.store_last_success", lambda when: None)
@@ -208,3 +210,70 @@ class TestRunOnce:
         assert backoff == BACKOFF_MIN
         assert last_success is not None
         assert published["last_success"] == last_success
+
+
+class TestTwoSensors:
+    """Основной датчик и шаг цикла без опроса Abbott (см. ``TICK``)."""
+
+    def quiet(self, monkeypatch, primary):
+        monkeypatch.setattr("main.stamp_freshness", lambda readings: None)
+        monkeypatch.setattr("main.store_last_success", lambda when: None)
+        monkeypatch.setattr("main.latest_fingerstick", lambda: None)
+        monkeypatch.setattr("main.primary_sensor", lambda: primary)
+        monkeypatch.setattr("main.mark_received", lambda sensor, when: None)
+
+    def test_a_step_without_a_poll_still_publishes_and_alerts(self, monkeypatch):
+        # Codex P1: при паузе LibreLinkUp в полчаса снимок не обновлялся, и
+        # показания, пришедшие по Nightscout, оставались невидимыми.
+        self.quiet(monkeypatch, "ottai")
+        published = []
+        low = [(BASE, 60.0)]
+        asked = []
+
+        def last_readings(n, sensor="libre"):
+            asked.append(sensor)
+            return low
+
+        monkeypatch.setattr("main.last_readings", last_readings)
+        monkeypatch.setattr("main.publish", lambda **kwargs: published.append(kwargs))
+        notifier = RecordingNotifier()
+        # Опрос сломан бы был — но в этом шаге его нет вовсе.
+        collector = FakeCollector(RuntimeError("abbott is down"))
+
+        delay, backoff, _ = run_once(
+            collector, notifier, 300, BACKOFF_MIN * 4, None, poll=False
+        )
+
+        assert published, "снимок обязан обновиться и без опроса"
+        assert notifier.seen == [low]
+        assert asked == ["ottai"]
+        # Пауза Abbott не тронута: шаг без опроса её не сбрасывает и не растит.
+        assert backoff == BACKOFF_MIN * 4
+
+    def test_libre_fetch_does_not_alert_when_ottai_is_primary(self, monkeypatch):
+        self.quiet(monkeypatch, "ottai")
+        monkeypatch.setattr("main.publish", lambda **kwargs: None)
+        monkeypatch.setattr("main.store_readings", lambda readings, **kw: 0)
+        ottai = [(BASE, 140.0)]
+        monkeypatch.setattr("main.last_readings", lambda n, sensor="libre": ottai)
+        notifier = RecordingNotifier()
+
+        run_once(FakeCollector([(BASE, 50.0)]), notifier, 300, BACKOFF_MIN, None)
+
+        # Низкий Libre — не тревога, когда метрики считаются по Ottai.
+        assert notifier.seen == [ottai]
+
+    def test_libre_readings_are_stored_under_libre(self, monkeypatch):
+        self.quiet(monkeypatch, "libre")
+        monkeypatch.setattr("main.publish", lambda **kwargs: None)
+        monkeypatch.setattr("main.last_readings", lambda n, sensor="libre": [])
+        stored = []
+        monkeypatch.setattr(
+            "main.store_readings",
+            lambda readings, sensor, received_at: stored.append((sensor, received_at)) or 0,
+        )
+
+        run_once(FakeCollector([(BASE, 120.0)]), None, 300, BACKOFF_MIN, None)
+
+        assert stored[0][0] == "libre"
+        assert stored[0][1] is not None

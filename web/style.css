@@ -26,6 +26,7 @@
     --fg: #dde1ec;
     --muted: #8a90a6;
     --accent: #7eb8f7;
+    --other-sensor: #b48cf2;
     --panel: #0d0d14;
     --panel-chrome: #111118;
     /* Дальний конец градиента в заголовке. */
@@ -84,6 +85,7 @@
     --fg: #12141c;
     --muted: #5b6070;
     --accent: #1f6fd0;
+    --other-sensor: #8a55d8;
     --panel: #ffffff;
     --panel-chrome: #e2e5ef;
     --title-ink: #0b0d14;

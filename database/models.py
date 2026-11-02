@@ -6,20 +6,22 @@ from sqlalchemy import (
     Column,
     DateTime,
     Float,
-    ForeignKey,
+    Index,
     Integer,
     MetaData,
     Numeric,
     String,
     Table,
     Text,
-    UniqueConstraint,
 )
-from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import declarative_base
 
 
 Base = declarative_base()
+
+# Датчик, который был единственным до появления второго: старые строки
+# glucose_readings получают его по DEFAULT миграции.
+LIBRE = "libre"
 
 # Журнал событий принадлежит боту GlucoseBot — он его создаёт и в него пишет.
 # Здесь только чтение, и метаданные намеренно отдельные: попади таблица в
@@ -150,74 +152,54 @@ class SensorRecord(Base):
 
 
 class GlucoseReading(Base):
-    """Single glucose reading as published by LibreLinkUp.
+    """Показание сенсора — любого: датчик записан в ``sensor``.
 
-    ``timestamp`` is naive UTC. MySQL DATETIME carries no zone, so the
-    collector normalises to UTC before writing — see ``main.py``.
+    Одна таблица на все датчики, а не по таблице на провайдера: показание —
+    одна и та же сущность, откуда бы оно ни пришло. Метрики считаются по
+    основному датчику (``GlucoseSource.is_primary``), остальные — вторая кривая.
 
-    ``mgdl`` is always mg/dL. The API's ``Value`` follows the account's
-    display units (mmol/L for a European account), ``ValueInMgPerDl`` does
-    not; storing the latter keeps rows comparable regardless of how the
-    LibreLinkUp profile is configured.
+    ``timestamp`` — момент измерения, наивный UTC. MySQL DATETIME зоны не
+    несёт, поэтому всё приводится к UTC до записи — см. ``main.py``.
+    ``received_at`` — когда сервис его получил: история после обрыва связи
+    приходит часами позже, чем была снята. Пусто у строк до этой колонки.
+
+    ``mgdl`` — всегда мг/дл. У LibreLinkUp ``Value`` следует единицам
+    аккаунта, ``ValueInMgPerDl`` — нет; у Nightscout ``sgv`` — мг/дл всегда.
     """
 
     __tablename__ = "glucose_readings"
+    __table_args__ = (Index("ix_glucose_readings_timestamp", "timestamp"),)
 
+    # Ключ — датчик и секунда: повтор того же замера ничего не добавляет, а два
+    # датчика в одну секунду — два показания, а не одно.
+    sensor = Column(String(16), primary_key=True, default=LIBRE)
     timestamp = Column(DateTime, primary_key=True)
     mgdl = Column(Float, nullable=False)
+    received_at = Column(DateTime, nullable=True)
+    direction = Column(String(32), nullable=True)
 
 
-class NightscoutUploader(Base):
-    """Загрузчик, который шлёт показания по Nightscout API v1, — строкой на человека.
+class GlucoseSource(Base):
+    """Датчик, от которого приходят показания, — строкой на датчик.
 
-    Секрет в базе не лежит: загрузчик присылает SHA-1 от него, а хранится
-    SHA-256 от этого SHA-1. Прочитавший таблицу не получает ни секрета, ни
-    того, что можно подставить в заголовок ``api-secret``.
+    Здесь же выбор основного: по нему считаются все метрики, алерты и прогноз
+    бота. Переключает его бот (``/sensor``) одним UPDATE; создаёт таблицу этот
+    репозиторий.
+
+    У датчиков, что шлют по Nightscout API, — свой секрет. В базе он не лежит:
+    загрузчик присылает SHA-1 от него, а хранится SHA-256 от этого SHA-1, так
+    что прочитавший таблицу не получает ничего, что подошло бы в ``api-secret``.
     """
 
-    __tablename__ = "nightscout_uploaders"
+    __tablename__ = "glucose_sources"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    owner = Column(String(64), nullable=False, unique=True)
-    secret_digest = Column(String(64), nullable=False, unique=True)
-    # Только показания владельца дашборда попадают в glucose_readings: кривая
-    # на странице одна, и чужое в ней было бы чужими данными у него.
-    feeds_dashboard = Column(Boolean, nullable=False, default=False)
+    sensor = Column(String(16), primary_key=True)
+    label = Column(String(32), nullable=False)
+    # 'librelinkup' или 'nightscout' — как показания сюда попадают.
+    kind = Column(String(16), nullable=False)
+    secret_digest = Column(String(64), nullable=True, unique=True)
+    is_primary = Column(Boolean, nullable=False, default=False)
     # Наивный UTC, как timestamp у показаний.
     created_at = Column(DateTime, nullable=False)
-    secret_rotated_at = Column(DateTime, nullable=False)
-    last_upload_at = Column(DateTime, nullable=True)
-
-
-class NightscoutEntry(Base):
-    """Показание sgv, принятое по Nightscout API, в том виде, как пришло.
-
-    Ключ дедупликации — загрузчик, прибор и момент измерения в миллисекундах:
-    повтор той же пачки после обрыва связи не плодит строк, а уникальный
-    индекс делает это и при параллельных запросах.
-    """
-
-    __tablename__ = "nightscout_entries"
-    __table_args__ = (
-        UniqueConstraint("uploader_id", "device", "date_ms", name="uq_nightscout_entry"),
-    )
-
-    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
-    uploader_id = Column(Integer, ForeignKey("nightscout_uploaders.id"), nullable=False)
-    # Пустая строка, а не NULL: NULL в уникальном индексе MySQL не равен
-    # самому себе, и повтор без device проходил бы мимо дедупликации.
-    # Сравнение побайтовое: в collation по умолчанию «Ottai» и «ottai» — один
-    # ключ, и повтор с другим регистром молча слился бы с чужим прибором.
-    device = Column(
-        String(64).with_variant(mysql.VARCHAR(64, collation="utf8mb4_bin"), "mysql"),
-        nullable=False,
-        default="",
-    )
-    # Момент измерения: date из запроса как есть и он же наивным UTC.
-    date_ms = Column(BigInteger, nullable=False)
-    measured_at = Column(DateTime, nullable=False)
-    # Когда сервис его принял — отдельно от измерения: история после обрыва
-    # связи приходит часами позже, чем была снята.
-    received_at = Column(DateTime, nullable=False)
-    mgdl = Column(Float, nullable=False)
-    direction = Column(String(32), nullable=True)
+    secret_rotated_at = Column(DateTime, nullable=True)
+    last_received_at = Column(DateTime, nullable=True)
