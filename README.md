@@ -47,6 +47,8 @@ In production it runs under pm2:
 pm2 start ecosystem.config.js
 ```
 
+`startOrReload` never removes an app the file no longer lists. A host still running the old single `glucose-collector` keeps it alive next to the new three, polling Abbott twice and alerting twice, so delete it once: `pm2 delete glucose-collector && pm2 startOrReload ecosystem.config.js && pm2 save`.
+
 ## Preview
 
 `preview.py` serves the page from a throwaway copy of `web/` with a synthetic snapshot, so a change can be looked at before it reaches the server. It needs no database and no LibreLinkUp, and writes nothing to `web/data.json`:
