@@ -542,3 +542,12 @@ class TestPrimarySensor:
         overview = {sensor: (label, primary, received) for sensor, label, primary, received in queries.sources_overview()}
         assert overview["libre"] == ("Libre", True, None)
         assert overview["ottai"] == ("Ottai", False, NOW)
+
+
+def test_libre_is_reserved_even_before_its_row_exists(db):
+    with db() as session:
+        session.execute(GlucoseSource.__table__.delete().where(GlucoseSource.sensor == "libre"))
+        session.commit()
+
+    with pytest.raises(storage.SourceExists):
+        storage.issue_source("libre", "Libre", digest_of_secret("sneakySecret12345"), NOW)

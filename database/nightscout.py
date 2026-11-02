@@ -16,7 +16,7 @@ from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from .connection import session
-from .models import GlucoseReading, GlucoseSource
+from .models import LIBRE, GlucoseReading, GlucoseSource
 
 
 log = logging.getLogger("glucose.nightscout")
@@ -202,8 +202,14 @@ def list_entries(
 
 
 def issue_source(sensor: str, label: str, secret_digest: str, now: datetime) -> None:
-    """Завести датчик, шлющий по Nightscout. Существующий — ошибка: это ``rotate``."""
+    """Завести датчик, шлющий по Nightscout. Существующий — ошибка: это ``rotate``.
 
+    Имя Libre занято LibreLinkUp, даже если его строки ещё нет: секрет на нём
+    писал бы в кривую сборщика и читал бы её.
+    """
+
+    if sensor == LIBRE:
+        raise SourceExists(sensor)
     try:
         with session() as db:
             db.add(

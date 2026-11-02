@@ -576,7 +576,8 @@ export function drawChart() {
 
     // Один предикат «есть ли что рисовать» на оба ранних выхода: у дневного
     // вида points не существует вовсе, и points.length здесь бы падал.
-    const hasData = daily ? days.some((day) => day.count > 0) : points.length > 0;
+    // Второй датчик — тоже данные: молчит основной, а кривая другого идёт.
+    const hasData = daily ? days.some((day) => day.count > 0) : points.length > 0 || others.length > 0;
 
     els.chartEmpty.hidden = hasData;
     els.canvas.setAttribute(
