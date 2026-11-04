@@ -77,31 +77,29 @@ function renderCollectorState() {
     const primaryAt = received(primary);
 
     if (!primaryAt) {
-        els.footUpdated.textContent = "Сборщик ещё не получал данные";
-        els.footUpdated.className = "foot__warn";
+        els.updated.textContent = "Сборщик ещё не получал данные";
+        els.updated.className = "head__sub head__sub--warn";
         return;
     }
 
     const now = Date.now();
     const silence = now - primaryAt * 1000;
-    // Один датчик — прежние слова; два — каждый своей подписью.
+    // Один Libre — слова про LibreLinkUp; иначе — имя основного датчика.
     const several = names.length > 1;
     if (silence > COLLECTOR_SILENT_AFTER_MS) {
-        els.footUpdated.textContent =
+        els.updated.textContent =
             !several && primary === "libre"
                 ? `Нет связи с LibreLinkUp. Последний успешный опрос — ${formatDateTime(new Date(primaryAt * 1000))}.`
                 : `Нет данных от основного датчика (${label(primary)}). Последний приём — ${formatDateTime(new Date(primaryAt * 1000))}.`;
-        els.footUpdated.className = "foot__warn";
+        els.updated.className = "head__sub head__sub--warn";
         return;
     }
 
-    // Два датчика — по строке на каждый, основной первым.
-    els.footUpdated.textContent = several
-        ? [primary, ...names.filter((name) => name !== primary && received(name))]
-              .map((name) => `${label(name)} — обновлено ${formatAgo(now - received(name) * 1000)}`)
-              .join("\n")
-        : `Обновлено ${formatAgo(silence)}`;
-    els.footUpdated.className = "";
+    // По строке на датчик, основной первым.
+    els.updated.textContent = [primary, ...names.filter((name) => name !== primary && received(name))]
+        .map((name) => `Датчик ${label(name)} обновлён ${formatAgo(now - received(name) * 1000)}`)
+        .join("\n");
+    els.updated.className = "head__sub";
 }
 
 /* Однократно: расхождение зон — ошибка конфигурации, о которой надо сказать

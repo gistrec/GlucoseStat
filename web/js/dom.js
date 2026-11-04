@@ -38,7 +38,7 @@ export const els = {
     overlayTip: document.getElementById("overlay-tip"),
     overlayLegend: document.getElementById("overlay-legend"),
     meals: document.getElementById("meals"),
-    footUpdated: document.getElementById("foot-updated"),
+    updated: document.getElementById("updated"),
     theme: document.getElementById("theme"),
     zone: document.getElementById("zone"),
     zoneMenu: document.getElementById("zone-menu"),

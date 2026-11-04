@@ -683,6 +683,10 @@ export function drawChart() {
         for (const other of others) {
             legendItems.push({ ...SERIES.otherSensor, label: sensorLabel(other.label) });
         }
+        // Глюкометр — следом за датчиками: та же величина, третьим прибором.
+        if (sugars.length) {
+            legendItems.push(SERIES.sugar);
+        }
         // «Обычно» — сразу за измерением: коридор, с которым его сравнивают,
         // а не отметка на самой кривой, как всё, что ниже.
         if (runs.length) {
@@ -704,6 +708,11 @@ export function drawChart() {
         if (fall) {
             legendItems.push(fall.kind === "lower" ? SERIES.fallLower : SERIES.fall);
         }
+        // Молчание сенсора — за хвостом: узкая полоса остаётся без подписи,
+        // и легенда для неё единственное имя.
+        if (gaps.length) {
+            legendItems.push(SERIES.gap);
+        }
         // И следом — полосы вне нормы: они про ту же кривую, а не про журнал.
         // Снизу вверх, в порядке самих полос на холсте: легенда перечисляет их
         // так же, как их видно.
@@ -713,21 +722,10 @@ export function drawChart() {
         if (highsShown) {
             legendItems.push(SERIES.high);
         }
-        // Молчание сенсора — там же, среди знаков о кривой: узкая полоса
-        // остаётся без подписи, и легенда для неё единственное имя.
-        if (gaps.length) {
-            legendItems.push(SERIES.gap);
-        }
         // Кольца — тоже среди знаков о кривой: то же измерение, только с
         // оговоркой к числу, а не новый ряд.
         if (artifacts.length) {
             legendItems.push(SERIES.artifact);
-        }
-        // Сверка — последней из знаков о кривой и перед журналом: она про то же
-        // измерение, но приходит не из журнала событий, а из другого прибора, и
-        // между «шум сенсора» и «углеводы» ей место ровно посередине.
-        if (sugars.length) {
-            legendItems.push(SERIES.sugar);
         }
         for (const kind of [SERIES.meal, SERIES.insulin, SERIES.basal]) {
             if (lanes.some((lane) => lane.bars.some((bar) => bar.series === kind))) {
