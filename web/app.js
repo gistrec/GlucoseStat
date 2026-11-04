@@ -95,14 +95,12 @@ function renderCollectorState() {
         return;
     }
 
-    const others = several
-        ? names
-              .filter((name) => name !== primary && received(name))
-              .map((name) => ` · ${label(name)}: ${formatAgo(now - received(name) * 1000)}`)
-              .join("")
-        : "";
-    const primaryNote = several ? ` (${label(primary)})` : "";
-    els.footUpdated.textContent = `Обновлено ${formatAgo(silence)}${primaryNote}${others}`;
+    // Два датчика — по строке на каждый, основной первым.
+    els.footUpdated.textContent = several
+        ? [primary, ...names.filter((name) => name !== primary && received(name))]
+              .map((name) => `${label(name)} — обновлено ${formatAgo(now - received(name) * 1000)}`)
+              .join("\n")
+        : `Обновлено ${formatAgo(silence)}`;
     els.footUpdated.className = "";
 }
 

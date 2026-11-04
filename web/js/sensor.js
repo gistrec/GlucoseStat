@@ -35,13 +35,14 @@ export function renderSensor() {
         return;
     }
 
-    // Два датчика — по строке на каждый, основной первым; один — прежняя
+    // Два датчика — по плашке на каждый, основной первым: в одной рамке
+    // второй заголовок терялся среди половин первого. Один — прежняя
     // карточка без заголовка.
     const sensors = state.snapshot.sensors || [];
     els.sensorCard.replaceChildren(
         ...(sensors.length > 1
-            ? sensors.flatMap((item) => [title(item), lifeHalf(item), dataHalf(item)])
-            : [lifeHalf(sensor), dataHalf(sensor)])
+            ? sensors.map((item) => card(title(item), lifeHalf(item), dataHalf(item)))
+            : [card(lifeHalf(sensor), dataHalf(sensor))])
     );
     setFoldSummary("sensor", sensorSummary(sensor));
     els.sensor.hidden = false;
@@ -197,18 +198,24 @@ function dataHalf(sensor) {
     return half;
 }
 
-/* Заголовок строки датчика: «Датчик Libre · основной» — те же слова, что в
-   легенде графика. Строка на всю ширину сетки, над двумя половинами. */
+function card(...children) {
+    const element = document.createElement("div");
+    element.className = "sensor";
+    element.append(...children);
+    return element;
+}
+
+/* Заголовок плашки: «Датчик Libre · основной», «Датчик Ottai ·
+   дополнительный» — парой, чтобы роль читалась у обоих. Что значит
+   «основной», сказано в пояснении над плашками. */
 function title(item) {
     const element = document.createElement("p");
     element.className = "sensor__title";
     element.textContent = `Датчик ${item.label}`;
-    if (item.primary) {
-        const badge = document.createElement("span");
-        badge.className = "sensor__aside";
-        badge.textContent = "основной — по нему считается статистика";
-        element.append(badge);
-    }
+    const badge = document.createElement("span");
+    badge.className = "sensor__aside";
+    badge.textContent = item.primary ? "основной" : "дополнительный";
+    element.append(badge);
     return element;
 }
 

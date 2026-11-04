@@ -1763,8 +1763,13 @@ body {
     }
 }
 
-/* Заголовок датчика, пока их два: на всю ширину сетки, второй отделён
-   чертой от половин первого. */
+/* Плашки датчиков стопкой: у каждого своя рамка. */
+.sensors {
+    display: grid;
+    gap: 12px;
+}
+
+/* Заголовок плашки, пока датчиков два: на всю ширину сетки. */
 .sensor__title {
     grid-column: 1 / -1;
     display: flex;
@@ -1774,11 +1779,6 @@ body {
     margin: 0;
     font-weight: 600;
     color: var(--fg);
-}
-
-.sensor__title:not(:first-child) {
-    border-top: 1px solid var(--panel-chrome);
-    padding-top: 16px;
 }
 
 .sensor__label {
@@ -2043,6 +2043,8 @@ body {
 
 .foot p {
     margin: 0 0 4px;
+    /* Строка на датчик: app.js разделяет их переводом строки. */
+    white-space: pre-line;
 }
 
 /* Молчание сборщика — не рядовая строчка в подвале: без неё страница
