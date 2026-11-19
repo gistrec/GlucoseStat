@@ -570,7 +570,7 @@ export function drawChart() {
     const gaps = daily ? [] : seriesGaps(series, points, tail);
     const artifacts = daily ? [] : seriesArtifacts();
     const sugars = daily ? [] : seriesSugars();
-    // Неосновные датчики — только на почасовых окнах (их кладёт туда снимок).
+    // Неосновные датчики — на окнах-кривых до двух недель (их кладёт туда снимок).
     const others = daily ? [] : otherSensors(series);
     const primaryLabel = others.length ? primarySensorLabel() : null;
 

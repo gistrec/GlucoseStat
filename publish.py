@@ -127,6 +127,10 @@ COMPARED_RANGES = {"week", "two_weeks", "month"}
 LIVE_RANGES = {"day", "two_days"}
 HEAVY_INTERVAL = timedelta(minutes=15)
 
+# Окна, где рисуется кривая неосновного датчика: все, что остаются кривой.
+# С месяца серия сводится по дням, и второй ломаной там не из чего быть.
+OTHER_RANGES = LIVE_RANGES | {"week", "two_weeks"}
+
 # Окно для оценки тренда. Libre рисует стрелку по последним ~15 минутам;
 # на более коротком окне шум сенсора выдаёт скачки, которых нет.
 TREND_WINDOW = timedelta(minutes=15)
@@ -911,14 +915,24 @@ def merge_snapshot(heavy: dict, live: dict) -> dict:
 
     Серии и статистика есть в обеих — по своим окнам, — и сливаются по
     имени окна в порядке ``RANGES``: страница перебирает их в нём же.
+    Кривые второго датчика на недельных окнах живая часть отдаёт отдельно
+    (``other_curves``) — они дописываются в серии тяжёлой.
     """
+
+    other_curves = live.get("other_curves", {})
+    series = {}
+    for name in RANGES:
+        if name in live["series"]:
+            series[name] = live["series"][name]
+        elif name in other_curves:
+            series[name] = {**heavy["series"][name], "others": other_curves[name]}
+        else:
+            series[name] = heavy["series"].get(name)
 
     return {
         **heavy,
-        **live,
-        "series": {
-            name: live["series"].get(name, heavy["series"].get(name)) for name in RANGES
-        },
+        **{key: value for key, value in live.items() if key != "other_curves"},
+        "series": series,
         "stats": {
             name: live["stats"].get(name, heavy["stats"].get(name)) for name in RANGES
         },
@@ -1017,12 +1031,15 @@ def build_live(
     zones = zones or []
     series, stats = _series_and_stats(readings, now, LIVE_RANGES, zone_at(now, zones))
 
-    # Неосновные датчики — второй кривой и только на почасовых окнах: там
+    # Неосновные датчики — второй кривой на окнах-кривых (OTHER_RANGES): там
     # видно, как два сенсора расходятся. Статистики по ним нет: метрики
     # считаются по одному датчику, иначе на странице было бы два TIR.
-    for name in LIVE_RANGES:
+    # Недели — в живой части, а не в тяжёлой: тяжёлая кешируется по ключу
+    # основного датчика, и кривая второго стояла бы там по четверть часа.
+    other_curves = {}
+    for name in OTHER_RANGES:
         span, step_minutes = RANGES[name]
-        series[name]["others"] = [
+        other_curves[name] = [
             {
                 "sensor": sensor,
                 "label": label,
@@ -1034,6 +1051,8 @@ def build_live(
             }
             for sensor, label, other in (others or [])
         ]
+    for name in LIVE_RANGES:
+        series[name]["others"] = other_curves.pop(name)
 
     # Срез под обе полосы эпизодов — один: нарезать его дважды значило бы
     # пройти недельное сырьё лишний раз ради того же списка.
@@ -1050,6 +1069,9 @@ def build_live(
 
     return {
         "generated_at": int(now.replace(tzinfo=timezone.utc).timestamp()),
+        # Кривые второго датчика для окон тяжёлой части: ``merge_snapshot``
+        # кладёт их в серии и в снимок отдельным ключом не пускает.
+        "other_curves": other_curves,
         "collector": {
             "last_success": int(last_success) if last_success else None,
             # Датчик, по которому посчитано всё на странице, и когда приходили
@@ -1343,9 +1365,9 @@ def publish(
         full_since(now) if heavy is None else live_since(now, sensor_started),
         sensor=primary,
     )
-    # Неделя, а не только почасовые окна: по ней считается полнота данных в
-    # карточке второго датчика; кривые режут своё окно сами.
-    others_since = now - max(SENSOR_WINDOW, *(RANGES[name][0] for name in LIVE_RANGES))
+    # Две недели — самое длинное окно второй кривой (OTHER_RANGES), и не
+    # меньше недели карточки второго датчика; кривые режут своё окно сами.
+    others_since = now - max(SENSOR_WINDOW, *(RANGES[name][0] for name in OTHER_RANGES))
     others = [
         (sensor, label, readings_since(others_since, sensor=sensor))
         for sensor, label, _is_primary, _received in sources

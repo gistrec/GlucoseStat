@@ -42,7 +42,10 @@ from publish import (
     _stored_last_success,
     _now,
     _trend,
+    build_heavy,
+    build_live,
     build_snapshot,
+    merge_snapshot,
     publish,
 )
 
@@ -1314,13 +1317,28 @@ class TestOtherSensors:
             others=[("ottai", "Ottai", other)],
         )
 
-    def test_others_ride_only_on_the_hourly_windows(self):
-        series = self.snapshot()["series"]
+    def test_others_ride_on_the_curve_windows(self):
+        snapshot = self.snapshot()
+        series = snapshot["series"]
 
-        for name in ("day", "two_days"):
+        for name in ("day", "two_days", "week", "two_weeks"):
             assert [other["sensor"] for other in series[name]["others"]] == ["ottai"]
             assert series[name]["others"][0]["points"]
-        assert "others" not in series["week"]
+        # С месяца серия по дням — второй кривой там нет.
+        assert "others" not in series["month"]
+        assert "other_curves" not in snapshot
+
+    def test_heavy_part_stays_untouched(self):
+        # Тяжёлая часть живёт в кеше: слияние не должно дописывать в неё кривые.
+        now = BASE + timedelta(hours=2)
+        primary = [(BASE + timedelta(minutes=5 * i), 120.0) for i in range(24)]
+        other = [(BASE + timedelta(minutes=5 * i), 140.0) for i in range(24)]
+        heavy = build_heavy(primary, [], now)
+        live = build_live(primary, [], now, others=[("ottai", "Ottai", other)])
+
+        merge_snapshot(heavy, live)
+
+        assert "others" not in heavy["series"]["week"]
 
     def test_metrics_come_from_the_primary_alone(self):
         stats = self.snapshot()["stats"]["day"]
