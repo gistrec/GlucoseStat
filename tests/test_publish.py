@@ -30,6 +30,7 @@ from publish import (
     TARGET_LOW_MGDL,
     TIGHT_HIGH_MGDL,
     _artifacts,
+    _patched,
     _compare,
     _daily,
     _db_last_success,
@@ -1454,3 +1455,75 @@ def test_a_typed_in_lifetime_reaches_the_other_card():
     ottai = snapshot["sensors"][1]
     assert ottai["lifetime_days"] == 14
     assert ottai["started"] == int(started.replace(tzinfo=timezone.utc).timestamp())
+
+
+class TestPatched:
+    """Молчание основного датчика в длинных окнах закрывает второй."""
+
+    @staticmethod
+    def run(start, count, mgdl):
+        return [(start + timedelta(minutes=5 * i), mgdl) for i in range(count)]
+
+    def test_history_before_the_primary_comes_from_the_other(self):
+        libre = self.run(BASE, 288, 120.0)
+        ottai = self.run(BASE + timedelta(days=1), 288, 140.0)
+
+        merged = _patched(ottai, [libre])
+
+        # Последняя точка Libre — в пяти минутах от первой Ottai, это уже стык.
+        assert merged == libre[:-1] + ottai
+
+    def test_where_both_write_the_primary_wins(self):
+        libre = self.run(BASE, 100, 120.0)
+        ottai = self.run(BASE + timedelta(minutes=2), 100, 140.0)
+
+        assert _patched(ottai, [libre]) == ottai
+
+    def test_a_long_silence_is_filled_short_one_is_not(self):
+        # Час молчания основного — закрывается; пропуск в 10 минут — нет.
+        primary = self.run(BASE, 12, 140.0) + self.run(BASE + timedelta(hours=2), 12, 140.0)
+        other = self.run(BASE, 24, 120.0)
+
+        merged = _patched(primary, [other])
+        filled = [item for item in merged if item[1] == 120.0]
+
+        assert filled
+        assert all(BASE + timedelta(minutes=55) < moment < BASE + timedelta(hours=2) for moment, _ in filled)
+        short = primary[:12] + self.run(BASE + timedelta(minutes=65), 12, 140.0)
+        assert _patched(short, [other]) == short
+
+
+def test_publish_keeps_libre_history_when_ottai_is_primary(tmp_path, monkeypatch):
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    libre = [(now - timedelta(days=40) + timedelta(minutes=15 * i), 120.0) for i in range(96 * 30)]
+    ottai = [(now - timedelta(days=10) + timedelta(minutes=15 * i), 140.0) for i in range(96 * 10)]
+
+    monkeypatch.setattr(
+        "publish.readings_since",
+        lambda since, sensor="libre": [item for item in (ottai if sensor == "ottai" else libre) if item[0] >= since],
+    )
+    monkeypatch.setattr("publish.journal_since", lambda since: [])
+    monkeypatch.setattr("publish.meal_origins_since", lambda since: {})
+    monkeypatch.setattr("publish.fingersticks_since", lambda since: [])
+    monkeypatch.setattr("publish.last_readings", lambda limit=10, **kw: [])
+    monkeypatch.setattr("publish.read_sensor_start", lambda: None)
+    monkeypatch.setattr("publish.read_sensor_end", lambda: None)
+    monkeypatch.setattr("publish.sensor_marks", lambda sensor: (None, None))
+    monkeypatch.setattr("publish.primary_sensor", lambda: "ottai")
+    monkeypatch.setattr(
+        "publish.sources_overview",
+        lambda: [("libre", "Libre", False, now), ("ottai", "Ottai", True, now)],
+    )
+    monkeypatch.setattr("publish.first_readings", lambda: {})
+    monkeypatch.setattr("publish.latest_forecast", list)
+    monkeypatch.setattr("publish.timezone_history", list)
+    monkeypatch.setattr("publish.sensor_starts_since", lambda since: [])
+
+    path = tmp_path / "data.json"
+    publish(path=str(path), last_success=1.0)
+    snapshot = json.loads(path.read_text())
+
+    month = snapshot["series"]["month"]["days"]
+    assert sum(1 for day in month if day["count"]) >= 28
+    # Сутки — по-прежнему только основной датчик.
+    assert snapshot["stats"]["day"]["avg"] == 140.0

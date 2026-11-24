@@ -226,6 +226,40 @@ BIAS_MIN_MGDL = 9
 BIAS_MIN_SHARE = 0.75
 
 
+def _patched(
+    primary: list[tuple[datetime, float]],
+    fallbacks: list[list[tuple[datetime, float]]],
+) -> list[tuple[datetime, float]]:
+    """Основной датчик, где он молчал, — дополненный остальными.
+
+    Длинные окна — история, а не один сенсор: переключили основной в боте, и
+    без этого 30–90 дней начинались бы с первого дня нового датчика. Чужая
+    точка берётся, только если попала в молчание основного дольше
+    ``SENSOR_SILENCE`` (или до его первой и после последней точки); где
+    пишут оба, остаётся основной. Неосновные идут по порядку: следующий
+    закрывает то, что не закрыли предыдущие.
+    """
+
+    merged = list(primary)
+    for other in fallbacks:
+        times = [moment for moment, _ in merged]
+        extra = []
+        for item in other:
+            index = bisect_left(times, item[0])
+            left = times[index - 1] if index else None
+            right = times[index] if index < len(times) else None
+            if left is not None and right is not None and right - left <= SENSOR_SILENCE:
+                continue
+            if left is not None and item[0] - left <= SENSOR_SILENCE / 2:
+                continue
+            if right is not None and right - item[0] <= SENSOR_SILENCE / 2:
+                continue
+            extra.append(item)
+        if extra:
+            merged = sorted(merged + extra)
+    return merged
+
+
 def _downsample(
     readings: list[tuple[datetime, float]], step_minutes: int, low: int
 ) -> list[list[int]]:
@@ -1375,8 +1409,18 @@ def publish(
     ]
 
     if heavy is None:
-        heavy = build_heavy(
+        # Длинные окна — по основному, а его молчание — по остальным: иначе
+        # после /sensor история за 30–90 дней начиналась бы с нового датчика.
+        heavy_readings = _patched(
             readings,
+            [
+                readings_since(full_since(now), sensor=sensor)
+                for sensor, _label, _is_primary, _received in sources
+                if sensor != primary
+            ],
+        )
+        heavy = build_heavy(
+            heavy_readings,
             journal,
             now,
             origins=origins,
