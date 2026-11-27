@@ -854,9 +854,12 @@ export function drawChart() {
     ctx.globalAlpha = 1;
 
     // Ширина коробки дня считается один раз и попадает в state.geometry: отрисовка
-    // и подсветка наведения обязаны сходиться на одном прямоугольнике.
+    // и подсветка наведения обязаны сходиться на одном прямоугольнике. Потолок —
+    // сами сутки на оси: на 180 днях телефона их полтора пикселя, и коробки
+    // минимальной ширины налезали бы на соседей, затирая их медианы.
+    const daySlot = x(86400) - x(0);
     const boxWidth = daily
-        ? Math.min(BOX_MAX_WIDTH, Math.max(BOX_MIN_WIDTH, (x(86400) - x(0)) * BOX_SHARE))
+        ? Math.min(BOX_MAX_WIDTH, daySlot, Math.max(BOX_MIN_WIDTH, daySlot * BOX_SHARE))
         : null;
 
     if (daily) {
@@ -1612,10 +1615,11 @@ export function dailyBoxSpan(day, x, plotLeft, plotRight, width) {
    вчерашней коробки просто нет места на целую. Ширина по прожитой доле решает
    перекрытие геометрией и говорит правду: карточка куска суток уже карточки
    целых. Полные дни остаются одной ширины — 25-часовые сутки перехода никто
-   не резал, и толще соседей они не становятся. */
+   не резал, и толще соседей они не становятся. Шире полной коробки крайняя не
+   бывает: где сутки уже BOX_MIN_WIDTH, минимум налез бы на соседа. */
 export function dailyBoxWidth(day, days, width) {
     if (day !== days[0] && day !== days[days.length - 1]) return width;
-    return Math.max(BOX_MIN_WIDTH, width * Math.min(1, (day.end - day.start) / 86400));
+    return Math.min(width, Math.max(BOX_MIN_WIDTH, width * Math.min(1, (day.end - day.start) / 86400)));
 }
 
 /* Подневная форма месяца: коробка p25–p75 с засечкой медианы на каждый день.
