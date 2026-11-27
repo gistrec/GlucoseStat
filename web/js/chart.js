@@ -854,9 +854,12 @@ export function drawChart() {
     ctx.globalAlpha = 1;
 
     // Ширина коробки дня считается один раз и попадает в state.geometry: отрисовка
-    // и подсветка наведения обязаны сходиться на одном прямоугольнике.
+    // и подсветка наведения обязаны сходиться на одном прямоугольнике. Потолок —
+    // сами сутки на оси: на 180 днях телефона их полтора пикселя, и коробки
+    // минимальной ширины налезали бы на соседей, затирая их медианы.
+    const daySlot = x(86400) - x(0);
     const boxWidth = daily
-        ? Math.min(BOX_MAX_WIDTH, Math.max(BOX_MIN_WIDTH, (x(86400) - x(0)) * BOX_SHARE))
+        ? Math.min(BOX_MAX_WIDTH, daySlot, Math.max(BOX_MIN_WIDTH, daySlot * BOX_SHARE))
         : null;
 
     if (daily) {
@@ -1220,8 +1223,13 @@ export function drawSensorChanges(ctx, changes, x, left, right, top, bottom, mut
     const label = "новый сенсор";
     const width = ctx.measureText(label).width;
     const textY = top + LABEL_OFFSET;
+    // Сенсор живёт две недели, и на длинных окнах телефона соседние подписи
+    // наезжали друг на друга в «новыновынов». Подписи ставятся от новой замены
+    // к старой, и та, что налезла бы на уже стоящую правее, пропускается:
+    // пунктир остаётся у каждой замены, а подписан всегда текущий сенсор.
+    let labelLeft = Infinity;
 
-    for (const moment of changes) {
+    for (const moment of [...changes].reverse()) {
         const at = Math.round(x(moment)) + 0.5;
         if (at <= left || at >= right) continue;
 
@@ -1232,13 +1240,16 @@ export function drawSensorChanges(ctx, changes, x, left, right, top, bottom, mut
         // Под буквами — ореол цветом панели, а не плашка: плашка вырезала
         // светлый короб в подложке зоны высокого сахара (как у прогноза).
         const textX = Math.min(Math.max(at - width / 2, left + 2), right - 2 - width);
-        ctx.globalAlpha = 1;
-        ctx.lineJoin = "round";
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = panel;
-        ctx.strokeText(label, textX, textY);
-        ctx.fillStyle = muted;
-        ctx.fillText(label, textX, textY);
+        if (textX + width + LABEL_GAP <= labelLeft) {
+            ctx.globalAlpha = 1;
+            ctx.lineJoin = "round";
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = panel;
+            ctx.strokeText(label, textX, textY);
+            ctx.fillStyle = muted;
+            ctx.fillText(label, textX, textY);
+            labelLeft = textX;
+        }
 
         ctx.lineWidth = 1;
         ctx.globalAlpha = 0.7;
@@ -1604,10 +1615,11 @@ export function dailyBoxSpan(day, x, plotLeft, plotRight, width) {
    вчерашней коробки просто нет места на целую. Ширина по прожитой доле решает
    перекрытие геометрией и говорит правду: карточка куска суток уже карточки
    целых. Полные дни остаются одной ширины — 25-часовые сутки перехода никто
-   не резал, и толще соседей они не становятся. */
+   не резал, и толще соседей они не становятся. Шире полной коробки крайняя не
+   бывает: где сутки уже BOX_MIN_WIDTH, минимум налез бы на соседа. */
 export function dailyBoxWidth(day, days, width) {
     if (day !== days[0] && day !== days[days.length - 1]) return width;
-    return Math.max(BOX_MIN_WIDTH, width * Math.min(1, (day.end - day.start) / 86400));
+    return Math.min(width, Math.max(BOX_MIN_WIDTH, width * Math.min(1, (day.end - day.start) / 86400)));
 }
 
 /* Подневная форма месяца: коробка p25–p75 с засечкой медианы на каждый день.

@@ -76,13 +76,13 @@ The snapshot maths (time in range, GMI, variability, downsampling, trend) is pur
 
 ## What the page shows
 
-Current value with a trend arrow, a chart over 24 hours, 48 hours or 7 days (14, 30, 60 and 90 days sit under the "Другое" menu), and per-period statistics: time in range, time in tight range (3.9–7.8 mmol/L, where glucose sits without diabetes), average, spread, coefficient of variation, and GMI.
+Current value with a trend arrow, a chart over 24 hours, 48 hours or 7 days (14, 30, 60, 90 and 180 days sit under the "Другое" menu), and per-period statistics: time in range, time in tight range (3.9–7.8 mmol/L, where glucose sits without diabetes), average, spread, coefficient of variation, and GMI.
 
 ### Chart windows
 
 The 48-hour window exists to answer "what was happening exactly a day ago". On the 24-hour one that moment sits on the very edge of the canvas, clipped by it.
 
-The 14-day window is still a curve, at a 30-minute step. The 30-, 60- and 90-day windows are not a line but a box per local day: p25 to p75, with the median notched across it.
+The 14-day window is still a curve, at a 30-minute step. The 30-, 60-, 90- and 180-day windows are not a line but a box per local day: p25 to p75, with the median notched across it.
 
 A day that is not whole carries a grey dash under its box, and the tooltip names which kind of "not whole" it is. Either the day is shown in part (clipped by the edge of the window, or still running), or the sensor was quiet through some of it and the coverage says how much. The box itself is not recoloured: its quartiles are honest, they just describe a slice of the day.
 
@@ -128,7 +128,7 @@ The weekly and monthly panels get no bands: an hour is three pixels wide there, 
 
 ### Sensor changes
 
-The LibreLinkUp source keeps a row per sensor in the `sensors` table, and every chart marks each change from the last 90 days with a dashed "новый сенсор" line.
+The LibreLinkUp source keeps a row per sensor in the `sensors` table, and every chart marks each change from the last 180 days with a dashed "новый сенсор" line.
 
 ### Sensor noise
 
