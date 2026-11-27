@@ -1220,8 +1220,13 @@ export function drawSensorChanges(ctx, changes, x, left, right, top, bottom, mut
     const label = "новый сенсор";
     const width = ctx.measureText(label).width;
     const textY = top + LABEL_OFFSET;
+    // Сенсор живёт две недели, и на длинных окнах телефона соседние подписи
+    // наезжали друг на друга в «новыновынов». Подписи ставятся от новой замены
+    // к старой, и та, что налезла бы на уже стоящую правее, пропускается:
+    // пунктир остаётся у каждой замены, а подписан всегда текущий сенсор.
+    let labelLeft = Infinity;
 
-    for (const moment of changes) {
+    for (const moment of [...changes].reverse()) {
         const at = Math.round(x(moment)) + 0.5;
         if (at <= left || at >= right) continue;
 
@@ -1232,13 +1237,16 @@ export function drawSensorChanges(ctx, changes, x, left, right, top, bottom, mut
         // Под буквами — ореол цветом панели, а не плашка: плашка вырезала
         // светлый короб в подложке зоны высокого сахара (как у прогноза).
         const textX = Math.min(Math.max(at - width / 2, left + 2), right - 2 - width);
-        ctx.globalAlpha = 1;
-        ctx.lineJoin = "round";
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = panel;
-        ctx.strokeText(label, textX, textY);
-        ctx.fillStyle = muted;
-        ctx.fillText(label, textX, textY);
+        if (textX + width + LABEL_GAP <= labelLeft) {
+            ctx.globalAlpha = 1;
+            ctx.lineJoin = "round";
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = panel;
+            ctx.strokeText(label, textX, textY);
+            ctx.fillStyle = muted;
+            ctx.fillText(label, textX, textY);
+            labelLeft = textX;
+        }
 
         ctx.lineWidth = 1;
         ctx.globalAlpha = 0.7;
